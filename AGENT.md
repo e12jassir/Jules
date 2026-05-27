@@ -30,11 +30,11 @@ Lee `JULES.md` para el spec completo.
 - [ ] CLI funcional — respuesta en terminal sin latencia perceptible
 - [ ] Sanitizador con tests de seguridad
 - [ ] Memoria persistente (SQLite + LanceDB)
-- [ ] Qwen 2.5 via Ollama — identidad local y scoring
+- [ ] Llama 3.2 via Ollama — identidad local y scoring
 - [ ] Antigravity CLI — provider externo principal
 - [ ] OpenCode CLI — provider de coding
 - [ ] Router quota-aware con tiers (free / low_cost / high_cost)
-- [ ] Importance scoring via Qwen local (nunca modelo externo)
+- [ ] Importance scoring via Llama local (nunca modelo externo)
 - [ ] Sistema de permisos con PermissionGate
 - [ ] Migraciones con Alembic
 - [ ] Fallback a Ollama cuando providers externos fallan
@@ -67,7 +67,7 @@ jules/
 │   │   ├── engine.py          # motor principal — orquesta todo
 │   │   ├── episodic.py        # LanceDB — episodios + embeddings
 │   │   ├── persistent.py      # SQLite — hechos y preferencias
-│   │   ├── scoring.py         # importance scoring — SIEMPRE Qwen local
+│   │   ├── scoring.py         # importance scoring — SIEMPRE Llama local
 │   │   └── models.py          # dataclasses Episode, SessionContext
 │   │
 │   ├── sanitizer/
@@ -114,7 +114,7 @@ jules/
 | Migraciones | Alembic — desde el día uno, sin excepciones |
 | DB vectorial | LanceDB |
 | Inferencia local | Ollama |
-| Modelo local | Qwen 2.5 7B/8B |
+| Modelo local | Llama 3.2 1B |
 | Provider 1 | Antigravity CLI (subprocess) |
 | Provider 2 | OpenCode CLI (subprocess) |
 
@@ -157,7 +157,7 @@ async def persist_episode(response, context):
     candidates = PostProcessor.extract_candidates(response, context)
     # 2. Sanitizar episodios (segunda pasada)
     clean = [c for c in candidates if not Sanitizer.contains_secret(c)]
-    # 3. Scoring via Qwen local — nunca modelo externo
+    # 3. Scoring via Llama local — nunca modelo externo
     for episode in clean:
         episode.importance = await ollama.score(episode)
         if episode.importance >= config.memory.importance_threshold:
@@ -243,7 +243,7 @@ class Episode:
     duration_seconds: int | None
     friction_score: float         # 0.0 = fluido, 1.0 = alta fricción
     tags: list[str] = field(default_factory=list)
-    importance: float = 0.0       # calculado por Qwen local post-creación
+    importance: float = 0.0       # calculado por Llama local post-creación
     model_used: str = ""          # modelo que generó la respuesta
     provider_used: str = ""       # ollama / antigravity / opencode
     memory_schema_version: str = "1.2"
@@ -348,7 +348,7 @@ async def route(task: TaskType,
 
     # Siempre local — sin excepción posible
     if task in (TaskType.IDENTITY, TaskType.MEMORY_SCORING, TaskType.OFFLINE):
-        return ollama, "qwen2.5:7b"
+        return ollama, "llama3.2:1b"
 
     # Coding → OpenCode
     if task == TaskType.CODING:
@@ -381,8 +381,8 @@ async def ask_with_fallback(prompt: str, context: SessionContext,
     except (ProviderUnavailableError, ProviderTimeoutError) as e:
         logger.warning("Provider %s failed (%s), falling back to Ollama",
                        provider.name, e)
-        response = await ollama.ask(prompt, context, "qwen2.5:7b")
-        return response, "qwen2.5:7b", "ollama"
+        response = await ollama.ask(prompt, context, "llama3.2:1b")
+        return response, "llama3.2:1b", "ollama"
 ```
 
 El router **nunca** falla silenciosamente. Si Ollama también falla, Jules informa al usuario con un mensaje claro.
@@ -462,7 +462,7 @@ await persist_episode(response, context)  # bloquea la respuesta
 await deliver_response(response)
 ```
 
-### 3. Scoring siempre en Qwen local
+### 3. Scoring siempre en Llama local
 
 ```python
 # Correcto
@@ -716,7 +716,7 @@ Un provider sin test de coherencia no se activa en producción.
 
 | Prohibido | Por qué |
 |---|---|
-| Scoring con modelo externo | Siempre Qwen local — sin cuota |
+| Scoring con modelo externo | Siempre Llama local — sin cuota |
 | Post-procesamiento síncrono antes de responder | Destruye la latencia en terminal |
 | Input a memoria sin sanitizar | Secrets llegan a la DB silenciosamente |
 | Llamar provider directamente sin router | Rompe quota-aware y provider-agnostic |
@@ -727,7 +727,7 @@ Un provider sin test de coherencia no se activa en producción.
 | Implementar eventos cognitivos en Fase 1 | Garantiza falsos positivos |
 | Hardcodear nombres de modelos fuera de config.toml | Nada configurable debe estar en código |
 | Asumir que los nombres de modelos en los docs son exactos | Verificar siempre con el CLI antes de configurar |
-| Integrar scoring sin calibrar el prompt de Qwen primero | Sin calibración, el threshold es arbitrario |
+| Integrar scoring sin calibrar el prompt de Llama primero | Sin calibración, el threshold es arbitrario |
 | Bloquear el event loop con I/O síncrono | Async en todo I/O |
 | Silenciar excepciones con `except Exception: pass` | Siempre manejar explícitamente |
 | Interpretar silencio del usuario como bloqueo | Jules no interrumpe sin señal objetiva |
@@ -743,7 +743,7 @@ Un provider sin test de coherencia no se activa en producción.
 - [ ] Si toca permisos: `PermissionGate.check()` está en el punto de acción
 - [ ] El sanitizador está en el primer paso del flujo modificado
 - [ ] La respuesta al usuario no espera al post-procesamiento
-- [ ] El scoring corre en Qwen local, no en provider externo
+- [ ] El scoring corre en Llama local, no en provider externo
 - [ ] `memory_schema_version` está presente en cada episodio persistido
 - [ ] `jules debug last` explica la última ejecución
 - [ ] Sin modelos hardcodeados — todo en `config.toml`
