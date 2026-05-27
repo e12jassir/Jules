@@ -1,0 +1,38 @@
+{
+  "generatedAt": "2026-05-27T05:13:41.615Z",
+  "scope": "turn_delta",
+  "sessionId": "lens-mpnlxsd7-f3f905bd",
+  "turnIndex": 9,
+  "projectSeqStart": 17,
+  "projectSeqEnd": 18,
+  "deltaOnly": true,
+  "files": [
+    {
+      "filePath": "/home/e12jassir/proyects/Jules/sdd/module-1-sanitizer-archive.md",
+      "displayPath": "sdd/module-1-sanitizer-archive.md",
+      "fileSeq": 1,
+      "warnings": [
+        {
+          "id": "cq:01afad58b8",
+          "filePath": "/home/e12jassir/proyects/Jules/sdd/module-1-sanitizer-archive.md",
+          "displayPath": "sdd/module-1-sanitizer-archive.md",
+          "severity": "warning",
+          "tool": "pi-lens",
+          "message": "Pi-lens analysis unavailable. Tools for markdown not installed.",
+          "category": "other",
+          "origin": "dispatch"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "warnings": 1,
+    "files": 1,
+    "topRules": [
+      {
+        "rule": "pi-lens",
+        "count": 1
+      }
+    ]
+  }
+}

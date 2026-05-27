@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jules"
+version = "0.1.0"
+description = "Jules project scaffold"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["click", "rich", "sqlalchemy", "alembic", "lancedb", "aiohttp"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["jules*"]
