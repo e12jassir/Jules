@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 import uuid
+
 import pytest
 
-from jules.memory.models import SessionContext, Episode, EpisodeORM
+from jules.memory.models import Base, SessionContext, Episode, EpisodeORM
 
 
 def test_session_context_initialization():
@@ -78,7 +79,8 @@ def test_episode_orm_conversion():
     orm_ep = EpisodeORM.from_dataclass(original_ep)
     
     assert orm_ep.id == original_ep.id
-    assert orm_ep.timestamp == original_ep.timestamp
+    assert orm_ep.timestamp.tzinfo is None
+    assert orm_ep.timestamp == original_ep.timestamp.replace(tzinfo=None)
     assert isinstance(orm_ep.context_json, dict)
     assert orm_ep.context_json["project"] == "Jules"
     assert orm_ep.context_json["active_files"] == ["models.py"]
@@ -100,3 +102,43 @@ def test_episode_orm_conversion():
     
     # Verify the restored dataclass matches the original perfectly
     assert restored_ep == original_ep
+
+
+def test_episode_orm_sqlite_round_trip():
+    sqlalchemy = pytest.importorskip("sqlalchemy")
+    orm = pytest.importorskip("sqlalchemy.orm")
+
+    engine = sqlalchemy.create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    ctx = SessionContext(
+        project="Jules",
+        directory="/home/user/Jules",
+        active_files=["models.py", "test_models.py"],
+        inferred_intent="implementation",
+        time_of_day="evening",
+    )
+    original_ep = Episode(
+        id=str(uuid.uuid4()),
+        timestamp=datetime.now(timezone.utc),
+        context=ctx,
+        problem="Need canonical persistence",
+        process="Persist through ORM session",
+        solution="Round-trip succeeded",
+        duration_seconds=42,
+        friction_score=0.1,
+        tags=["memory", "sqlite"],
+        importance=0.6,
+        model_used="gpt-5.4",
+        provider_used="opencode",
+    )
+
+    with orm.Session(engine) as session:
+        session.add(EpisodeORM.from_dataclass(original_ep))
+        session.commit()
+        stored = session.get(EpisodeORM, original_ep.id)
+        assert stored is not None
+
+        restored = stored.to_dataclass()
+
+    assert restored == original_ep

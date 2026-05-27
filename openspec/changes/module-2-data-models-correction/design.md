@@ -5,18 +5,21 @@ This correction design realigns the current work with the roadmap without throwi
 ## Quick path
 
 1. Freeze the current mixed branch; do not add more code to it.
-2. Move the Module 2 commit(s) to a dedicated branch/change such as `feat/module-2-data-models`.
-3. Treat embedded `context_json` as the official Phase 1 design unless explicitly rejected.
-4. Verify tests and Alembic again on the new branch before continuing with more memory work.
+2. Promote `fix/module-1-sanitizer-review` as the clean sanitizer base branch.
+3. Keep `feat/module-2-data-models` as the stacked Module 2 branch on top of that base.
+4. Treat embedded `context_json` as the official Phase 1 design unless explicitly rejected.
+5. Verify tests and Alembic again on the Module 2 branch before continuing with more memory work.
 
 ## Problem being corrected
 
-The current branch mixes two concerns:
+The originally pushed sanitizer branch mixes two concerns:
 
 - Module 1 sanitizer follow-up and cleanup
 - Module 2 data-model and Alembic work
 
 That mix increases review confusion and hides an architectural decision that is not yet explicit in the written plan: the implementation persists `SessionContext` inside `EpisodeORM.context_json` instead of creating a separate `SessionContextORM` table.
+
+Because that mixed branch was already pushed, this correction prefers a non-destructive cleanup: create clean additive branches for sanitizer and Module 2 instead of force-rewriting the old remote history.
 
 ## Correction goals
 
@@ -31,7 +34,7 @@ That mix increases review confusion and hides an architectural decision that is 
 
 | Topic | Decision | Rationale |
 |---|---|---|
-| Branch scope | Split Module 2 off the sanitizer branch | Current branch name and PR context are sanitizer-focused; memory work deserves its own review unit. |
+| Branch scope | Use a clean stacked branch layout: `fix/module-1-sanitizer-review` → `feat/module-2-data-models` | Keeps review units focused without force-rewriting already-pushed history. |
 | Canonical business model | `SessionContext` and `Episode` remain pure dataclasses | Matches AGENT.md and keeps business logic ORM-free. |
 | ORM shape for Phase 1 | Keep `EpisodeORM` as the only ORM entity for now | `SessionContext` behaves like nested contextual payload, not an independent aggregate. |
 | Context persistence | Store session context in `EpisodeORM.context_json` | Simpler Phase 1 schema, fewer joins, and better fit for `active_files` list payload. |
@@ -56,19 +59,22 @@ That mix increases review confusion and hides an architectural decision that is 
 
 ### 1. Separate the work units
 
-Create a dedicated Module 2 branch from the current memory commit chain. The sanitizer branch should stop carrying memory-model changes.
+Create a dedicated Module 2 branch from the sanitizer-review baseline. Because the mixed sanitizer branch was already pushed, the cleanup strategy is additive rather than destructive.
 
 Target shape:
 
-- `chore/module-1-sanitizer-cleanup`
+- `fix/module-1-sanitizer-review`
   - sanitizer fixes
-  - cleanup only
+  - cleanup ancestry accepted as legacy
 - `feat/module-2-data-models`
+  - stacked on `fix/module-1-sanitizer-review`
   - `jules/memory/models.py`
   - `tests/unit/test_models.py`
   - `alembic/env.py`
   - `alembic.ini`
   - `alembic/versions/<initial_schema>.py`
+- `chore/module-1-sanitizer-cleanup`
+  - deprecated mixed branch; keep as legacy reference only
 
 ### 2. Keep the canonical domain model pure
 
@@ -140,7 +146,7 @@ This is a deliberate simplification, not an omission.
 
 | Layer | Check | Expected result |
 |---|---|---|
-| Git hygiene | Module 2 lives on its own branch | Sanitizer branch no longer contains memory-model changes. |
+| Git hygiene | Module 2 lives on its own stacked branch | `feat/module-2-data-models` is reviewed against `fix/module-1-sanitizer-review`, and the legacy mixed branch receives no further work. |
 | Unit tests | `./.venv/bin/python -m pytest tests/unit/test_models.py` | Model defaults and ORM round-trip pass. |
 | Sanitizer regression safety | `./.venv/bin/python -m pytest tests/unit/test_sanitizer.py` on sanitizer branch | Module 1 remains stable after branch split. |
 | Migration | `./.venv/bin/python -m alembic upgrade head` | `episodes` table creates cleanly. |
@@ -148,12 +154,13 @@ This is a deliberate simplification, not an omission.
 
 ## Checklist
 
-- [ ] Split Module 2 commit(s) to `feat/module-2-data-models`
-- [ ] Restore sanitizer branch to sanitizer/cleanup-only scope
+- [ ] Freeze the legacy mixed branch and stop using it for new work
+- [ ] Use `fix/module-1-sanitizer-review` as the sanitizer base branch
+- [ ] Use `feat/module-2-data-models` as the stacked Module 2 branch
 - [ ] Accept `context_json` as Phase 1 persistence shape
 - [ ] Re-run tests and Alembic on the dedicated Module 2 branch
-- [ ] Continue Module 2 only after the branch split is clean
+- [ ] Continue Module 2 only after the stacked branch layout is clear
 
 ## Next step
 
-Execute the branch split first. After that, continue Module 2 using this correction design as the declared architecture baseline.
+Execute the stacked-branch cleanup first. After that, continue Module 2 using this correction design as the declared architecture baseline.

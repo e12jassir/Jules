@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -37,6 +37,18 @@ class Base(DeclarativeBase):
     pass
 
 
+def _serialize_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _deserialize_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class EpisodeORM(Base):
     __tablename__ = "episodes"
 
@@ -59,7 +71,7 @@ class EpisodeORM(Base):
         """Converts an Episode dataclass to an EpisodeORM instance."""
         return cls(
             id=ep.id,
-            timestamp=ep.timestamp,
+            timestamp=_serialize_timestamp(ep.timestamp),
             context_json={
                 "project": ep.context.project,
                 "directory": ep.context.directory,
@@ -90,7 +102,7 @@ class EpisodeORM(Base):
         )
         return Episode(
             id=self.id,
-            timestamp=self.timestamp,
+            timestamp=_deserialize_timestamp(self.timestamp),
             context=ctx,
             problem=self.problem,
             process=self.process,
