@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
 
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import ForeignKey, MetaData
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 
@@ -32,9 +32,19 @@ class Episode:
     memory_schema_version: str = "1.2"
 
 
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy 2.0 ORM models."""
-    pass
+
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
 def _serialize_timestamp(value: datetime) -> datetime:
@@ -49,12 +59,44 @@ def _deserialize_timestamp(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+class SessionContextORM(Base):
+    __tablename__ = "session_contexts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    project: Mapped[str | None] = mapped_column()
+    directory: Mapped[str] = mapped_column()
+    active_files: Mapped[list[str]] = mapped_column(JSON)
+    inferred_intent: Mapped[str | None] = mapped_column()
+    time_of_day: Mapped[str] = mapped_column()
+
+    episode: Mapped["EpisodeORM"] = relationship(back_populates="session_context")
+
+    @classmethod
+    def from_dataclass(cls, ctx: SessionContext) -> "SessionContextORM":
+        return cls(
+            project=ctx.project,
+            directory=ctx.directory,
+            active_files=list(ctx.active_files),
+            inferred_intent=ctx.inferred_intent,
+            time_of_day=ctx.time_of_day,
+        )
+
+    def to_dataclass(self) -> SessionContext:
+        return SessionContext(
+            project=self.project,
+            directory=self.directory,
+            active_files=list(self.active_files),
+            inferred_intent=self.inferred_intent,
+            time_of_day=self.time_of_day,
+        )
+
+
 class EpisodeORM(Base):
     __tablename__ = "episodes"
 
     id: Mapped[str] = mapped_column(primary_key=True)
     timestamp: Mapped[datetime] = mapped_column()
-    context_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    session_context_id: Mapped[int] = mapped_column(ForeignKey("session_contexts.id"), nullable=False, unique=True)
     problem: Mapped[str | None] = mapped_column()
     process: Mapped[str | None] = mapped_column()
     solution: Mapped[str | None] = mapped_column()
@@ -66,25 +108,21 @@ class EpisodeORM(Base):
     provider_used: Mapped[str] = mapped_column(default="")
     memory_schema_version: Mapped[str] = mapped_column(default="1.2")
 
+    session_context: Mapped[SessionContextORM] = relationship(back_populates="episode", cascade="all, delete-orphan", single_parent=True)
+
     @classmethod
     def from_dataclass(cls, ep: Episode) -> "EpisodeORM":
         """Converts an Episode dataclass to an EpisodeORM instance."""
         return cls(
             id=ep.id,
             timestamp=_serialize_timestamp(ep.timestamp),
-            context_json={
-                "project": ep.context.project,
-                "directory": ep.context.directory,
-                "active_files": ep.context.active_files,
-                "inferred_intent": ep.context.inferred_intent,
-                "time_of_day": ep.context.time_of_day,
-            },
+            session_context=SessionContextORM.from_dataclass(ep.context),
             problem=ep.problem,
             process=ep.process,
             solution=ep.solution,
             duration_seconds=ep.duration_seconds,
             friction_score=ep.friction_score,
-            tags=ep.tags,
+            tags=list(ep.tags),
             importance=ep.importance,
             model_used=ep.model_used,
             provider_used=ep.provider_used,
@@ -93,23 +131,16 @@ class EpisodeORM(Base):
 
     def to_dataclass(self) -> Episode:
         """Converts an EpisodeORM instance to an Episode dataclass."""
-        ctx = SessionContext(
-            project=self.context_json.get("project"),
-            directory=self.context_json.get("directory", ""),
-            active_files=self.context_json.get("active_files", []),
-            inferred_intent=self.context_json.get("inferred_intent"),
-            time_of_day=self.context_json.get("time_of_day", ""),
-        )
         return Episode(
             id=self.id,
             timestamp=_deserialize_timestamp(self.timestamp),
-            context=ctx,
+            context=self.session_context.to_dataclass(),
             problem=self.problem,
             process=self.process,
             solution=self.solution,
             duration_seconds=self.duration_seconds,
             friction_score=self.friction_score,
-            tags=self.tags,
+            tags=list(self.tags),
             importance=self.importance,
             model_used=self.model_used,
             provider_used=self.provider_used,

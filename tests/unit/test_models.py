@@ -3,7 +3,7 @@ import uuid
 
 import pytest
 
-from jules.memory.models import Base, SessionContext, Episode, EpisodeORM
+from jules.memory.models import Base, Episode, EpisodeORM, SessionContext, SessionContextORM
 
 
 def test_session_context_initialization():
@@ -49,6 +49,23 @@ def test_episode_initialization():
     assert ep.memory_schema_version == "1.2" # default
 
 
+def test_session_context_orm_conversion():
+    ctx = SessionContext(
+        project="Jules",
+        directory="/home/user/Jules",
+        active_files=["models.py"],
+        inferred_intent="debugging",
+        time_of_day="afternoon",
+    )
+
+    orm_ctx = SessionContextORM.from_dataclass(ctx)
+
+    assert orm_ctx.project == "Jules"
+    assert orm_ctx.active_files == ["models.py"]
+    assert orm_ctx.to_dataclass() == ctx
+
+
+
 def test_episode_orm_conversion():
     ctx = SessionContext(
         project="Jules",
@@ -81,9 +98,8 @@ def test_episode_orm_conversion():
     assert orm_ep.id == original_ep.id
     assert orm_ep.timestamp.tzinfo is None
     assert orm_ep.timestamp == original_ep.timestamp.replace(tzinfo=None)
-    assert isinstance(orm_ep.context_json, dict)
-    assert orm_ep.context_json["project"] == "Jules"
-    assert orm_ep.context_json["active_files"] == ["models.py"]
+    assert orm_ep.session_context.project == "Jules"
+    assert orm_ep.session_context.active_files == ["models.py"]
     assert orm_ep.model_used == "gpt-5.4"
     assert orm_ep.tags == ["db", "orm"]
     
@@ -138,6 +154,8 @@ def test_episode_orm_sqlite_round_trip():
         session.commit()
         stored = session.get(EpisodeORM, original_ep.id)
         assert stored is not None
+        assert stored.session_context.directory == "/home/user/Jules"
+        assert stored.session_context.active_files == ["models.py", "test_models.py"]
 
         restored = stored.to_dataclass()
 
