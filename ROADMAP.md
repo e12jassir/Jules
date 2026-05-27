@@ -31,7 +31,7 @@ El objetivo de Fase 1 es simple: Jules responde en terminal, recuerda entre sesi
 
 ---
 
-### MÓDULO 0 — Estructura base del proyecto
+### MÓDULO 0 — Estructura base del proyecto **(MECÁNICO - Diseño Rápido)**
 **Modelo:** Deepseek V4 Flash  
 **Tiempo estimado:** 1 sesión
 
@@ -55,7 +55,7 @@ Tareas:
 
 ---
 
-### MÓDULO 1 — Sanitizador
+### MÓDULO 1 — Sanitizador **(CRÍTICO - Requiere Diseño SDD)**
 **Modelo:** GPT 5.5 para implementación / Opus para revisión final  
 **Tiempo estimado:** 1–2 sesiones  
 **Depende de:** Módulo 0
@@ -80,7 +80,7 @@ Tareas:
 
 ---
 
-### MÓDULO 2 — Modelos de datos
+### MÓDULO 2 — Modelos de datos **(CRÍTICO - Requiere Diseño SDD)**
 **Modelo:** GPT 5.4  
 **Tiempo estimado:** 1 sesión  
 **Depende de:** Módulo 0
@@ -108,7 +108,7 @@ Tareas:
 
 ---
 
-### MÓDULO 3 — Proveedor local Ollama
+### MÓDULO 3 — Proveedor local Ollama **(MECÁNICO - Diseño Rápido)**
 **Modelo:** GPT 5.4  
 **Tiempo estimado:** 1 sesión  
 **Depende de:** Módulo 2
@@ -135,7 +135,7 @@ Tareas:
 
 ---
 
-### MÓDULO 4 — Providers externos (Antigravity y OpenCode)
+### MÓDULO 4 — Providers externos (Antigravity y OpenCode) **(MECÁNICO - Diseño Rápido)**
 **Modelo:** GPT 5.5 para implementación / Sonnet para revisión  
 **Tiempo estimado:** 2 sesiones  
 **Depende de:** Módulo 3
@@ -172,7 +172,7 @@ Tareas:
 
 ---
 
-### MÓDULO 5 — Router quota-aware
+### MÓDULO 5 — Router quota-aware **(CRÍTICO - Requiere Diseño SDD)**
 **Modelo:** GPT 5.5 para implementación / Opus para revisión  
 **Tiempo estimado:** 1–2 sesiones  
 **Depende de:** Módulo 4
@@ -201,7 +201,7 @@ Tareas:
 
 ---
 
-### MÓDULO 6 — Motor de memoria
+### MÓDULO 6 — Motor de memoria **(CRÍTICO - Requiere Diseño SDD)**
 **Modelo:** GPT 5.5 para implementación / Opus para revisión  
 **Tiempo estimado:** 2–3 sesiones  
 **Depende de:** Módulos 1, 2, 3, 5
@@ -245,7 +245,7 @@ Tareas:
 
 ---
 
-### MÓDULO 7 — Detector de intención de contexto
+### MÓDULO 7 — Detector de intención de contexto **(MECÁNICO - Diseño Rápido)**
 **Modelo:** GPT 5.4  
 **Tiempo estimado:** 1 sesión  
 **Depende de:** Módulo 6
@@ -273,7 +273,7 @@ Tareas:
 
 ---
 
-### MÓDULO 8 — Sistema de eventos (Fase 1)
+### MÓDULO 8 — Sistema de eventos (Fase 1) **(MECÁNICO - Diseño Rápido)**
 **Modelo:** GPT 5.4  
 **Tiempo estimado:** 1 sesión  
 **Depende de:** Módulo 7
@@ -302,7 +302,7 @@ Tareas:
 
 ---
 
-### MÓDULO 9 — Sistema de permisos
+### MÓDULO 9 — Sistema de permisos **(CRÍTICO - Requiere Diseño SDD)**
 **Modelo:** GPT 5.4  
 **Tiempo estimado:** 1 sesión  
 **Depende de:** Módulo 0
@@ -324,7 +324,7 @@ Tareas:
 
 ---
 
-### MÓDULO 10 — CLI principal
+### MÓDULO 10 — CLI principal **(MECÁNICO - Diseño Rápido)**
 **Modelo:** GPT 5.4 / Deepseek para el boilerplate  
 **Tiempo estimado:** 1–2 sesiones  
 **Depende de:** Todos los módulos anteriores
@@ -478,32 +478,32 @@ No empezar hasta que Fase 1 y Fase 1.5 estén 100% done y usándose en el workfl
 **Orden de construcción:**
 
 ```
-1. Detector de intención mejorado
+1. Detector de intención mejorado **(CRÍTICO - Diseño SDD Obligatorio)**
    → más señales, más intenciones, mejor precisión
    → Modelo: GPT 5.5
 
-2. Iniciativa contextual (opt-in)
+2. Iniciativa contextual (opt-in) **(CRÍTICO - Diseño SDD Obligatorio)**
    → apagada por defecto en config.toml
    → solo señales objetivas, nunca silencio
    → regla de no interrumpir dos veces
    → Modelo: GPT 5.5 / Opus para revisión
 
-3. Automatización de entorno Linux
+3. Automatización de entorno Linux **(CRÍTICO - Diseño SDD Obligatorio)**
    → DBus, wmctrl/hyprctl, sesiones tmux
    → PermissionGate en cada acción
    → Modelo: GPT 5.5
 
-4. Replay system
+4. Replay system **(CRÍTICO - Diseño SDD Obligatorio)**
    → reconstrucción de sesiones de debugging
    → requiere memoria episódica sólida funcionando
    → Modelo: GPT 5.5 / Opus para revisión
 
-5. Sistema de voz
+5. Sistema de voz **(MECÁNICO - Integración de terceros)**
    → whisper.cpp para STT
    → Piper para TTS
    → Modelo: GPT 5.4 / Deepseek para integración
 
-6. Desktop app
+6. Desktop app **(MECÁNICO - Interfaz gráfica sobre core existente)**
    → Tauri + SvelteKit
    → muestra modelo activo, tier, contexto, memoria
    → Modelo: GPT 5.5 para lógica / Deepseek para UI básica
@@ -516,22 +516,22 @@ No empezar hasta que Fase 1 y Fase 1.5 estén 100% done y usándose en el workfl
 No empezar hasta tener ≥3 meses de uso real con memoria acumulada.
 
 ```
-1. Perfilador cognitivo
+1. Perfilador cognitivo **(CRÍTICO - Algoritmia avanzada SDD)**
    → análisis de patrones reales del usuario
    → horarios, tipos de tareas, errores recurrentes
    → Modelo: GPT 5.5 / Opus para algoritmos de análisis
 
-2. Diff cognitivo
+2. Diff cognitivo **(CRÍTICO - Diseño SDD Obligatorio)**
    → "¿cómo resolvía esto hace 6 meses vs ahora?"
    → requiere episodios con model_used bien poblado
    → Modelo: GPT 5.5
 
-3. Eventos cognitivos calibrados
+3. Eventos cognitivos calibrados **(CRÍTICO - Diseño SDD Obligatorio)**
    → frustration_detected, burnout_signal, productivity_anomaly
    → calibrar con datos reales antes de activar
    → Modelo: GPT 5.5 / Opus para validación
 
-4. Mentoría técnica avanzada
+4. Mentoría técnica avanzada **(CRÍTICO - Diseño SDD Obligatorio)**
    → sugerencias basadas en historial propio
    → "para este tipo de bug usas mejor Gemini Pro"
    → Modelo: GPT 5.5
@@ -544,9 +544,9 @@ No empezar hasta tener ≥3 meses de uso real con memoria acumulada.
 Construir solo si las tres fases anteriores funcionan bien en uso real.
 
 ```
-1. Asistencia predictiva
-2. Adaptación profunda del entorno
-3. Personalización autónoma
+1. Asistencia predictiva **(CRÍTICO)**
+2. Adaptación profunda del entorno **(CRÍTICO)**
+3. Personalización autónoma **(CRÍTICO)**
 ```
 
 ---

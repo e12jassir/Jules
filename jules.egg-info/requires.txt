@@ -1,0 +1,9 @@
+click
+rich
+sqlalchemy
+alembic
+lancedb
+aiohttp
+
+[test]
+pytest
