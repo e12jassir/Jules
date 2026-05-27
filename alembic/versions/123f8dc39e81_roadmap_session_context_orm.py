@@ -60,10 +60,10 @@ def upgrade() -> None:
         inserted = bind.execute(
             session_contexts.insert().values(
                 project=context.get('project'),
-                directory=context.get('directory', ''),
-                active_files=context.get('active_files', []),
+                directory=context.get('directory') or '',
+                active_files=context.get('active_files') or [],
                 inferred_intent=context.get('inferred_intent'),
-                time_of_day=context.get('time_of_day', ''),
+                time_of_day=context.get('time_of_day') or '',
             )
         )
         context_id = inserted.lastrowid

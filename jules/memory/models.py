@@ -49,7 +49,7 @@ class Base(DeclarativeBase):
 
 def _serialize_timestamp(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value
+        raise ValueError("Datetime must be timezone-aware (tzinfo is None)")
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
@@ -108,7 +108,7 @@ class EpisodeORM(Base):
     provider_used: Mapped[str] = mapped_column(default="")
     memory_schema_version: Mapped[str] = mapped_column(default="1.2")
 
-    session_context: Mapped[SessionContextORM] = relationship(back_populates="episode", cascade="all, delete-orphan", single_parent=True)
+    session_context: Mapped[SessionContextORM] = relationship(back_populates="episode", cascade="all, delete-orphan", single_parent=True, lazy="joined")
 
     @classmethod
     def from_dataclass(cls, ep: Episode) -> "EpisodeORM":

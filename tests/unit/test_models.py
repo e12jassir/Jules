@@ -160,3 +160,30 @@ def test_episode_orm_sqlite_round_trip():
         restored = stored.to_dataclass()
 
     assert restored == original_ep
+
+
+def test_episode_orm_rejects_naive_datetime():
+    ctx = SessionContext(
+        project="Jules",
+        directory="/home/user/Jules",
+        active_files=[],
+        inferred_intent=None,
+        time_of_day="night",
+    )
+    
+    # Naive datetime (no timezone)
+    naive_now = datetime.now()
+    
+    original_ep = Episode(
+        id=str(uuid.uuid4()),
+        timestamp=naive_now,
+        context=ctx,
+        problem=None,
+        process=None,
+        solution=None,
+        duration_seconds=None,
+        friction_score=0.0,
+    )
+    
+    with pytest.raises(ValueError, match="Datetime must be timezone-aware"):
+        EpisodeORM.from_dataclass(original_ep)
