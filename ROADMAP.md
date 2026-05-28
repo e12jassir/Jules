@@ -125,13 +125,13 @@ Tareas:
   - embed() para generar embeddings
   - health_check() 
   - Manejo de timeout configurable
-- Tests de integración (requiere Ollama corriendo con Qwen 2.5)
+- Tests de integración (requiere Ollama corriendo con Llama 3.2)
   - health_check retorna True cuando Ollama está activo
   - ask() retorna respuesta coherente
   - Timeout funciona correctamente
 ```
 
-**Done cuando:** Ollama responde desde Jules con Qwen 2.5. Probar manualmente en terminal.
+**Done cuando:** Ollama responde desde Jules con Llama 3.2. Probar manualmente en terminal.
 
 ---
 
@@ -211,12 +211,12 @@ El módulo más complejo de Fase 1. Tómalo con calma — un motor de memoria ro
 ```
 Tareas:
 - Implementar jules/memory/scoring.py
-  - score(episode) → float via Qwen local (NUNCA modelo externo)
-  - Prompt de scoring que Qwen pueda evaluar bien
+  - score(episode) → float via Llama local (NUNCA modelo externo)
+  - Prompt de scoring que Llama pueda evaluar bien
   - Retorna 0.0–1.0
   - **Calibración obligatoria antes de integrar al flujo:**
     probar el prompt de scoring contra 10–15 episodios de ejemplo
-    con Qwen corriendo en Ollama. Ajustar prompt y threshold (0.3 es
+    con Llama corriendo en Ollama. Ajustar prompt y threshold (0.3 es
     el punto de partida, no un valor definitivo) con datos reales
     antes de conectar scoring al motor de persistencia.
 - Implementar jules/memory/episodic.py
@@ -407,7 +407,7 @@ Checklist de Fase 1:
 - [ ] El router selecciona el modelo correcto — verificado con tests
 - [ ] El fallback a Ollama funciona — verificado matando Antigravity
 - [ ] La búsqueda semántica recupera por relevancia, no recencia
-- [ ] Qwen hace el scoring — verificado con mocks
+- [ ] Llama hace el scoring — verificado con mocks
 - [ ] El sistema de permisos bloquea acciones no autorizadas
 - [ ] Todas las migraciones Alembic aplicadas y versionadas
 - [ ] Sin modelos hardcodeados fuera de config.toml

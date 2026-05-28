@@ -142,9 +142,9 @@ Router de Modelos (quota-aware)
   ├─ Consulta tier de cuota
   ├─ Selecciona modelo óptimo
   └─ Invoca provider
-       ├─ Ollama / Qwen 2.5    (local / offline / identidad / scoring)
+       ├─ Ollama / Llama 3.2    (local / offline / identidad / scoring)
        ├─ Antigravity CLI      (Google + Claude + GPT)
-       └─ OpenCode CLI         (GPT / Codex / Deepseek / Qwen)
+       └─ OpenCode CLI         (GPT / Codex / Deepseek / Llama)
   ↓
 Respuesta al usuario  ←─── INMEDIATA, sin bloqueo
   ↓ (en background, async)
@@ -155,7 +155,7 @@ Post-Procesamiento
 Sanitizador (segunda pasada sobre episodios candidatos)
   ↓
 Motor de Persistencia
-  ├─ importance scoring via Qwen local
+  ├─ importance scoring via Llama local
   ├─ decisión guardar / descartar
   └─ actualización de memoria
 ```
@@ -175,9 +175,9 @@ Motor de Persistencia
 | Migraciones | Alembic | Obligatorio desde el día uno |
 | DB vectorial | LanceDB | Embeddings episódicos, búsqueda semántica |
 | Inferencia local | Ollama | Fallback offline, identidad local |
-| Modelo local | Qwen 2.5 7B/8B | Identidad, routing, scoring sin cuota |
+| Modelo local | Llama 3.2 1B | Identidad, routing, scoring sin cuota |
 | Provider externo 1 | Antigravity CLI | Google + Claude + GPT via subprocess |
-| Provider externo 2 | OpenCode CLI | GPT / Codex / Deepseek / Qwen via subprocess |
+| Provider externo 2 | OpenCode CLI | GPT / Codex / Deepseek / Llama via subprocess |
 
 ---
 
@@ -193,7 +193,7 @@ Uso exclusivo: identidad, routing, importance scoring, modo offline
 
 | Modelo | Rol |
 |---|---|
-| Qwen 2.5 7B | Identidad base, scoring de memoria, offline |
+| Llama 3.2 1B | Identidad base, scoring de memoria, offline |
 
 ### Antigravity CLI — Google + Claude + GPT
 
@@ -208,7 +208,7 @@ Antigravity CLI es el sucesor oficial de Gemini CLI desde Google I/O 2026. Close
 | `claude-sonnet-4-6` | high_cost | Razonamiento alternativo, escritura técnica |
 | `claude-opus-4-6` | high_cost | Máxima capacidad — cuota limitada, criterio estricto |
 
-### OpenCode CLI — GPT / Codex / Deepseek / Qwen
+### OpenCode CLI — GPT / Codex / Deepseek / Llama
 
 Invocación: `subprocess → opencode run --model provider/model "prompt"`  
 Modo no-interactivo nativo. Ideal para coding con contexto de archivos y repos.
@@ -274,7 +274,7 @@ default_tier = "low_cost"
 
 [routing.tiers.free]
 provider = "ollama"
-models = ["qwen2.5:7b"]
+models = ["llama3.2:1b"]
 
 [routing.tiers.low_cost]
 antigravity = ["gemini-3.5-flash-high", "gemini-3.5-flash-low"]
@@ -347,7 +347,7 @@ class Episode:
     duration_seconds: int | None
     friction_score: float        # 0.0 = fluido, 1.0 = alta fricción
     tags: list[str]              # área técnica, tipo de tarea, proyecto
-    importance: float            # 0.0–1.0, calculado por Qwen local
+    importance: float            # 0.0–1.0, calculado por Llama local
     model_used: str              # modelo que respondió
     provider_used: str           # provider usado
     memory_schema_version: str   # versión del esquema de memoria
@@ -411,9 +411,9 @@ Una memoria se persiste si cumple al menos uno:
 - el usuario la confirma cuando Jules la sugiere
 
 El sistema aplica:
-- **Importance scoring** — Qwen local evalúa relevancia (0.0–1.0). Score < 0.3 se descarta.
+- **Importance scoring** — Llama local evalúa relevancia (0.0–1.0). Score < 0.3 se descarta.
 
-  > **Calibración obligatoria antes de integrar:** antes de conectar el scoring al flujo real, probar el prompt de scoring contra 10–15 episodios de ejemplo con Qwen corriendo en Ollama. Qwen 2.5 7B necesita un prompt bien diseñado para devolver floats coherentes sobre contenido técnico. Si el modelo no lo hace bien en pruebas aisladas, el threshold de 0.3 será arbitrario y el motor de persistencia descartará o guardará basura. Ajustar prompt y threshold con datos reales antes de dar el módulo por done.
+  > **Calibración obligatoria antes de integrar:** antes de conectar el scoring al flujo real, probar el prompt de scoring contra 10–15 episodios de ejemplo con Llama corriendo en Ollama. Llama 3.2 1B necesita un prompt bien diseñado para devolver floats coherentes sobre contenido técnico. Si el modelo no lo hace bien en pruebas aisladas, el threshold de 0.3 será arbitrario y el motor de persistencia descartará o guardará basura. Ajustar prompt y threshold con datos reales antes de dar el módulo por done.
 - **Summarización** — compresión periódica de episodios similares antiguos
 - **Pruning** — eliminación de memorias contradichas u obsoletas
 - **Decay** — memorias sin acceso reducen su peso (10% por cada 30 días, mínimo 0.1)
@@ -428,7 +428,7 @@ PostProcessor.extract_candidates(response, session_context)
   ↓
 Sanitizador (segunda pasada)
   ↓
-ImportanceScorer.score(episode) via Qwen local
+ImportanceScorer.score(episode) via Llama local
   ↓
 if score >= 0.3:
     EpisodicMemory.persist(episode)     # LanceDB
@@ -630,7 +630,7 @@ Jules vive en la terminal. Sin overhead visual.
 ├── config.toml
 ├── personality/
 │   ├── master.md          # identidad canónica — versionada semánticamente
-│   ├── local.md           # ajustes para Ollama / Qwen
+│   ├── local.md           # ajustes para Ollama / Llama
 │   ├── antigravity.md     # ajustes para Antigravity CLI
 │   └── opencode.md        # ajustes para OpenCode CLI
 ├── memory/
@@ -804,7 +804,7 @@ default_tier = "low_cost"
 
 [routing.tiers.free]
 provider = "ollama"
-models   = ["qwen2.5:7b"]
+models   = ["llama3.2:1b"]
 
 [routing.tiers.low_cost]
 antigravity = ["gemini-3.5-flash-high", "gemini-3.5-flash-low"]
@@ -872,7 +872,7 @@ memory_retrieval_timeout_ms = 150
 - El router selecciona el modelo correcto según tipo de tarea y tier
 - El fallback a Ollama funciona cuando los CLIs externos no responden
 - La búsqueda semántica recupera memorias relevantes (no solo las más recientes)
-- Qwen local hace importance scoring sin consumir cuota externa
+- Llama local hace importance scoring sin consumir cuota externa
 - El sistema de permisos rechaza acciones no autorizadas
 
 ### Fase 2 — Done cuando:
@@ -899,7 +899,7 @@ memory_retrieval_timeout_ms = 150
 - CLI funcional con respuesta sin latencia perceptible
 - Sanitizador con tests de seguridad
 - Memoria persistente (SQLite + LanceDB)
-- Qwen 2.5 via Ollama — identidad local y scoring
+- Llama 3.2 via Ollama — identidad local y scoring
 - Antigravity CLI — provider principal externo
 - OpenCode CLI — provider de coding
 - Router quota-aware con tiers
