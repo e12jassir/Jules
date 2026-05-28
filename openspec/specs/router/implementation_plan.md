@@ -1,83 +1,45 @@
-# Module 5 — Quota-Aware Cognitive Router (Ruteador Cognitivo)
+# Module 5 — Quota-Aware Cognitive Router (V2 Redesign)
 
 ## Goal Description
-Implement the core tactical brain of Jules: the **Quota-Aware Cognitive Router**. The router acts as the single unified entry point for all prompts, decoupling the core logic from specific commercial models. It dynamically selects the optimal provider (`Ollama`, `Antigravity`, or `OpenCode`) and model based on task complexity, available budget tiers, and provider health.
+Implement the Quota-Aware Cognitive Router, but fixing the critical flaws discovered during Judgment Day. We must achieve zero-latency I/O, eliminate race conditions during concurrent Antigravity CLI calls, and securely prevent local tasks from leaking to cloud providers during fallbacks.
 
 ## User Review Required
 
 > [!IMPORTANT]
-> **Environmental Isolation for Antigravity**
-> To allow Jules to use its own models for `agy` without interfering with your personal CLI usage, we will implement Environmental Isolation. The router/provider will inject `XDG_CONFIG_HOME=~/.jules/antigravity_config` exclusively into the subprocess environment. Do you approve this isolation strategy?
+> **Static Multi-Profile Architecture for Antigravity**
+> Instead of dynamically creating temporary directories and writing TOML files on *every* request (which causes race conditions and blocks the async loop), we will generate static config directories for each configured model *once* during initialization.
+>
+> Example: `~/.jules/antigravity_profiles/gemini-3.5-flash-low/config.toml`.
+> When routing, Jules will simply point `XDG_CONFIG_HOME` to the pre-generated static path. No disk I/O occurs during the critical `ask()` path. Do you approve this static caching approach?
 
-> [!CAUTION]
-> **Fallback Chain Strategy**
-> The planned fallback logic is: `Primary Model (from config)` -> `Ollama (Local)`. If the primary provider times out or fails (e.g. no internet), it instantly degrades to local execution to guarantee a response. Do you agree with this strict 2-step chain?
+## Proposed Changes (Fixes to be applied)
 
-## Open Questions
-
-> [!WARNING]
-> 1. Do we want to store `config.toml` in the project root (`Jules/config.toml`) for development (Phase 1), or should it strictly reside in `~/.jules/config.toml` immediately? 
-> 2. What should be the default `low_cost` and `high_cost` models for OpenCode in the initial configuration template?
-
-## Proposed Changes
-
-### Configuration Layer
-The router must read tiers dynamically without hardcoding models in Python.
-
-#### [NEW] [config.toml](file:///home/e12jassir/proyects/Jules/config.toml)
-Create the baseline configuration file (or template) defining the tiers:
-```toml
-[routing]
-default_tier = "low_cost"
-
-[routing.tiers.low_cost]
-antigravity = ["gemini-3.5-flash-low"]
-opencode = ["opencode/deepseek-v4-flash-free"]
-
-[routing.tiers.high_cost]
-antigravity = ["gemini-3.5-pro"]
-opencode = ["opencode/deepseek-r1-heavy"]
-```
-
-#### [NEW] [jules/core/config.py](file:///home/e12jassir/proyects/Jules/jules/core/config.py)
-Implement a lightweight configuration parser (using standard library `tomllib` available in Python 3.11+) to load the routing rules into a dataclass schema.
-
----
-
-### Core Routing Engine
-
-#### [NEW] [jules/core/router.py](file:///home/e12jassir/proyects/Jules/jules/core/router.py)
-Implement the central routing logic.
-- **`TaskType` (Enum):** `IDENTITY`, `MEMORY_SCORING`, `QUICK`, `REASONING`, `CODING`, `CODING_HEAVY`, `ANALYSIS`, `OFFLINE`.
-- **`route(task: TaskType, user_override: str | None = None) -> tuple[Provider, str]`**: Algorithm to select the provider instance and the model string based on `config.toml`.
-- **`ask_with_fallback(prompt: str, context: SessionContext, task: TaskType) -> tuple[str, str, str]`**: Unified orchestrator method. Returns `(response, model_used, provider_used)`.
-
----
-
-### Provider Refactoring (Environmental Isolation)
-
+### 1. Fix Antigravity Isolation (No more TempDirs per request)
 #### [MODIFY] [jules/providers/antigravity.py](file:///home/e12jassir/proyects/Jules/jules/providers/antigravity.py)
-- Update `_run_cli` to inject a custom `env` dictionary to the subprocess `asyncio.create_subprocess_exec`, overriding `XDG_CONFIG_HOME` to point to a Jules-specific config directory (`~/.jules/antigravity_config`). This guarantees zero collision with the user's personal CLI configuration.
+- **Init Phase:** Create a synchronous `_ensure_profile(model: str)` method that runs *once* when the provider is initialized or the first time a model is requested.
+- **Profile Generation:** This method uses `shutil.copytree` to copy `~/.config/antigravity` to a stable cache path like `~/.jules/agy_profiles/<model_name>`. It then updates the `config.toml` inside safely (using regex or string replacement to avoid wiping out integers/booleans).
+- **Execution Phase:** In `_run_cli()`, simply set `env["XDG_CONFIG_HOME"] = str(Path("~/.jules/agy_profiles") / model)`. **Remove all tempfile context managers and sync I/O from the async path.**
 
----
+### 2. Fix the Fallback Security Leak
+#### [MODIFY] [jules/core/router.py](file:///home/e12jassir/proyects/Jules/jules/core/router.py)
+- In the `ask_with_fallback` fallback loop, add a strict boundary check to prevent offline tasks from ever touching a cloud provider:
+  ```python
+  if task in LOCAL_ONLY_TASKS and fallback_provider_name != "ollama":
+      continue
+  ```
 
-### Test Suite
+### 3. Fix Router Crashes on Bad Configs
+#### [MODIFY] [jules/core/router.py](file:///home/e12jassir/proyects/Jules/jules/core/router.py)
+- Move the primary `self.route(task, user_override)` call *inside* the `try` block.
+- Update the exception handler to catch both routing and execution errors: `except (ProviderError, ValueError) as exc:`.
 
-#### [NEW] [tests/unit/test_router.py](file:///home/e12jassir/proyects/Jules/tests/unit/test_router.py)
-Exhaustive unit tests using `pytest-mock` and `pytest-asyncio`.
-- Verify `IDENTITY`, `MEMORY_SCORING`, and `OFFLINE` **always** route to Ollama.
-- Verify `CODING` routes to OpenCode.
-- Verify `QUICK` routes to Antigravity.
-- Simulate a `ProviderUnavailableError` or `ProviderTimeoutError` on the primary provider and assert that the Router catches it and triggers a fallback call to Ollama.
-- Verify `user_override` is strictly respected, bypassing normal routing.
+### 4. Fix Prompt Injection
+#### [MODIFY] [jules/providers/antigravity.py](file:///home/e12jassir/proyects/Jules/jules/providers/antigravity.py)
+- Drop the `.startswith("-")` string check entirely. Use standard POSIX conventions in `_run_cli`:
+  `args = [self.executable, "--print", "--", prompt]`
 
 ## Verification Plan
-
-### Automated Tests
-The implementation agent (GPT 5.5 / Sonnet) will run:
-```bash
-.venv/bin/pytest tests/unit/test_router.py -v
-```
-
-### Manual Verification
-We will update our interactive tester script (`test_provider.py` -> `test_router.py`) so the user can interact directly with the `Router` instead of manually selecting a provider. The user will type a prompt, and the script will output which provider and model the Router selected behind the scenes.
+1. GPT 5.5 will apply these precise surgical changes.
+2. It will update `tests/unit/test_router.py` to assert the new `~/.jules/agy_profiles/<model_name>` behavior.
+3. We will run `.venv/bin/pytest tests/unit/test_router.py` to ensure all 73 tests pass again.
+4. We will trigger Judgment Day (Round 4) to get the final `VERDICT: CLEAN`.

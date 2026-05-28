@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -89,6 +90,12 @@ def context() -> SessionContext:
     )
 
 
+def write_config(tmp_path: Path, fallback_chain: str = '["primary", "ollama"]') -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG_TEXT.replace('["primary", "ollama"]', fallback_chain))
+    return path
+
+
 def make_router(config_path: Path, **provider_overrides: FakeProvider) -> CognitiveRouter:
     providers = {
         "ollama": FakeProvider("ollama", response="local answer"),
@@ -136,14 +143,12 @@ def test_analysis_routes_to_antigravity_high_cost(config_path: Path) -> None:
     assert model == "ag-high"
 
 
-def test_user_override_provider_model_is_strictly_respected(config_path: Path) -> None:
-    provider, model = make_router(config_path).route(
-        TaskType.IDENTITY,
-        user_override="opencode:oc-high",
-    )
-
-    assert provider.name == "opencode"
-    assert model == "oc-high"
+def test_cloud_user_override_is_blocked_for_local_only_task(config_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires local provider"):
+        make_router(config_path).route(
+            TaskType.IDENTITY,
+            user_override="opencode:oc-high",
+        )
 
 
 def test_user_override_configured_model_resolves_provider(config_path: Path) -> None:
@@ -181,7 +186,7 @@ async def test_ask_with_fallback_degrades_directly_to_ollama(
     response, model, provider = await router.ask_with_fallback("hello", context, TaskType.CODING)
 
     assert (response, model, provider) == ("fallback answer", "local-test-model", "ollama")
-    assert [call[2] for call in opencode.calls] == ["oc-low"]
+    assert [call[2] for call in opencode.calls] == ["oc-low", "oc-low-secondary"]
     assert [call[2] for call in ollama.calls] == ["local-test-model"]
 
 
@@ -200,6 +205,38 @@ async def test_ask_with_fallback_degrades_on_generic_external_provider_error(
     assert (response, model, provider) == ("fallback answer", "local-test-model", "ollama")
 
 
+async def test_local_only_fallback_never_leaks_to_cloud_provider(
+    tmp_path: Path,
+    context: SessionContext,
+) -> None:
+    config_path = write_config(tmp_path, fallback_chain='["primary", "opencode", "ollama"]')
+    opencode = FakeProvider("opencode", response="cloud answer")
+    router = make_router(
+        config_path,
+        ollama=FakeProvider("ollama", error=ProviderUnavailableError("local down")),
+        opencode=opencode,
+    )
+
+    with pytest.raises(ProviderError, match="Local-only task identity failed"):
+        await router.ask_with_fallback("identity", context, TaskType.IDENTITY)
+
+    assert opencode.calls == []
+
+
+async def test_route_value_error_can_fallback_to_ollama(
+    tmp_path: Path,
+    context: SessionContext,
+) -> None:
+    config_path = write_config(tmp_path, fallback_chain='["primary", "ollama"]')
+    router = make_router(config_path)
+    low_cost_tier = router.config.routing.tiers["low_cost"]
+    router.config.routing.tiers["low_cost"] = replace(low_cost_tier, opencode=())
+
+    response, model, provider = await router.ask_with_fallback("hello", context, TaskType.CODING)
+
+    assert (response, model, provider) == ("local answer", "local-test-model", "ollama")
+
+
 async def test_ask_with_fallback_reports_when_ollama_also_fails(
     config_path: Path,
     context: SessionContext,
@@ -210,7 +247,7 @@ async def test_ask_with_fallback_reports_when_ollama_also_fails(
         ollama=FakeProvider("ollama", error=ProviderUnavailableError("local down")),
     )
 
-    with pytest.raises(ProviderError, match="Primary provider and Ollama fallback both failed"):
+    with pytest.raises(ProviderError, match="All providers in fallback chain failed"):
         await router.ask_with_fallback("hello", context, TaskType.CODING)
 
 
@@ -232,7 +269,53 @@ def test_empty_provider_override_model_fails(config_path: Path) -> None:
         make_router(config_path).route(TaskType.QUICK, user_override="opencode:")
 
 
-async def test_antigravity_run_cli_isolates_xdg_config_home_and_writes_model_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_antigravity_ask_uses_static_profile_and_prompt_separator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    source_config = tmp_path / "real_config"
+    source_config.mkdir()
+    (source_config / "config.toml").write_text('model = "old"\ntimeout = 60\nenabled = true\n', encoding="utf-8")
+    (source_config / "auth.json").write_text('{"token":"kept"}\n', encoding="utf-8")
+    captured_env: dict[str, str] = {}
+    captured_args: tuple[str, ...] = ()
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return b"ok", b""
+
+    async def fake_create_subprocess_exec(*args: str, **kwargs: object) -> FakeProcess:
+        nonlocal captured_args
+        captured_args = args
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        captured_env.update({str(key): str(value) for key, value in env.items()})
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    provider = AntigravityProvider()
+    provider.profile_root = tmp_path / "profiles"
+    provider.source_config = source_config
+    provider.prepare_profiles(("ag/low",))
+
+    response = await provider.ask("--not-a-flag", context=SessionContext(
+        project="Jules",
+        directory="/tmp/jules",
+        active_files=[],
+        inferred_intent="testing",
+        time_of_day="night",
+    ), model="ag/low")
+
+    expected_profile = provider._profile_path("ag/low")
+    assert response == "ok"
+    assert captured_args == ("agy", "--print", "--", "--not-a-flag")
+    assert captured_env["XDG_CONFIG_HOME"] == str(expected_profile)
+    assert (expected_profile / "antigravity" / "config.toml").read_text(encoding="utf-8") == (
+        'model = "ag/low"\ntimeout = 60\nenabled = true\n'
+    )
+    assert (expected_profile / "antigravity" / "auth.json").read_text(encoding="utf-8") == '{"token":"kept"}\n'
+
+
+async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured_env: dict[str, str] = {}
 
     class FakeProcess:
@@ -248,17 +331,12 @@ async def test_antigravity_run_cli_isolates_xdg_config_home_and_writes_model_con
         captured_env.update({str(key): str(value) for key, value in env.items()})
         return FakeProcess()
 
-    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    provider = AntigravityProvider()
+    provider.profile_root = tmp_path / "profiles"
 
-    response = await AntigravityProvider()._run_cli(
-        ["agy", "--print", "hello"],
-        timeout=1.0,
-        model="ag-low",
-    )
+    response = await provider._run_cli(["agy", "--print", "--", "hello"], timeout=1.0, model="ag-low")
 
-    expected_config_home = tmp_path / ".jules" / "antigravity_config"
-    model_config = expected_config_home / "antigravity" / "config.toml"
     assert response == "ok"
-    assert captured_env["XDG_CONFIG_HOME"] == str(expected_config_home)
-    assert model_config.read_text() == 'model = "ag-low"\n'
+    assert captured_env["XDG_CONFIG_HOME"] == str(provider._profile_path("ag-low"))
+    assert not (tmp_path / "profiles").exists()

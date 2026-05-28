@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
-import tomllib
 from typing import AsyncIterator
 
 from jules.memory.models import SessionContext
@@ -18,16 +19,24 @@ from jules.providers.base import (
 class AntigravityProvider:
     name = "antigravity"
 
-    def __init__(self, timeout_seconds: float = 60.0) -> None:
+    def __init__(self, timeout_seconds: float = 60.0, models: tuple[str, ...] = ()) -> None:
         self.executable = "agy"
         self.timeout_seconds = timeout_seconds
+        self.profile_root = Path.home() / ".jules" / "agy_profiles"
+        self.source_config = Path.home() / ".config" / "antigravity"
+        self._prepared_models: set[str] = set()
+        self.prepare_profiles(models)
+
+    def prepare_profiles(self, models: tuple[str, ...]) -> None:
+        for model in models:
+            self._ensure_profile(model)
 
     async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
         del context
-        if prompt.startswith("-"):
-            raise ProviderError("Invalid prompt: must not start with '-' to prevent argument injection.")
+        if model not in self._prepared_models:
+            raise ProviderError(f"Antigravity profile for model {model!r} was not prepared")
         return await self._run_cli(
-            [self.executable, "--print", prompt],
+            [self.executable, "--print", "--", prompt],
             timeout=self.timeout_seconds,
             model=model,
         )
@@ -50,16 +59,34 @@ class AntigravityProvider:
         )
 
     async def health_check(self) -> bool:
-        return shutil.which(self.executable) is not None
+        return await asyncio.to_thread(shutil.which, self.executable) is not None
 
     async def close(self) -> None:
         pass
 
+    def _ensure_profile(self, model: str) -> Path:
+        if model in self._prepared_models:
+            return self._profile_path(model)
+
+        profile_path = self._profile_path(model)
+        config_dir = profile_path / "antigravity"
+        if self.source_config.is_dir():
+            self._copy_config(self.source_config, config_dir)
+        else:
+            config_dir.mkdir(parents=True, exist_ok=True)
+
+        self._write_model_config(profile_path, model)
+        self._prepared_models.add(model)
+        return profile_path
+
+    def _copy_config(self, src: Path, dest: Path) -> None:
+        shutil.copytree(src, dest, dirs_exist_ok=True, symlinks=True)
+
+    def _profile_path(self, model: str) -> Path:
+        return self.profile_root / self._safe_profile_name(model)
+
     async def _run_cli(self, args: list[str], timeout: float, model: str | None = None) -> str:
-        config_home = Path.home() / ".jules" / "antigravity_config"
-        config_home.mkdir(parents=True, exist_ok=True)
-        if model:
-            self._write_model_config(config_home, model)
+        config_home = self._profile_path(model) if model else self.profile_root
         env = {**os.environ, "XDG_CONFIG_HOME": str(config_home)}
 
         try:
@@ -69,9 +96,9 @@ class AntigravityProvider:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
-        except FileNotFoundError as exc:
+        except OSError as exc:
             raise ProviderUnavailableError(
-                f"Antigravity CLI executable not found: {self.executable}"
+                f"Antigravity CLI executable not found or not executable: {self.executable}"
             ) from exc
 
         try:
@@ -103,22 +130,22 @@ class AntigravityProvider:
     def _write_model_config(self, config_home: Path, model: str) -> None:
         config_path = config_home / "antigravity" / "config.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        existing = self._read_existing_config(config_path)
-        existing["model"] = model
-        config_path.write_text(self._render_toml(existing), encoding="utf-8")
+        current = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
 
-    def _read_existing_config(self, config_path: Path) -> dict[str, str]:
-        if not config_path.exists():
-            return {}
-        try:
-            with config_path.open("rb") as config_file:
-                raw = tomllib.load(config_file)
-        except tomllib.TOMLDecodeError as exc:
-            raise ProviderError(f"Invalid Antigravity isolated config: {config_path}") from exc
-        return {key: value for key, value in raw.items() if isinstance(value, str)}
+        model_line = f'model = "{self._escape_toml(model)}"'
 
-    def _render_toml(self, values: dict[str, str]) -> str:
-        return "".join(f'{key} = "{self._escape_toml(value)}"\n' for key, value in sorted(values.items()))
+        if re.search(r'^\s*model\s*=', current, flags=re.MULTILINE):
+            updated = re.sub(r'^\s*model\s*=.*', model_line, current, count=1, flags=re.MULTILINE)
+        else:
+            updated = model_line + "\n" + current if current else model_line + "\n"
+
+        config_path.write_text(updated, encoding="utf-8")
+
+    @staticmethod
+    def _safe_profile_name(model: str) -> str:
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", model)
+        model_hash = hashlib.md5(model.encode("utf-8")).hexdigest()[:6]
+        return f"{safe_name}_{model_hash}"
 
     @staticmethod
     def _escape_toml(value: str) -> str:

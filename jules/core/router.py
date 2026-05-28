@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from enum import Enum
 import logging
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Mapping
 from jules.core.config import JulesConfig, RoutingTier, load_config
 from jules.memory.models import SessionContext
 from jules.providers.antigravity import AntigravityProvider
-from jules.providers.base import Provider, ProviderError, ProviderTimeoutError, ProviderUnavailableError
+from jules.providers.base import Provider, ProviderError
 from jules.providers.ollama import OllamaProvider
 from jules.providers.opencode import OpenCodeProvider
 
@@ -28,6 +29,7 @@ class TaskType(str, Enum):
 
 LOCAL_ONLY_TASKS = {TaskType.IDENTITY, TaskType.MEMORY_SCORING, TaskType.OFFLINE}
 
+_router_instance: CognitiveRouter | None = None
 
 class CognitiveRouter:
     def __init__(
@@ -39,28 +41,38 @@ class CognitiveRouter:
         self.config = config or load_config(config_path)
         self.providers = dict(providers) if providers is not None else self._build_providers()
 
+    def _get_tier(self, name: str) -> RoutingTier:
+        try:
+            return self.config.routing.tiers[name]
+        except KeyError:
+            pass
+        try:
+            return self.config.routing.tiers[self.config.routing.default_tier]
+        except KeyError:
+            if not self.config.routing.tiers:
+                raise ValueError("No routing tiers configured")
+            return next(iter(self.config.routing.tiers.values()))
+
     def route(self, task: TaskType, user_override: str | None = None) -> tuple[Provider, str]:
         if user_override:
-            return self._resolve_user_override(user_override)
+            provider, model = self._resolve_user_override(user_override)
+            if task in LOCAL_ONLY_TASKS and provider.name != "ollama":
+                raise ValueError(f"Task {task.value} requires local provider, cannot override to {provider.name}")
+            return provider, model
 
         if task in LOCAL_ONLY_TASKS:
             return self._ollama_route()
 
         if task == TaskType.CODING:
-            return self._provider_route("opencode", self.config.routing.tiers["low_cost"])
+            return self._provider_route("opencode", self._get_tier("low_cost"))
 
         if task == TaskType.CODING_HEAVY:
-            return self._provider_route("opencode", self.config.routing.tiers["high_cost"])
+            return self._provider_route("opencode", self._get_tier("high_cost"))
 
         if task == TaskType.ANALYSIS:
-            return self._provider_route("antigravity", self.config.routing.tiers["high_cost"])
+            return self._provider_route("antigravity", self._get_tier("high_cost"))
 
-        if task in {TaskType.QUICK, TaskType.REASONING}:
-            tier = self.config.routing.tiers[self.config.routing.default_tier]
-            return self._provider_route("antigravity", tier)
-
-        tier = self.config.routing.tiers[self.config.routing.default_tier]
-        return self._provider_route("antigravity", tier)
+        return self._provider_route("antigravity", self._get_tier(self.config.routing.default_tier))
 
     async def ask_with_fallback(
         self,
@@ -69,39 +81,83 @@ class CognitiveRouter:
         task: TaskType,
         user_override: str | None = None,
     ) -> tuple[str, str, str]:
-        provider, model = self.route(task, user_override=user_override)
-        logger.info(
-            "Router selected model",
-            extra={"provider": provider.name, "model": model, "task_type": task.value},
-        )
-
+        provider_name = "unresolved"
+        model = "unresolved"
+        tier = None
         try:
-            response = await provider.ask(prompt, context, model)
-            return response, model, provider.name
-        except ProviderError as exc:
-            if provider.name == "ollama" or "ollama" not in self.config.routing.fallback_chain:
-                raise ProviderError(f"Provider failed with no fallback available: {exc}") from exc
-            logger.warning(
-                "Provider failed, falling back to Ollama",
+            provider, model = self.route(task, user_override=user_override)
+            provider_name = provider.name
+            tier = None if user_override else self._tier_for_task(task)
+            logger.info(
+                "Router selected model",
                 extra={"provider": provider.name, "model": model, "task_type": task.value},
             )
-            ollama, ollama_model = self._ollama_route()
-            try:
-                response = await ollama.ask(prompt, context, ollama_model)
-            except ProviderError as fallback_exc:
-                raise ProviderError(f"Primary provider and Ollama fallback both failed: {fallback_exc}") from fallback_exc
-            return response, ollama_model, ollama.name
+            response = await provider.ask(prompt, context, model)
+            return response, model, provider.name
+        except (ProviderError, ValueError) as exc:
+            if isinstance(exc, ValueError) and ("override" in str(exc).lower() or "requires local" in str(exc).lower()):
+                raise
+            last_exc = exc
+            if task in LOCAL_ONLY_TASKS:
+                raise ProviderError(f"Local-only task {task.value} failed, no fallbacks allowed. Last error: {last_exc}") from last_exc
+
+            if tier is not None:
+                models = self._models_for_provider(provider_name, tier)
+                if model in models:
+                    for secondary_model in models[models.index(model) + 1:]:
+                        logger.warning(
+                            "Provider model failed, falling back to same-tier secondary model",
+                            extra={
+                                "provider": provider_name,
+                                "model": model,
+                                "fallback_model": secondary_model,
+                                "task_type": task.value,
+                            },
+                        )
+                        try:
+                            fallback_provider = self._provider_by_name(provider_name)
+                            response = await fallback_provider.ask(prompt, context, secondary_model)
+                            return response, secondary_model, fallback_provider.name
+                        except (ProviderError, ValueError) as fallback_exc:
+                            last_exc = fallback_exc
+
+            for fallback_name in self.config.routing.fallback_chain:
+                if fallback_name == "primary" or fallback_name == provider_name:
+                    continue
+
+                logger.warning(
+                    "Provider failed, falling back to %s",
+                    fallback_name,
+                    extra={"provider": provider_name, "fallback": fallback_name, "task_type": task.value},
+                )
+
+                try:
+                    if fallback_name == "ollama":
+                        fallback_provider, fallback_model = self._ollama_route()
+                    else:
+                        fallback_tier = self._get_tier(self.config.routing.default_tier)
+                        fallback_provider, fallback_model = self._provider_route(fallback_name, fallback_tier)
+
+                    response = await fallback_provider.ask(prompt, context, fallback_model)
+                    return response, fallback_model, fallback_provider.name
+                except (ProviderError, ValueError) as fallback_exc:
+                    last_exc = fallback_exc
+
+            raise ProviderError(f"All providers in fallback chain failed. Last error: {last_exc}") from last_exc
 
     def _build_providers(self) -> dict[str, Provider]:
         provider_config = self.config.providers
+        ollama_default = self._ollama_model()
+
         return {
             "ollama": OllamaProvider(
                 base_url=provider_config.ollama.base_url,
                 timeout_seconds=provider_config.ollama.timeout_seconds,
-                default_model=self._ollama_model(),
+                default_model=ollama_default,
             ),
             "antigravity": AntigravityProvider(
                 timeout_seconds=provider_config.antigravity.timeout_seconds,
+                models=self._configured_models_for_provider("antigravity"),
             ),
             "opencode": OpenCodeProvider(
                 timeout_seconds=provider_config.opencode.timeout_seconds,
@@ -109,13 +165,23 @@ class CognitiveRouter:
         }
 
     def _resolve_user_override(self, override: str) -> tuple[Provider, str]:
+        matches = []
         for provider_name, model in self._configured_models():
-            if model == override:
-                return self._provider_by_name(provider_name), model
+            if model == override and provider_name not in [m[0].name for m in matches]:
+                matches.append((self.providers[provider_name], model))
+
+        if len(matches) > 1:
+            raise ValueError(f"Ambiguous model override '{override}'. Found in multiple providers. Please use 'provider:{override}'.")
+        if matches:
+            return matches[0]
 
         if ":" in override:
             provider_name, model = override.split(":", 1)
-            return self._provider_by_name(provider_name), self._validate_model(model, override)
+            try:
+                provider = self.providers[provider_name]
+            except KeyError as exc:
+                raise ValueError(f"Unknown provider override: '{provider_name}'") from exc
+            return provider, self._validate_model(model, override)
 
         raise ValueError(
             "user_override must be 'provider:model' or a model present in config.toml"
@@ -127,14 +193,21 @@ class CognitiveRouter:
             raise ValueError(f"No {provider_name} models configured for requested routing tier")
         return self._provider_by_name(provider_name), models[0]
 
+    def _tier_for_task(self, task: TaskType) -> RoutingTier:
+        if task == TaskType.CODING:
+            return self._get_tier("low_cost")
+        if task in {TaskType.CODING_HEAVY, TaskType.ANALYSIS}:
+            return self._get_tier("high_cost")
+        return self._get_tier(self.config.routing.default_tier)
+
     def _ollama_route(self) -> tuple[Provider, str]:
         return self._provider_by_name("ollama"), self._ollama_model()
 
     def _ollama_model(self) -> str:
-        free_tier = self.config.routing.tiers["free"]
-        if not free_tier.models:
-            raise ValueError("No Ollama model configured in [routing.tiers.free].models")
-        return free_tier.models[0]
+        tier = self._get_tier("free")
+        if not tier.models:
+            raise ValueError("No Ollama model configured in tier")
+        return tier.models[0]
 
     def _provider_by_name(self, provider_name: str) -> Provider:
         try:
@@ -149,6 +222,13 @@ class CognitiveRouter:
             entries.extend(("antigravity", model) for model in tier.antigravity)
             entries.extend(("opencode", model) for model in tier.opencode)
         return tuple(entries)
+
+    def _configured_models_for_provider(self, provider_name: str) -> tuple[str, ...]:
+        return tuple(
+            model
+            for configured_provider, model in self._configured_models()
+            if configured_provider == provider_name
+        )
 
     @staticmethod
     def _models_for_provider(provider_name: str, tier: RoutingTier) -> tuple[str, ...]:
@@ -167,8 +247,15 @@ class CognitiveRouter:
         return model
 
 
-def route(task: TaskType, user_override: str | None = None) -> tuple[Provider, str]:
-    return CognitiveRouter().route(task, user_override=user_override)
+async def _get_router() -> CognitiveRouter:
+    global _router_instance
+    if _router_instance is None:
+        _router_instance = await asyncio.to_thread(CognitiveRouter)
+    return _router_instance
+
+async def route(task: TaskType, user_override: str | None = None) -> tuple[Provider, str]:
+    router = await _get_router()
+    return router.route(task, user_override=user_override)
 
 
 async def ask_with_fallback(
@@ -177,7 +264,8 @@ async def ask_with_fallback(
     task: TaskType,
     user_override: str | None = None,
 ) -> tuple[str, str, str]:
-    return await CognitiveRouter().ask_with_fallback(
+    router = await _get_router()
+    return await router.ask_with_fallback(
         prompt,
         context,
         task,
