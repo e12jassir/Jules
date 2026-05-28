@@ -253,6 +253,21 @@ async def _get_router() -> CognitiveRouter:
         _router_instance = await asyncio.to_thread(CognitiveRouter)
     return _router_instance
 
+
+async def close_router() -> None:
+    global _router_instance
+    if _router_instance is None:
+        return
+
+    for provider in _router_instance.providers.values():
+        close = getattr(provider, "close", None)
+        if close is None:
+            continue
+        await close()
+
+    _router_instance = None
+
+
 async def route(task: TaskType, user_override: str | None = None) -> tuple[Provider, str]:
     router = await _get_router()
     return router.route(task, user_override=user_override)
