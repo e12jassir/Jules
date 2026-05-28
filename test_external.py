@@ -17,7 +17,7 @@ def get_test_context() -> SessionContext:
 async def test_antigravity():
     print("\n--- 🛸 PROBANDO ANTIGRAVITY PROVIDER (agy) ---")
     model = "gemini-3.5-flash-low"
-    provider = AntigravityProvider(timeout_seconds=10.0, models=(model,))
+    provider = AntigravityProvider(timeout_seconds=30.0, models=(model,))
     context = get_test_context()
     try:
         if not await provider.health_check():
