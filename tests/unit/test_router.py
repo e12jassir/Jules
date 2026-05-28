@@ -269,7 +269,10 @@ def test_empty_provider_override_model_fails(config_path: Path) -> None:
         make_router(config_path).route(TaskType.QUICK, user_override="opencode:")
 
 
-async def test_antigravity_ask_uses_static_profile_and_prompt_separator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_antigravity_ask_passes_prompt_directly_without_separator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """agy --print <prompt> — no '--' separator; prompt goes as a positional arg."""
     source_config = tmp_path / "real_config"
     source_config.mkdir()
     (source_config / "config.toml").write_text('model = "old"\ntimeout = 60\nenabled = true\n', encoding="utf-8")
@@ -297,7 +300,7 @@ async def test_antigravity_ask_uses_static_profile_and_prompt_separator(monkeypa
     provider.source_config = source_config
     provider.prepare_profiles(("ag/low",))
 
-    response = await provider.ask("--not-a-flag", context=SessionContext(
+    response = await provider.ask("hello world", context=SessionContext(
         project="Jules",
         directory="/tmp/jules",
         active_files=[],
@@ -307,12 +310,35 @@ async def test_antigravity_ask_uses_static_profile_and_prompt_separator(monkeypa
 
     expected_profile = provider._profile_path("ag/low")
     assert response == "ok"
-    assert captured_args == ("agy", "--print", "--", "--not-a-flag")
+    # No '--' separator — prompt is passed directly as a positional arg.
+    assert captured_args == ("agy", "--print", "hello world")
     assert captured_env["XDG_CONFIG_HOME"] == str(expected_profile)
     assert (expected_profile / "antigravity" / "config.toml").read_text(encoding="utf-8") == (
         'model = "ag/low"\ntimeout = 60\nenabled = true\n'
     )
     assert (expected_profile / "antigravity" / "auth.json").read_text(encoding="utf-8") == '{"token":"kept"}\n'
+
+
+async def test_antigravity_ask_rejects_prompt_starting_with_dash(
+    tmp_path: Path,
+) -> None:
+    """Prompts starting with '-' are rejected to prevent argument injection."""
+    source_config = tmp_path / "real_config"
+    source_config.mkdir()
+    (source_config / "config.toml").write_text('model = "old"\n', encoding="utf-8")
+    provider = AntigravityProvider()
+    provider.profile_root = tmp_path / "profiles"
+    provider.source_config = source_config
+    provider.prepare_profiles(("ag/low",))
+
+    with pytest.raises(ProviderError, match="must not start with '-'"):
+        await provider.ask("--not-a-flag", context=SessionContext(
+            project="Jules",
+            directory="/tmp/jules",
+            active_files=[],
+            inferred_intent="testing",
+            time_of_day="night",
+        ), model="ag/low")
 
 
 async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

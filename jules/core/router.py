@@ -12,6 +12,7 @@ from jules.providers.antigravity import AntigravityProvider
 from jules.providers.base import Provider, ProviderError
 from jules.providers.ollama import OllamaProvider
 from jules.providers.opencode import OpenCodeProvider
+from jules.providers.codex import CodexProvider
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,9 @@ class CognitiveRouter:
             ),
             "opencode": OpenCodeProvider(
                 timeout_seconds=provider_config.opencode.timeout_seconds,
+            ),
+            "codex": CodexProvider(
+                timeout_seconds=120.0,
             ),
         }
 

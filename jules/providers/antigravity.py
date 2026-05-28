@@ -35,8 +35,10 @@ class AntigravityProvider:
         del context
         if model not in self._prepared_models:
             raise ProviderError(f"Antigravity profile for model {model!r} was not prepared")
+        if prompt.startswith("-"):
+            raise ProviderError("Invalid prompt: must not start with '-' to prevent argument injection.")
         return await self._run_cli(
-            [self.executable, "--print", "--", prompt],
+            [self.executable, "--print", prompt],
             timeout=self.timeout_seconds,
             model=model,
         )
