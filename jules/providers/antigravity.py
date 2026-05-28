@@ -80,7 +80,7 @@ class AntigravityProvider:
         return profile_path
 
     def _copy_config(self, src: Path, dest: Path) -> None:
-        shutil.copytree(src, dest, dirs_exist_ok=True, symlinks=True)
+        shutil.copytree(src, dest, dirs_exist_ok=True, symlinks=False)
 
     def _profile_path(self, model: str) -> Path:
         return self.profile_root / self._safe_profile_name(model)
@@ -130,7 +130,12 @@ class AntigravityProvider:
     def _write_model_config(self, config_home: Path, model: str) -> None:
         config_path = config_home / "antigravity" / "config.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        current = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+
+        if config_path.is_symlink():
+            current = config_path.read_text(encoding="utf-8")
+            config_path.unlink()
+        else:
+            current = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
 
         model_line = f'model = "{self._escape_toml(model)}"'
 

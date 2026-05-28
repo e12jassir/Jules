@@ -340,3 +340,46 @@ async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.
     assert response == "ok"
     assert captured_env["XDG_CONFIG_HOME"] == str(provider._profile_path("ag-low"))
     assert not (tmp_path / "profiles").exists()
+
+
+def test_antigravity_profile_symlink_safety(tmp_path: Path) -> None:
+    # 1. Test _copy_config dereferences symlinks
+    source_dir = tmp_path / "source_config"
+    source_dir.mkdir()
+    real_file = tmp_path / "real_file.toml"
+    real_file.write_text("token = 'secret'", encoding="utf-8")
+
+    symlink_file = source_dir / "config.toml"
+    symlink_file.symlink_to(real_file)
+
+    provider = AntigravityProvider()
+    dest_dir = tmp_path / "profile_config"
+    provider._copy_config(source_dir, dest_dir)
+
+    dest_file = dest_dir / "config.toml"
+    assert dest_file.exists()
+    assert not dest_file.is_symlink()  # Must not be a symlink!
+    assert dest_file.read_text(encoding="utf-8") == "token = 'secret'"
+
+    # 2. Test _write_model_config breaks existing symlinks to prevent mutating user config
+    profile_dir = tmp_path / "profile_home"
+    profile_config_dir = profile_dir / "antigravity"
+    profile_config_dir.mkdir(parents=True)
+
+    user_real_config = tmp_path / "user_real_config.toml"
+    user_real_config.write_text("model = 'original'\nenabled = true", encoding="utf-8")
+
+    symlink_in_profile = profile_config_dir / "config.toml"
+    symlink_in_profile.symlink_to(user_real_config)
+
+    # Write model config
+    provider._write_model_config(profile_dir, "new-model")
+
+    # The symlink in the profile must be broken and turned into a regular file
+    assert symlink_in_profile.exists()
+    assert not symlink_in_profile.is_symlink()
+    assert 'model = "new-model"' in symlink_in_profile.read_text(encoding="utf-8")
+
+    # The user's real config must remain completely untouched!
+    assert user_real_config.read_text(encoding="utf-8") == "model = 'original'\nenabled = true"
+
