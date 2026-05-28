@@ -23,7 +23,7 @@ class Provider(Protocol):
     async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
         ...
 
-    async def stream(
+    def stream(
         self,
         prompt: str,
         context: SessionContext,

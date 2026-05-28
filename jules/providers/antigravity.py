@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
+from pathlib import Path
 import shutil
+import tomllib
 from typing import AsyncIterator
 
 from jules.memory.models import SessionContext
@@ -20,15 +23,16 @@ class AntigravityProvider:
         self.timeout_seconds = timeout_seconds
 
     async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
-        del context, model
+        del context
         if prompt.startswith("-"):
             raise ProviderError("Invalid prompt: must not start with '-' to prevent argument injection.")
         return await self._run_cli(
             [self.executable, "--print", prompt],
             timeout=self.timeout_seconds,
+            model=model,
         )
 
-    async def stream(
+    def stream(
         self,
         prompt: str,
         context: SessionContext,
@@ -51,12 +55,19 @@ class AntigravityProvider:
     async def close(self) -> None:
         pass
 
-    async def _run_cli(self, args: list[str], timeout: float) -> str:
+    async def _run_cli(self, args: list[str], timeout: float, model: str | None = None) -> str:
+        config_home = Path.home() / ".jules" / "antigravity_config"
+        config_home.mkdir(parents=True, exist_ok=True)
+        if model:
+            self._write_model_config(config_home, model)
+        env = {**os.environ, "XDG_CONFIG_HOME": str(config_home)}
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
         except FileNotFoundError as exc:
             raise ProviderUnavailableError(
@@ -88,3 +99,27 @@ class AntigravityProvider:
             )
 
         return stdout_text
+
+    def _write_model_config(self, config_home: Path, model: str) -> None:
+        config_path = config_home / "antigravity" / "config.toml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = self._read_existing_config(config_path)
+        existing["model"] = model
+        config_path.write_text(self._render_toml(existing), encoding="utf-8")
+
+    def _read_existing_config(self, config_path: Path) -> dict[str, str]:
+        if not config_path.exists():
+            return {}
+        try:
+            with config_path.open("rb") as config_file:
+                raw = tomllib.load(config_file)
+        except tomllib.TOMLDecodeError as exc:
+            raise ProviderError(f"Invalid Antigravity isolated config: {config_path}") from exc
+        return {key: value for key, value in raw.items() if isinstance(value, str)}
+
+    def _render_toml(self, values: dict[str, str]) -> str:
+        return "".join(f'{key} = "{self._escape_toml(value)}"\n' for key, value in sorted(values.items()))
+
+    @staticmethod
+    def _escape_toml(value: str) -> str:
+        return value.replace("\\", "\\\\").replace('"', '\\"')

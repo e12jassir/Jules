@@ -33,7 +33,7 @@ class OpenCodeProvider:
             timeout=self.timeout_seconds,
         )
 
-    async def stream(
+    def stream(
         self,
         prompt: str,
         context: SessionContext,

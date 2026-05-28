@@ -1,0 +1,27 @@
+[routing]
+default_tier = "low_cost"
+
+[routing.tiers.free]
+provider = "ollama"
+models = ["llama3.2:1b"]
+
+[routing.tiers.low_cost]
+antigravity = ["gemini-3.5-flash-low"]
+opencode = ["opencode/deepseek-v4-flash-free"]
+
+[routing.tiers.high_cost]
+antigravity = ["gemini-3.5-pro"]
+opencode = ["opencode/deepseek-r1-heavy"]
+
+[routing.fallback]
+chain = ["primary", "ollama"]
+
+[providers.ollama]
+base_url = "http://localhost:11434"
+timeout_seconds = 30
+
+[providers.antigravity]
+timeout_seconds = 60
+
+[providers.opencode]
+timeout_seconds = 60
