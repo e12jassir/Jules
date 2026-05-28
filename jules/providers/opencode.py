@@ -29,11 +29,11 @@ class OpenCodeProvider:
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )
         return await self._run_cli(
-            [self.executable, "run", prompt, "-m", model],
+            [self.executable, "--pure", "run", prompt, "-m", model],
             timeout=self.timeout_seconds,
         )
 
-    async def stream(
+    def stream(
         self,
         prompt: str,
         context: SessionContext,
