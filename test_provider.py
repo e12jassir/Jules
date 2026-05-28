@@ -30,12 +30,12 @@ async def select_provider():
             model = "llama3.2:1b"
             name = "Ollama (llama3.2:1b)"
             break
-        elif choice == choice == "2":
-            provider = AntigravityProvider(timeout_seconds=30.0)
-            model = "ignored"
-            name = "Antigravity (agy)"
+        elif choice == "2":
+            provider = AntigravityProvider(timeout_seconds=30.0, models=("gemini-3.5-flash-low",))
+            model = "gemini-3.5-flash-low"
+            name = "Antigravity (gemini-3.5-flash-low)"
             break
-        elif choice == choice == "3":
+        elif choice == "3":
             provider = OpenCodeProvider(timeout_seconds=60.0)
             model = "opencode/deepseek-v4-flash-free"
             name = "OpenCode (deepseek-v4-flash)"

@@ -16,16 +16,17 @@ def get_test_context() -> SessionContext:
 
 async def test_antigravity():
     print("\n--- 🛸 PROBANDO ANTIGRAVITY PROVIDER (agy) ---")
-    provider = AntigravityProvider(timeout_seconds=10.0)
+    model = "gemini-3.5-flash-low"
+    provider = AntigravityProvider(timeout_seconds=10.0, models=(model,))
     context = get_test_context()
     try:
         if not await provider.health_check():
             print("❌ Antigravity CLI (agy) no está disponible en el PATH.")
             return
-        
+
         prompt = "Explain gravity in one sentence."
         print(f"Pregunta: \"{prompt}\"")
-        response = await provider.ask(prompt, context, model="ignored")
+        response = await provider.ask(prompt, context, model=model)
         print(f"Respuesta ❯ {response}")
     except ProviderError as e:
         print(f"❌ Error del Proveedor: {e}")
@@ -41,7 +42,7 @@ async def test_opencode():
         if not await provider.health_check():
             print("❌ OpenCode CLI (opencode) no está disponible en el PATH.")
             return
-        
+
         prompt = "Reply with exactly one word: Jules"
         print(f"Pregunta: \"{prompt}\" (usando {model})")
         response = await provider.ask(prompt, context, model=model)
@@ -54,15 +55,15 @@ async def test_opencode():
 async def test_security_guards():
     print("\n--- 🛡️ PROBANDO GUARDS DE SEGURIDAD (Argument Injection) ---")
     context = get_test_context()
-    
-    # 1. Antigravity prompt startswith("-") guard
+
+    # 1. Antigravity: Unprepared model is securely rejected
     agy_provider = AntigravityProvider()
     try:
-        print("Intentando inyectar flag en Antigravity prompt...")
-        await agy_provider.ask("-v", context, "ignored")
+        print("Intentando usar modelo no preparado en Antigravity...")
+        await agy_provider.ask("Hola", context, "unprepared-model")
     except ProviderError as e:
-        print(f"🛡️ Bloqueado correctamente: {e}")
-        
+        print(f"🛡️ Bloqueado correctamente (modelo no preparado): {e}")
+
     # 2. OpenCode model regex guard
     opencode_provider = OpenCodeProvider()
     try:
