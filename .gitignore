@@ -6,3 +6,11 @@ vectors/
 ~/.jules/memory/
 # Local Pi runtime state
 .atl/
+.pi-lens/
+.pi/
+sdd/
+openspec/changes/archive/
+
+# Python build artifacts
+build/
+*.egg-info/
