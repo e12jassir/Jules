@@ -42,7 +42,7 @@
 
 ## Phase 5: Engine Orchestration (`jules/memory/engine.py`)
 
-- [ ] 14. Implement the `MemoryEngine` class and `persist_async(episode: Episode) -> None` method. The method MUST use `asyncio.create_task()` to immediately return while pushing the persistence pipeline to the background.
-- [ ] 15. Implement the internal background pipeline in `MemoryEngine`: await `evaluate_importance`, update `episode.importance`, and await both `episodic.store_async` and `persistent.save_async`. Add try/except blocks to log exceptions without crashing the background task loop.
-- [ ] 16. Implement `retrieve_async(query: str, limit: int) -> list[Episode]` by mapping LanceDB IDs retrieved from `episodic.retrieve_async` to hydrated episodes via `persistent.get_async`.
-- [ ] 17. Write unit tests for `engine.py` mocking `scoring`, `episodic`, and `persistent` modules. Assert that `persist_async` immediately returns (zero-latency) and correctly handles intentional exceptions raised by mocked dependencies.
+- [x] 14. Implement the `MemoryEngine` class and `persist_async(episode: Episode) -> None` method. The method MUST use `asyncio.create_task()` to immediately return while pushing the persistence pipeline to the background.
+- [x] 15. Implement the internal background pipeline in `MemoryEngine`: await `evaluate_importance`, update `episode.importance`, and await both `episodic.store_async` and `persistent.save_async`. Add try/except blocks to log exceptions without crashing the background task loop.
+- [x] 16. Implement `retrieve_async(query: str, limit: int) -> list[Episode]` by mapping LanceDB IDs retrieved from `episodic.retrieve_async` to hydrated episodes via `persistent.get_async`.
+- [x] 17. Write unit tests for `engine.py` mocking `scoring`, `episodic`, and `persistent` modules. Assert that `persist_async` immediately returns (zero-latency) and correctly handles intentional exceptions raised by mocked dependencies.
