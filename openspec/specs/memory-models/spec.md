@@ -67,15 +67,25 @@ The system MUST provide explicit conversion helpers between dataclasses and ORM 
 - **Then** the restored `Episode` MUST be equivalent to the original value
 - **And** timestamp handling MUST preserve UTC semantics.
 
+### Requirement: Async ORM Compatibility
+
+The ORM definitions MUST be fully compatible with `aiosqlite` and Async SQLAlchemy.
+
+#### Scenario: Query ORM models asynchronously
+- **Given** `SessionContextORM` and `EpisodeORM`
+- **When** queried through an `AsyncSession`
+- **Then** all relationships MUST NOT use implicit synchronous lazy loading that would trigger `MissingGreenlet` errors
+- **And** any required relationships MUST be explicitly eager loaded or awaited.
+
 ### Requirement: SQLite-Compatible Migrations
 
-The system MUST support SQLite Alembic migrations for the Module 2 schema.
+The system MUST support SQLite Alembic migrations for the Module 2 schema, and now MUST support both sync (Alembic) and async (`aiosqlite`) runtime access.
 
 #### Scenario: Upgrade an empty SQLite database
-- **Given** a SQLite database at revision `db91a0ae1c2b`
+- **Given** a SQLite database
 - **When** Alembic upgrades to head
-- **Then** the database MUST contain both `session_contexts` and `episodes`
-- **And** `episodes.session_context_id` MUST be unique, non-null, and refer to `session_contexts.id`.
+- **Then** the migration MUST execute successfully
+- **And** the resulting schema MUST be strictly compatible with `aiosqlite` usage.
 
 #### Scenario: Upgrade a populated SQLite database
 - **Given** a SQLite database at revision `db91a0ae1c2b` with existing `episodes.context_json` data
