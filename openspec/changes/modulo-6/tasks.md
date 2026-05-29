@@ -22,9 +22,9 @@
 
 ## Phase 2: Relational Persistence (`jules/memory/persistent.py`)
 
-- [ ] 3. Implement `save_async(episode: Episode) -> None` using `AsyncSession` `add` and `commit` operations, ensuring they are awaited and do not block the event loop.
-- [ ] 4. Implement `get_async(episode_id: str) -> Episode | None` using an async `select` statement that perfectly re-hydrates the `Episode` dataclass (eager-loading `SessionContext`).
-- [ ] 5. Write unit tests for `persistent.py` using an in-memory (`sqlite+aiosqlite:///:memory:`) database to validate async CRUD functionality.
+- [x] 3. Implement `save_async(episode: Episode) -> None` using `AsyncSession` `add` and `commit` operations, ensuring they are awaited and do not block the event loop.
+- [x] 4. Implement `get_async(episode_id: str) -> Episode | None` using an async `select` statement that perfectly re-hydrates the `Episode` dataclass (eager-loading `SessionContext`).
+- [x] 5. Write unit tests for `persistent.py` using an in-memory (`sqlite+aiosqlite:///:memory:`) database to validate async CRUD functionality.
 
 ## Phase 3: Vector Storage (`jules/memory/episodic.py`)
 

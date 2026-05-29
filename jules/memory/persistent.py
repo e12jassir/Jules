@@ -2,7 +2,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+
+from jules.memory.models import Episode, EpisodeORM
 
 DEFAULT_SQLITE_PATH = Path.home() / ".jules" / "memory.sqlite3"
 
@@ -41,3 +44,15 @@ class PersistentMemory:
     async def session(self) -> AsyncIterator[AsyncSession]:
         async with self.session_factory() as session:
             yield session
+
+    async def save_async(self, episode: Episode) -> None:
+        async with self.session() as session:
+            orm_episode = EpisodeORM.from_dataclass(episode)
+            await session.merge(orm_episode)
+            await session.commit()
+
+    async def get_async(self, episode_id: str) -> Episode | None:
+        async with self.session() as session:
+            result = await session.execute(select(EpisodeORM).where(EpisodeORM.id == episode_id))
+            orm_episode = result.scalar_one_or_none()
+            return orm_episode.to_dataclass() if orm_episode else None
