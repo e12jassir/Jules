@@ -13,6 +13,7 @@ DEFAULT_SQLITE_PATH = Path.home() / ".jules" / "memory.sqlite3"
 def build_sqlite_async_url(database_path: str | Path = DEFAULT_SQLITE_PATH) -> str:
     """Build the async SQLite URL used by runtime persistence."""
     path = Path(database_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite+aiosqlite:///{path}"
 
 
@@ -56,3 +57,12 @@ class PersistentMemory:
             result = await session.execute(select(EpisodeORM).where(EpisodeORM.id == episode_id))
             orm_episode = result.scalar_one_or_none()
             return orm_episode.to_dataclass() if orm_episode else None
+
+    async def get_many_async(self, ids: list[str]) -> list[Episode]:
+        if not ids:
+            return []
+
+        async with self.session() as session:
+            result = await session.execute(select(EpisodeORM).where(EpisodeORM.id.in_(ids)))
+            episodes_by_id = {episode.id: episode.to_dataclass() for episode in result.scalars()}
+            return [episodes_by_id[episode_id] for episode_id in ids if episode_id in episodes_by_id]

@@ -43,6 +43,24 @@ async def test_evaluate_importance_malformed():
     assert score == 0.5
 
 
+async def test_evaluate_importance_rejects_unescaped_decimal_separator():
+    provider = AsyncMock()
+    provider.generate_text = AsyncMock(return_value="Invalid decimal separator. SCORE: 0A9")
+
+    score = await evaluate_importance(make_episode(), provider)
+
+    assert score == 0.5
+
+
+async def test_evaluate_importance_rejects_partial_one_decimal_match():
+    provider = AsyncMock()
+    provider.generate_text = AsyncMock(return_value="Out of range score. SCORE: 1.5")
+
+    score = await evaluate_importance(make_episode(), provider)
+
+    assert score == 0.5
+
+
 async def test_evaluate_importance_provider_error():
     provider = AsyncMock()
     provider.generate_text = AsyncMock(side_effect=ConnectionError("provider offline"))

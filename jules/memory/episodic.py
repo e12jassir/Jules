@@ -22,12 +22,12 @@ class EpisodicMemory:
         self.db_path = str(db_path)
         self.table_name = table_name
         self.vector_dimension = vector_dimension
-        self.db = lancedb.connect(self.db_path)
-        self.table = self._open_or_create_table()
+        self._table = None
 
     def _open_or_create_table(self):
-        if self.table_name in self.db.list_tables().tables:
-            return self.db.open_table(self.table_name)
+        db = lancedb.connect(self.db_path)
+        if self.table_name in db.list_tables().tables:
+            return db.open_table(self.table_name)
 
         schema = pa.schema(
             [
@@ -36,7 +36,7 @@ class EpisodicMemory:
                 pa.field("timestamp_ts", pa.float64()),
             ]
         )
-        return self.db.create_table(self.table_name, schema=schema)
+        return db.create_table(self.table_name, schema=schema)
 
     def _validate_vector(self, vector: list[float]) -> None:
         if len(vector) != self.vector_dimension:
@@ -44,7 +44,9 @@ class EpisodicMemory:
 
     def _store(self, episode_id: str, vector: list[float], timestamp: float) -> None:
         self._validate_vector(vector)
-        self.table.add([{"id": episode_id, "vector": vector, "timestamp_ts": timestamp}])
+        if self._table is None:
+            self._table = self._open_or_create_table()
+        self._table.add([{"id": episode_id, "vector": vector, "timestamp_ts": timestamp}])
 
     async def store_async(self, episode: Episode, vector: list[float]) -> None:
         await asyncio.to_thread(self._store, episode.id, vector, episode.timestamp.timestamp())
@@ -54,8 +56,11 @@ class EpisodicMemory:
         if limit <= 0:
             return []
 
+        if self._table is None:
+            self._table = self._open_or_create_table()
+
         now = time.time()
-        results = self.table.search(query_vector).limit(limit * 2).to_list()
+        results = self._table.search(query_vector).limit(limit * 2).to_list()
         ranked = sorted(
             results,
             key=lambda result: result["_distance"] + (now - result["timestamp_ts"]) * TIME_DECAY_FACTOR,

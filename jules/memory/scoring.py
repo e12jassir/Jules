@@ -5,7 +5,7 @@ from typing import Protocol
 from jules.memory.models import Episode
 
 DEFAULT_IMPORTANCE_SCORE = 0.5
-SCORE_PATTERN = r"SCORE:\s*(0.\d+|1.0|0|1)"
+SCORE_PATTERN = r"SCORE:\s*(0\.\d+|1\.0|0|1)(?![\w.])"
 
 
 class TextGenerationProvider(Protocol):

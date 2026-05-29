@@ -16,6 +16,7 @@ class MemoryEngine:
         self.persistent = persistent
         self.episodic = episodic
         self.provider = provider
+        self._background_tasks: set[asyncio.Task] = set()
 
     def _dummy_vector(self) -> list[float]:
         return [0.0] * self.episodic.vector_dimension
@@ -29,14 +30,11 @@ class MemoryEngine:
             logging.error("Memory persistence pipeline failed: %s", error)
 
     async def persist_async(self, episode: Episode) -> None:
-        asyncio.create_task(self._run_persistence_pipeline(episode))
+        task = asyncio.create_task(self._run_persistence_pipeline(episode))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def retrieve_async(self, query: str, limit: int = 5) -> list[Episode]:
         _ = query
         ids = await self.episodic.retrieve_async(self._dummy_vector(), limit)
-        episodes: list[Episode] = []
-        for episode_id in ids:
-            episode = await self.persistent.get_async(episode_id)
-            if episode is not None:
-                episodes.append(episode)
-        return episodes
+        return await self.persistent.get_many_async(ids)

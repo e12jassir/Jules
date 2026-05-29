@@ -1,14 +1,25 @@
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
-import pytest_asyncio
+import pytest
 
 from jules.memory.episodic import EpisodicMemory
 from jules.memory.models import Episode, SessionContext
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def temp_episodic(tmp_path):
     yield EpisodicMemory(db_path=str(tmp_path))
+
+
+def test_init_defers_lancedb_connection(tmp_path, monkeypatch):
+    connect = Mock()
+    monkeypatch.setattr("jules.memory.episodic.lancedb.connect", connect)
+
+    memory = EpisodicMemory(db_path=str(tmp_path))
+
+    assert memory._table is None
+    connect.assert_not_called()
 
 
 def make_episode(episode_id: str, timestamp: datetime) -> Episode:

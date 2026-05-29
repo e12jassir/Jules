@@ -55,9 +55,11 @@ async def test_persist_async_is_zero_latency(monkeypatch):
 
     assert elapsed < 0.05
     assert len(created_tasks) == 1
+    assert created_tasks[0] in engine._background_tasks
 
     created_tasks[0].cancel()
     await asyncio.gather(*created_tasks, return_exceptions=True)
+    assert not engine._background_tasks
 
 
 async def test_pipeline_handles_exceptions_silently(monkeypatch):
@@ -90,19 +92,14 @@ async def test_retrieve_async_filters_missing_episodes():
 
     episodic.retrieve_async.return_value = [first.id, "missing", second.id]
 
-    async def get_async_side_effect(episode_id: str):
-        if episode_id == first.id:
-            return first
-        if episode_id == second.id:
-            return second
-        return None
-
-    persistent.get_async.side_effect = get_async_side_effect
+    persistent.get_many_async.return_value = [first, second]
 
     episodes = await engine.retrieve_async("debug recent memory", limit=3)
 
     assert episodes == [first, second]
     episodic.retrieve_async.assert_awaited_once_with([0.0, 0.0, 0.0], 3)
+    persistent.get_many_async.assert_awaited_once_with([first.id, "missing", second.id])
+    persistent.get_async.assert_not_awaited()
 
 
 async def test_engine_uses_episodic_vector_dimension(monkeypatch):
