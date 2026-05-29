@@ -8,7 +8,15 @@ version = "0.1.0"
 description = "Jules project scaffold"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["click", "rich", "sqlalchemy", "alembic", "lancedb", "aiohttp", "aiosqlite"]
+dependencies = [
+  "click",
+  "rich",
+  "sqlalchemy",
+  "alembic",
+  "lancedb",
+  "aiohttp",
+  "aiosqlite",
+]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio>=0.23"]
