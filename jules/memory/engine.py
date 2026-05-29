@@ -24,8 +24,8 @@ class MemoryEngine:
     async def _run_persistence_pipeline(self, episode: Episode) -> None:
         try:
             episode.importance = await evaluate_importance(episode, self.provider)
-            await self.persistent.save_async(episode)
             await self.episodic.store_async(episode, self._dummy_vector())
+            await self.persistent.save_async(episode)
         except Exception as error:
             logging.error("Memory persistence pipeline failed: %s", error)
 
