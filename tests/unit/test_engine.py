@@ -33,6 +33,7 @@ async def test_persist_async_is_zero_latency(monkeypatch):
     episodic.vector_dimension = 3
     provider = AsyncMock()
     engine = MemoryEngine(persistent=persistent, episodic=episodic, provider=provider)
+    engine.persistence_delay_seconds = 0.0
     episode = make_episode()
     created_tasks = []
     original_create_task = asyncio.create_task
@@ -68,6 +69,7 @@ async def test_pipeline_handles_exceptions_silently(monkeypatch):
     episodic.vector_dimension = 3
     provider = AsyncMock()
     engine = MemoryEngine(persistent=persistent, episodic=episodic, provider=provider)
+    engine.persistence_delay_seconds = 0.0
     episode = make_episode()
     persistent.save_async.side_effect = Exception("db exploded")
     error_logger = Mock()

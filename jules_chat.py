@@ -51,6 +51,8 @@ except ImportError:
 # ──────────────────────────────────────────────────────────────────────────────
 from jules.core.config import load_config
 from jules.core.router import CognitiveRouter, TaskType
+from jules.core.session import SessionContext as TerminalSessionContext
+from jules.core.context import ContextEngine
 from jules.memory.engine import MemoryEngine
 from jules.memory.episodic import EpisodicMemory
 from jules.memory.models import Base, Episode, SessionContext
@@ -126,6 +128,7 @@ def print_help() -> None:
             ("/status",           "Estado en tiempo real de todos los proveedores"),
             ("/history",          "Historial de la sesión en RAM"),
             ("/clear",            "Limpia el historial de la sesión"),
+            ("/context [set|reset]", "Muestra o simula el contexto de la terminal detectado"),
             ("/exit",             "Cierra Jules"),
         ]
         for cmd, desc in rows:
@@ -139,6 +142,7 @@ def print_help() -> None:
         print("  /status           — salud de los proveedores")
         print("  /history          — historial de sesión")
         print("  /clear            — limpia historial")
+        print("  /context          — muestra/simula contexto del terminal")
         print("  /exit             — salir")
     print()
 
@@ -148,19 +152,33 @@ def print_help() -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _discover_local_ollama_models() -> list[str]:
-    """Lee el directorio de manifests de Ollama sin depender del daemon."""
-    manifests_root = Path.home() / ".ollama" / "models" / "manifests"
+    """Lee el directorio de manifests de Ollama sin depender del daemon, soportando rutas locales y globales."""
+    import os
+    
+    manifests_roots = [
+        Path.home() / ".ollama" / "models" / "manifests",
+        Path("/usr/share/ollama/.ollama/models/manifests"),
+        Path("/var/lib/ollama/.ollama/models/manifests")
+    ]
+    
+    # Soporte para la variable de entorno OLLAMA_MODELS
+    env_models = os.environ.get("OLLAMA_MODELS")
+    if env_models:
+        manifests_roots.insert(0, Path(env_models) / "manifests")
+
     models: list[str] = []
-    if not manifests_root.exists():
-        return models
-    for tag_file in manifests_root.glob("*/*/*"):
-        if tag_file.is_file():
-            # registry.ollama.ai/library/llama3.2/1b  →  llama3.2:1b
-            parts = tag_file.parts[len(manifests_root.parts):]  # relative parts
-            if len(parts) >= 3:
-                name = parts[-2]  # e.g. "llama3.2"
-                tag = parts[-1]   # e.g. "1b"
-                models.append(f"{name}:{tag}")
+    for manifests_root in manifests_roots:
+        if not manifests_root.exists():
+            continue
+        # Buscamos recursivamente todos los archivos de tags para soportar cualquier nivel de anidamiento
+        for tag_file in manifests_root.rglob("*"):
+            if tag_file.is_file():
+                parts = tag_file.parts[len(manifests_root.parts):]  # relative parts
+                if len(parts) >= 2:
+                    name = parts[-2]  # e.g. "llama3.2"
+                    tag = parts[-1]   # e.g. "1b"
+                    models.append(f"{name}:{tag}")
+                    
     return sorted(set(models))
 
 
@@ -200,11 +218,10 @@ async def check_health(router: CognitiveRouter, local_models: list[str]) -> None
             models_str = ", ".join(daemon_models) if daemon_models else (
                 "Sin modelos activos (daemon offline)" if not healthy else "Sin modelos en el daemon"
             )
-            status = (
-                "[green]ONLINE ✅[/green]" if daemon_models else
-                "[yellow]DAEMON OFF ⚠️[/yellow]" if local_models else
-                "[red]OFFLINE ❌[/red]"
-            )
+            if healthy:
+                status = "[green]ONLINE ✅[/green]" if daemon_models else "[yellow]ONLINE ⚠️ (Sin modelos)[/yellow]"
+            else:
+                status = "[yellow]DAEMON OFF ⚠️[/yellow]" if local_models else "[red]OFFLINE ❌[/red]"
         else:
             models_str = getattr(provider, "default_model", "—")
             if hasattr(provider, "_prepared_models"):
@@ -212,6 +229,15 @@ async def check_health(router: CognitiveRouter, local_models: list[str]) -> None
             status = "[green]ONLINE ✅[/green]" if healthy else "[red]OFFLINE ❌[/red]"
 
         rows.append((name.capitalize(), models_str, status))
+
+    # Determinar si el daemon de Ollama está activo
+    ollama_provider = router.providers.get("ollama")
+    ollama_healthy = False
+    if ollama_provider:
+        try:
+            ollama_healthy = await ollama_provider.health_check()
+        except Exception:
+            pass
 
     if HAS_RICH:
         for name, mstr, st in rows:
@@ -221,7 +247,8 @@ async def check_health(router: CognitiveRouter, local_models: list[str]) -> None
         # Modelos Ollama locales encontrados en disco
         if local_models:
             console.print(f"  [dim]📁 Modelos Ollama en disco: {', '.join(local_models)}[/dim]")
-            console.print(f"  [dim]   (Para activarlos corré: [bold]ollama serve[/bold] en otra terminal)[/dim]")
+            if not ollama_healthy:
+                console.print(f"  [dim]   (Para activarlos corré: [bold]ollama serve[/bold] en otra terminal)[/dim]")
         console.print()
     else:
         print("\n🤖 ESTADO DE LOS PROVEEDORES:")
@@ -230,6 +257,8 @@ async def check_health(router: CognitiveRouter, local_models: list[str]) -> None
             print(f"  {name}: {mstr} — {clean}")
         if local_models:
             print(f"  📁 Ollama en disco: {', '.join(local_models)}")
+            if not ollama_healthy:
+                print("     (Para activarlos corré: ollama serve en otra terminal)")
         print()
 
 
@@ -274,7 +303,7 @@ async def _init_memory_engine(router: CognitiveRouter) -> MemoryEngine | None:
                 )
                 # Ensure we use default_model or a fallback string if it's missing
                 model_to_use = getattr(self.prov, "default_model", "llama3.2:1b")
-                return await self.prov.ask(prompt, ctx, model_to_use)
+                return await self.prov.ask(prompt, ctx, model_to_use, options={"num_predict": 15, "temperature": 0.0})
 
         adapter = ScoringAdapter(ollama_provider) if ollama_provider else None
 
@@ -292,7 +321,7 @@ async def _init_memory_engine(router: CognitiveRouter) -> MemoryEngine | None:
 # Session context builder
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_session_context(mode: str, model: str) -> SessionContext:
+def _build_session_context(mode: str, model: str, detected_intent: str, project_root: str | None) -> SessionContext:
     hour = datetime.now().hour
     if hour < 12:
         tod = "morning"
@@ -301,11 +330,14 @@ def _build_session_context(mode: str, model: str) -> SessionContext:
     else:
         tod = "night"
 
+    # Si hay raíz de proyecto, usamos su nombre, de lo contrario 'jules-chat'
+    project_name = Path(project_root).name if project_root else "jules-chat"
+
     return SessionContext(
-        project="jules-chat",
+        project=project_name,
         directory=str(Path(__file__).parent),
         active_files=[],
-        inferred_intent=f"chat-{mode}",
+        inferred_intent=detected_intent,
         time_of_day=tod,
     )
 
@@ -319,11 +351,13 @@ def _build_episode(
     provider_name: str,
     duration_seconds: int,
     start_ts: datetime,
+    detected_intent: str,
+    project_root: str | None,
 ) -> Episode:
     return Episode(
         id=episode_id,
         timestamp=start_ts,
-        context=_build_session_context(mode, model),
+        context=_build_session_context(mode, model, detected_intent, project_root),
         problem=user_input,
         process=f"Routed to {provider_name} ({model}) via CognitiveRouter",
         solution=response[:1000],  # cap para no saturar el scorer
@@ -423,6 +457,7 @@ async def _ask(
     prompt: str,
     context: SessionContext,
     local_ollama_models: list[str],
+    user_input: str,
 ) -> tuple[str, str, str]:
     """
     Returns (response, model_used, provider_name).
@@ -435,7 +470,7 @@ async def _ask(
         return ollama_provider.default_model if ollama_provider else None
 
     if mode == "auto":
-        task = _classify_task(prompt)
+        task = _classify_task(user_input)
         provider, resolved_model = router.route(task)
         pname = provider.name
     elif mode == "ollama":
@@ -482,15 +517,24 @@ async def _ask(
 
     # Streaming providers
     if hasattr(provider, "stream") and pname in {"ollama", "opencode", "codex"}:
+        intent_str = f" ({context.inferred_intent.upper()})" if context.inferred_intent else ""
         if HAS_RICH:
-            console.print(f"[bold cyan]🧠 Jules [{pname.upper()}] ({resolved_model}) ❯ [/bold cyan]", end="")
+            console.print(f"[bold cyan]╭─ Jules [{pname.upper()}][/bold cyan] ─ [dim]{resolved_model}[/dim][dim]{intent_str}[/dim]\n[bold cyan]│[/bold cyan] ", end="")
         else:
-            print(f"\n🧠 Jules [{pname.upper()}] ({resolved_model}) ❯ ", end="", flush=True)
+            print(f"\nJules [{pname.upper()}] ({resolved_model}){intent_str} ❯ ", end="", flush=True)
         chunks: list[str] = []
         async for chunk in provider.stream(prompt, context, resolved_model):
-            console.print(chunk, end="")
+            if HAS_RICH:
+                if "\n" in chunk:
+                    chunk = chunk.replace("\n", "\n[bold cyan]│[/bold cyan] ")
+                console.print(chunk, end="")
+            else:
+                console.print(chunk, end="")
             chunks.append(chunk)
-        print()
+        if HAS_RICH:
+            console.print(f"\n[bold cyan]╰─[/bold cyan] [dim]Fin de respuesta[/dim]\n")
+        else:
+            print()
         return "".join(chunks).strip(), resolved_model, pname
 
     # Non-streaming (antigravity / auto cloud fallback)
@@ -501,7 +545,15 @@ async def _ask(
             else:
                 response = await provider.ask(prompt, context, resolved_model)
                 model_used, prov_used = resolved_model, pname
-            live.update(Panel(Markdown(response), title=f"🧠 Jules [{prov_used.upper()}] ({model_used})", border_style="blue"))
+            intent_str = f" — [bold green]{context.inferred_intent.upper()}[/bold green]" if context.inferred_intent else ""
+            
+            # Formateamos la respuesta con bordes hermosos
+            formatted_response = "\n".join(f"[bold cyan]│[/bold cyan] {line}" for line in response.split("\n"))
+            live.update(
+                f"[bold cyan]╭─ Jules [{prov_used.upper()}][/bold cyan] ─ [dim]{model_used}[/dim]{intent_str}\n"
+                f"{formatted_response}\n"
+                f"[bold cyan]╰─[/bold cyan] [dim]Fin de respuesta[/dim]\n"
+            )
         return response, model_used, prov_used
     else:
         if mode == "auto":
@@ -509,7 +561,8 @@ async def _ask(
         else:
             response = await provider.ask(prompt, context, resolved_model)
             model_used, prov_used = resolved_model, pname
-        print(f"\n🧠 Jules [{prov_used.upper()}] ({model_used}) ❯\n{response}")
+        intent_str = f" [{context.inferred_intent.upper()}]" if context.inferred_intent else ""
+        print(f"\n🧠 Jules [{prov_used.upper()}] ({model_used}){intent_str} ❯\n{response}")
         return response, model_used, prov_used
 
 
@@ -519,6 +572,35 @@ async def _ask(
 
 async def main() -> None:
     print_banner()
+
+    # ── Parse arguments and environment for Context Intent Detector ───────────
+    import argparse
+    import os
+    
+    parser = argparse.ArgumentParser(description="Jules Terminal Interactive")
+    parser.add_argument("--exit-code", type=int, default=None, help="Código de salida del último comando")
+    parser.add_argument("--recent-commands", type=str, default=None, help="Comandos recientes separados por comas o punto y coma")
+    parser.add_argument("--cwd", type=str, default=None, help="Directorio de trabajo actual")
+    args, _ = parser.parse_known_args()
+
+    env_exit_code = int(os.environ.get("JULES_LAST_EXIT_CODE", "0"))
+    if args.exit_code is not None:
+        env_exit_code = args.exit_code
+
+    env_cwd = os.environ.get("JULES_CWD") or os.getcwd()
+    if args.cwd is not None:
+        env_cwd = args.cwd
+
+    env_cmds_str = os.environ.get("JULES_RECENT_COMMANDS", "")
+    if args.recent_commands is not None:
+        env_cmds_str = args.recent_commands
+    
+    env_recent_commands = [c.strip() for c in re.split(r"[,;]", env_cmds_str) if c.strip()] if env_cmds_str else []
+
+    # Variables para simular el contexto de terminal de forma interactiva
+    simulated_exit_code: int | None = None
+    simulated_recent_commands: list[str] | None = None
+    simulated_cwd: str | None = None
 
     # ── Config & Router ───────────────────────────────────────────────────────
     try:
@@ -571,10 +653,14 @@ async def main() -> None:
     # ── Chat loop ─────────────────────────────────────────────────────────────
     try:
         while True:
-            prompt_label = f"Jules ({mode}) ❯ "
             if HAS_RICH:
-                user_input = console.input(f"[bold green]{prompt_label}[/bold green]").strip()
+                prompt_label = f"\n[bold cyan]╭─[/bold cyan] [bold white]Jules[/bold white] ─ [dim]{mode}[/dim]"
+                if current_model:
+                    prompt_label += f" ─ [dim]{current_model}[/dim]"
+                prompt_label += "\n[bold cyan]╰─❯[/bold cyan] "
+                user_input = console.input(prompt_label).strip()
             else:
+                prompt_label = f"\nJules ({mode}) ❯ "
                 user_input = input(prompt_label).strip()
 
             if not user_input:
@@ -635,6 +721,85 @@ async def main() -> None:
                 console.print(f"[bold cyan]🔄 Modelo → {current_model}[/bold cyan]")
                 continue
 
+            if cmd.startswith("/context"):
+                parts = user_input.split()
+                if len(parts) == 1:
+                    # Muestra el estado del contexto detectado o simulado
+                    curr_cwd = simulated_cwd or env_cwd
+                    curr_exit = simulated_exit_code if simulated_exit_code is not None else env_exit_code
+                    curr_cmds = simulated_recent_commands if simulated_recent_commands is not None else env_recent_commands
+                    
+                    # Instanciamos el contexto de terminal real/simulado
+                    t_session = TerminalSessionContext(
+                        cwd=curr_cwd,
+                        last_exit_code=curr_exit,
+                        recent_commands=list(curr_cmds)
+                    )
+                    built = ContextEngine.build(t_session, "")
+                    
+                    if HAS_RICH:
+                        table = Table(title="🔍 Contexto del Terminal (Modulo 7)", border_style="cyan")
+                        table.add_column("Propiedad", style="bold yellow")
+                        table.add_column("Valor")
+                        table.add_row("Directorio de Trabajo (CWD)", curr_cwd)
+                        table.add_row("Último Exit Code", str(curr_exit))
+                        table.add_row("Historial de Comandos", ", ".join(f"'{c}'" for c in curr_cmds) if curr_cmds else "[Ninguno]")
+                        table.add_row("Proyecto Raíz (.git)", built.project_root or "[No detectado]")
+                        table.add_row("Hora del Día (hora)", f"{built.time_of_day}:00")
+                        table.add_row("Intención Inferida", f"[bold green]{built.intent.upper()}[/bold green]")
+                        console.print(table)
+                        
+                        console.print("\n[dim]💡 Tip: Usá los siguientes comandos para simular diferentes escenarios:[/dim]")
+                        console.print("[dim]     - [bold]/context set exit <número>[/bold]  (ej. 1 para simular error, 0 para éxito)[/dim]")
+                        console.print("[dim]     - [bold]/context set commands <lista>[/bold] (ej: git status; man; help)[/dim]")
+                        console.print("[dim]     - [bold]/context set cwd <ruta>[/bold]     (ej: /home/e12jassir/proyects/Jules)[/dim]")
+                        console.print("[dim]     - [bold]/context reset[/bold]              (reinicia al estado real de la terminal)[/dim]\n")
+                    else:
+                        print("\n🔍 Contexto del Terminal (Modulo 7):")
+                        print(f"  CWD: {curr_cwd}")
+                        print(f"  Último Exit Code: {curr_exit}")
+                        print(f"  Historial de Comandos: {curr_cmds}")
+                        print(f"  Proyecto Raíz: {built.project_root}")
+                        print(f"  Hora del Día: {built.time_of_day}:00")
+                        print(f"  Intención Inferida: {built.intent.upper()}")
+                        print("\n💡 Tip: Comandos de simulación:")
+                        print("  - /context set exit <número>")
+                        print("  - /context set commands <cmd1;cmd2;...>")
+                        print("  - /context set cwd <ruta>")
+                        print("  - /context reset")
+                        print()
+                    continue
+
+                subcmd = parts[1].lower()
+                if subcmd == "reset":
+                    simulated_exit_code = None
+                    simulated_recent_commands = None
+                    simulated_cwd = None
+                    console.print("[green]✅ Simulación de contexto reiniciada al estado de la terminal real.[/green]")
+                    continue
+
+                if subcmd == "set" and len(parts) >= 4:
+                    prop = parts[2].lower()
+                    val = " ".join(parts[3:])
+                    if prop == "exit":
+                        try:
+                            simulated_exit_code = int(val)
+                            console.print(f"[green]✅ Código de salida simulado en: {simulated_exit_code}[/green]")
+                        except ValueError:
+                            console.print("[red]❌ El código de salida debe ser un entero.[/red]")
+                    elif prop == "commands":
+                        simulated_recent_commands = [c.strip() for c in re.split(r"[,;]", val) if c.strip()]
+                        console.print(f"[green]✅ Comandos recientes simulados: {simulated_recent_commands}[/green]")
+                    elif prop == "cwd":
+                        simulated_cwd = val
+                        console.print(f"[green]✅ CWD simulado: {simulated_cwd}[/green]")
+                    else:
+                        console.print("[red]❌ Propiedad desconocida para simular. Usá: exit | commands | cwd[/red]")
+                    continue
+
+                console.print("[red]❌ Comando /context inválido. Usá `/context` para ver el estado, `/context set <prop> <val>` para simular, o `/context reset`.[/red]")
+                continue
+
             # ── Sanitizer gate ────────────────────────────────────────────────
             check = sanitizer.check(user_input)
             if not check.is_safe:
@@ -655,21 +820,67 @@ async def main() -> None:
             prompt = _build_prompt(system, chat_history[-6:], user_input)
 
             # ── Routing + inference ───────────────────────────────────────────
-            context = _build_session_context(mode, current_model or "")
+            curr_cwd = simulated_cwd or env_cwd
+            curr_exit = simulated_exit_code if simulated_exit_code is not None else env_exit_code
+            curr_cmds = simulated_recent_commands if simulated_recent_commands is not None else env_recent_commands
+            
+            terminal_session = TerminalSessionContext(
+                cwd=curr_cwd,
+                last_exit_code=curr_exit,
+                recent_commands=list(curr_cmds)
+            )
+            built_context = ContextEngine.build(terminal_session, user_input)
+            
+            context = _build_session_context(mode, current_model or "", built_context.intent, built_context.project_root)
             t_start = time.perf_counter()
             start_ts = datetime.now(tz=timezone.utc)
 
+            if memory_engine:
+                memory_engine.start_active_query()
+
             try:
                 response, model_used, prov_used = await _ask(
-                    router, mode, current_model, prompt, context, local_ollama_models
+                    router, mode, current_model, prompt, context, local_ollama_models, user_input
                 )
-            except (ProviderTimeoutError, ProviderUnavailableError, ProviderError, ValueError) as exc:
-                console.print(f"[bold red]❌ {exc}[/bold red]")
+            except ProviderUnavailableError as exc:
+                if memory_engine:
+                    memory_engine.is_query_active = False
+                if "ollama" in str(exc).lower():
+                    console.print(
+                        "\n [bold yellow]⚠️  Ollama no responde o no está disponible.[/bold yellow]\n"
+                        "    [dim]Verificá si el servicio de Ollama está activo en background.[/dim]\n"
+                        "    [dim]O cambiá de proveedor usando: [/dim][bold cyan]/mode antigravity[/bold cyan]\n"
+                    )
+                else:
+                    console.print(f" [bold red]❌ Proveedor no disponible: {exc}[/bold red]")
+                continue
+            except ProviderTimeoutError as exc:
+                if memory_engine:
+                    memory_engine.is_query_active = False
+                console.print(
+                    "\n [bold yellow]⏱️  La consulta al proveedor superó el tiempo límite.[/bold yellow]\n"
+                    "    [dim]Por favor, reintentá o probá con otro proveedor/modelo.[/dim]\n"
+                )
+                continue
+            except ProviderError as exc:
+                if memory_engine:
+                    memory_engine.is_query_active = False
+                console.print(f" [bold red]❌ Error del proveedor: {exc}[/bold red]")
+                continue
+            except ValueError as exc:
+                if memory_engine:
+                    memory_engine.is_query_active = False
+                console.print(f" [bold red]❌ Entrada o configuración inválida: {exc}[/bold red]")
                 continue
             except Exception as exc:
-                console.print(f"[bold red]❌ Error inesperado: {exc}[/bold red]")
+                if memory_engine:
+                    memory_engine.is_query_active = False
+                console.print(f" [bold red]❌ Error inesperado: {exc}[/bold red]")
                 log.exception("Unexpected error in chat loop")
                 continue
+
+            if memory_engine:
+                memory_engine.is_query_active = False
 
             duration = int(time.perf_counter() - t_start)
 
@@ -689,6 +900,8 @@ async def main() -> None:
                     provider_name=prov_used,
                     duration_seconds=duration,
                     start_ts=start_ts,
+                    detected_intent=built_context.intent,
+                    project_root=built_context.project_root,
                 )
                 await memory_engine.persist_async(episode)
                 # Retorna inmediatamente — el pipeline corre en background

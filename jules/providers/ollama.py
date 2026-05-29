@@ -39,12 +39,19 @@ class OllamaProvider:
         if self._session is not None and not self._session.closed:
             await self._session.close()
 
-    async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
+    async def ask(
+        self,
+        prompt: str,
+        context: SessionContext,
+        model: str,
+        options: dict[str, object] | None = None,
+    ) -> str:
         del context
-        data = await self._post_json(
-            "/api/generate",
-            {"model": model, "prompt": prompt, "stream": False},
-        )
+        payload = {"model": model, "prompt": prompt, "stream": False}
+        if options:
+            payload["options"] = options
+            
+        data = await self._post_json("/api/generate", payload)
 
         response = data.get("response")
         if not isinstance(response, str):

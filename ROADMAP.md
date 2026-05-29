@@ -596,7 +596,7 @@ Si cualquiera de estas señales aparece: parar, evaluar, retomar desde el criter
 4. Providers externos       → GPT 5.5 + Sonnet
 5. Router quota-aware       → GPT 5.5 + Opus
 6. Motor de memoria         → GPT 5.5 + Opus
-7. Detector de contexto     → GPT 5.4
+[x] 7. Detector de contexto     → GPT 5.4
 8. Sistema de eventos       → GPT 5.4
 9. Sistema de permisos      → GPT 5.4
 10. CLI principal           → GPT 5.4 + Deepseek
