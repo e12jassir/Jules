@@ -29,7 +29,8 @@ class EpisodicMemory:
 
     def _open_or_create_table(self):
         db = lancedb.connect(self.db_path)
-        table_names = cast(list[str], db.list_tables())
+        tables = db.list_tables()
+        table_names = tables.tables if hasattr(tables, "tables") else list(tables)
         if self.table_name in table_names:
             return db.open_table(self.table_name)
 

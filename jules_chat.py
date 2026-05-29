@@ -1,436 +1,711 @@
+"""
+jules_chat.py — Terminal interactivo de Jules (Fase 1 completa)
+
+Módulos integrados:
+  - Módulo 1:  Sanitizador en la frontera de entrada
+  - Módulo 5:  CognitiveRouter quota-aware con fallback en cascada
+  - Módulo 6:  MemoryEngine (persist_async fire-and-forget + retrieve_async)
+
+Comandos disponibles en el chat:
+  /mode auto        — Cognitive Router decide el proveedor según el tipo de tarea
+  /mode ollama      — Fuerza Ollama local (streaming)
+  /mode antigravity — Fuerza Antigravity (Gemini)
+  /mode opencode    — Fuerza OpenCode (DeepSeek)
+  /mode codex       — Fuerza Codex (GPT)
+  /model <nombre>   — Cambia el modelo dentro del proveedor actual
+  /memory           — Muestra los últimos episodios guardados en memoria
+  /status           — Tabla de estado de los proveedores
+  /history          — Muestra el historial de la sesión en RAM
+  /clear            — Limpia el historial de la sesión
+  /exit             — Cierra el chat
+"""
+
+from __future__ import annotations
+
 import asyncio
-import sys
+import logging
 import re
+import subprocess
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
-# Try to import rich for gorgeous aesthetics, fallback to plain text if not installed
+# ──────────────────────────────────────────────────────────────────────────────
+# Rich (UI premium) — graceful fallback a texto plano
+# ──────────────────────────────────────────────────────────────────────────────
 try:
     from rich.console import Console
+    from rich.live import Live
     from rich.markdown import Markdown
     from rich.panel import Panel
-    from rich.live import Live
     from rich.spinner import Spinner
     from rich.table import Table
-    from rich import print as rprint
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Jules internals
+# ──────────────────────────────────────────────────────────────────────────────
 from jules.core.config import load_config
 from jules.core.router import CognitiveRouter, TaskType
-from jules.memory.models import SessionContext
-from jules.sanitizer.sanitizer import Sanitizer
-from jules.providers.ollama import OllamaProvider
-from jules.providers.opencode import OpenCodeProvider
-from jules.providers.codex import CodexProvider
+from jules.memory.engine import MemoryEngine
+from jules.memory.episodic import EpisodicMemory
+from jules.memory.models import Base, Episode, SessionContext
+from jules.memory.persistent import PersistentMemory
+from jules.memory.scoring import evaluate_importance
 from jules.providers.base import ProviderError, ProviderTimeoutError, ProviderUnavailableError
+from jules.providers.ollama import OllamaProvider
+from jules.sanitizer.sanitizer import Sanitizer
 
-# Set up console
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s │ %(name)s │ %(message)s")
+log = logging.getLogger("jules.chat")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Console setup
+# ──────────────────────────────────────────────────────────────────────────────
 if HAS_RICH:
     console = Console()
 else:
-    class SimpleConsole:
-        def print(self, *args, **kwargs):
-            text = str(args[0]) if args else ""
-            clean_text = re.sub(r'\[/?\w+.*?\]', '', text)
-            print(clean_text, *args[1:], **kwargs)
-        def input(self, prompt_text):
-            clean_prompt = re.sub(r'\[/?\w+.*?\]', '', prompt_text)
-            return input(clean_prompt)
-    console = SimpleConsole()
+    class _SimpleConsole:
+        @staticmethod
+        def _strip(t: str) -> str:
+            return re.sub(r"\[/?[^\[\]]*\]", "", str(t))
 
-def print_banner():
-    banner = """
+        def print(self, *args, **kwargs) -> None:
+            end = kwargs.get("end", "\n")
+            print(self._strip(args[0]) if args else "", end=end, flush=True)
+
+        def input(self, prompt: str) -> str:
+            return input(self._strip(prompt))
+
+    console = _SimpleConsole()  # type: ignore[assignment]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Default paths
+# ──────────────────────────────────────────────────────────────────────────────
+JULES_HOME = Path.home() / ".jules"
+SQLITE_PATH = JULES_HOME / "memory.sqlite3"
+LANCEDB_PATH = JULES_HOME / "vectors"
+VECTOR_DIM = 3  # dummy — real embeddings in a future module
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UI helpers
+# ══════════════════════════════════════════════════════════════════════════════
+
+def print_banner() -> None:
+    art = r"""
  ██████╗██╗   ██╗██╗     ███████╗███████╗
    ██╔══╝██║   ██║██║     ██╔════╝██╔════╝
    ██║   ██║   ██║██║     █████╗  ███████╗
    ██║   ██║   ██║██║     ██╔══╝  ╚════██║
  ╚██████╗╚██████╔╝███████╗███████╗███████║
   ╚═════╝ ╚═════╝ ╚══════╝╚══════╝╚══════╝
- 🧠 CAPA COGNITIVA LOCAL-FIRST — INTERACTIVE SANDBOX
+  🧠 CAPA COGNITIVA LOCAL-FIRST — Fase 1
     """
     if HAS_RICH:
-        console.print(Panel(banner.strip(), style="bold cyan", border_style="cyan"))
+        console.print(Panel(art.strip(), style="bold cyan", border_style="cyan"))
     else:
-        print("=" * 60)
-        print(banner.strip())
-        print("=" * 60)
+        print("=" * 62)
+        print(art.strip())
+        print("=" * 62)
 
-async def get_available_ollama_models(provider: OllamaProvider) -> list[str]:
+
+def print_help() -> None:
+    if HAS_RICH:
+        table = Table(title="Comandos disponibles", border_style="dim", show_header=False)
+        table.add_column("Comando", style="bold cyan", min_width=22)
+        table.add_column("Descripción")
+        rows = [
+            ("/mode <provider>",  "auto | ollama | antigravity | opencode | codex"),
+            ("/model <nombre>",   "Cambia el modelo dentro del proveedor actual"),
+            ("/memory [N]",       "Muestra los últimos N episodios guardados (default 5)"),
+            ("/status",           "Estado en tiempo real de todos los proveedores"),
+            ("/history",          "Historial de la sesión en RAM"),
+            ("/clear",            "Limpia el historial de la sesión"),
+            ("/exit",             "Cierra Jules"),
+        ]
+        for cmd, desc in rows:
+            table.add_row(cmd, desc)
+        console.print(table)
+    else:
+        print("\n💡 Comandos:")
+        print("  /mode <auto|ollama|antigravity|opencode|codex>")
+        print("  /model <nombre>   — cambia modelo del proveedor actual")
+        print("  /memory [N]       — últimos episodios en memoria")
+        print("  /status           — salud de los proveedores")
+        print("  /history          — historial de sesión")
+        print("  /clear            — limpia historial")
+        print("  /exit             — salir")
+    print()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Ollama model discovery (lee manifests locales, no depende del daemon)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _discover_local_ollama_models() -> list[str]:
+    """Lee el directorio de manifests de Ollama sin depender del daemon."""
+    manifests_root = Path.home() / ".ollama" / "models" / "manifests"
+    models: list[str] = []
+    if not manifests_root.exists():
+        return models
+    for tag_file in manifests_root.glob("*/*/*"):
+        if tag_file.is_file():
+            # registry.ollama.ai/library/llama3.2/1b  →  llama3.2:1b
+            parts = tag_file.parts[len(manifests_root.parts):]  # relative parts
+            if len(parts) >= 3:
+                name = parts[-2]  # e.g. "llama3.2"
+                tag = parts[-1]   # e.g. "1b"
+                models.append(f"{name}:{tag}")
+    return sorted(set(models))
+
+
+async def _get_daemon_ollama_models(provider: OllamaProvider) -> list[str]:
+    """Consulta el daemon de Ollama vía HTTP. Retorna lista vacía si no corre."""
     try:
         session = provider._get_session()
-        async with session.get(f"{provider.base_url}/api/tags", timeout=5) as response:
-            if response.status == 200:
-                payload = await response.json()
-                return [m.get("name") for m in payload.get("models", []) if m.get("name")]
+        async with session.get(f"{provider.base_url}/api/tags", timeout=3) as r:
+            if r.status == 200:
+                data = await r.json()
+                return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
     except Exception:
         pass
     return []
 
-async def check_health(router: CognitiveRouter):
-    """Checks and displays health status for all configured providers."""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Provider health table
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def check_health(router: CognitiveRouter, local_models: list[str]) -> None:
     if HAS_RICH:
-        table = Table(title="🤖 ESTADO DE LOS PROVEEDORES", border_style="dim")
+        table = Table(title="🤖 Estado de los proveedores", border_style="dim")
         table.add_column("Proveedor", style="bold")
-        table.add_column("Modelo Configurado", style="cyan")
+        table.add_column("Modelos", style="cyan")
         table.add_column("Estado", style="bold")
-        
-        for name, provider in router.providers.items():
-            try:
-                healthy = await provider.health_check()
-                if healthy:
-                    if name == "ollama":
-                        models = await get_available_ollama_models(provider)
-                        if not models:
-                            status = "[yellow]ONLINE (Sin modelos) ⚠️[/yellow]"
-                        else:
-                            status = "[green]ONLINE[/green] ✅"
-                    else:
-                        status = "[green]ONLINE[/green] ✅"
-                else:
-                    status = "[red]OFFLINE[/red] ❌"
-            except Exception:
-                status = "[red]OFFLINE[/red] ❌"
-                
-            # Get models
-            if name == "ollama":
-                model_str = provider.default_model
-            elif name == "antigravity":
-                model_str = ", ".join(provider._prepared_models) or "Ninguno"
-            elif name == "codex":
-                model_str = provider.default_model
-            else:
-                model_str = "openai/gpt-5.4-mini-fast"
-                
-            table.add_row(name.capitalize(), model_str, status)
+
+    rows = []
+    for name, provider in router.providers.items():
+        try:
+            healthy = await provider.health_check()
+        except Exception:
+            healthy = False
+
+        if name == "ollama":
+            daemon_models = await _get_daemon_ollama_models(provider) if healthy else []
+            models_str = ", ".join(daemon_models) if daemon_models else (
+                "Sin modelos activos (daemon offline)" if not healthy else "Sin modelos en el daemon"
+            )
+            status = (
+                "[green]ONLINE ✅[/green]" if daemon_models else
+                "[yellow]DAEMON OFF ⚠️[/yellow]" if local_models else
+                "[red]OFFLINE ❌[/red]"
+            )
+        else:
+            models_str = getattr(provider, "default_model", "—")
+            if hasattr(provider, "_prepared_models"):
+                models_str = ", ".join(provider._prepared_models) or models_str
+            status = "[green]ONLINE ✅[/green]" if healthy else "[red]OFFLINE ❌[/red]"
+
+        rows.append((name.capitalize(), models_str, status))
+
+    if HAS_RICH:
+        for name, mstr, st in rows:
+            table.add_row(name, mstr, st)
         console.print(table)
+
+        # Modelos Ollama locales encontrados en disco
+        if local_models:
+            console.print(f"  [dim]📁 Modelos Ollama en disco: {', '.join(local_models)}[/dim]")
+            console.print(f"  [dim]   (Para activarlos corré: [bold]ollama serve[/bold] en otra terminal)[/dim]")
         console.print()
     else:
         print("\n🤖 ESTADO DE LOS PROVEEDORES:")
-        for name, provider in router.providers.items():
-            try:
-                healthy = await provider.health_check()
-                if healthy:
-                    if name == "ollama":
-                        models = await get_available_ollama_models(provider)
-                        status = "ONLINE (Sin modelos) ⚠️" if not models else "ONLINE ✅"
-                    else:
-                        status = "ONLINE ✅"
-                else:
-                    status = "OFFLINE ❌"
-            except Exception:
-                status = "OFFLINE ❌"
-            print(f"  - {name.capitalize()}: {status}")
+        for name, mstr, st in rows:
+            clean = re.sub(r"\[/?[^\[\]]*\]", "", st)
+            print(f"  {name}: {mstr} — {clean}")
+        if local_models:
+            print(f"  📁 Ollama en disco: {', '.join(local_models)}")
         print()
 
-def get_session_context() -> SessionContext:
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Memory Engine bootstrap
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _init_memory_engine(router: CognitiveRouter) -> MemoryEngine | None:
+    """Inicializa el MemoryEngine con SQLite + LanceDB. Retorna None si falla."""
+    try:
+        JULES_HOME.mkdir(parents=True, exist_ok=True)
+        LANCEDB_PATH.mkdir(parents=True, exist_ok=True)
+
+        db_url = f"sqlite+aiosqlite:///{SQLITE_PATH}"
+        persistent = PersistentMemory(database_url=db_url)
+        async with persistent.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        episodic = EpisodicMemory(db_path=str(LANCEDB_PATH), vector_dimension=VECTOR_DIM)
+        
+        ollama_provider = router.providers.get("ollama")
+
+        class ScoringAdapter:
+            def __init__(self, prov):
+                self.prov = prov
+
+            async def generate_text(self, prompt: str) -> str:
+                # Fast fail if the provider is offline to avoid waiting 30s
+                try:
+                    if not await self.prov.health_check():
+                        raise RuntimeError("Ollama daemon is offline")
+                except Exception:
+                    raise RuntimeError("Ollama daemon is offline or unreachable")
+
+                # Provide a dummy context just for scoring
+                ctx = SessionContext(
+                    project="internal",
+                    directory="",
+                    active_files=[],
+                    inferred_intent="scoring",
+                    time_of_day="now"
+                )
+                # Ensure we use default_model or a fallback string if it's missing
+                model_to_use = getattr(self.prov, "default_model", "llama3.2:1b")
+                return await self.prov.ask(prompt, ctx, model_to_use)
+
+        adapter = ScoringAdapter(ollama_provider) if ollama_provider else None
+
+        return MemoryEngine(
+            persistent=persistent,
+            episodic=episodic,
+            provider=adapter,
+        )
+    except Exception as exc:
+        log.warning("MemoryEngine no pudo inicializarse: %s — Jules operará sin memoria persistente.", exc)
+        return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Session context builder
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _build_session_context(mode: str, model: str) -> SessionContext:
+    hour = datetime.now().hour
+    if hour < 12:
+        tod = "morning"
+    elif hour < 18:
+        tod = "afternoon"
+    else:
+        tod = "night"
+
     return SessionContext(
-        project="jules-interactive-sandbox",
+        project="jules-chat",
         directory=str(Path(__file__).parent),
         active_files=[],
-        inferred_intent="sandbox_chat",
-        time_of_day="now"
+        inferred_intent=f"chat-{mode}",
+        time_of_day=tod,
     )
 
-async def main():
+
+def _build_episode(
+    episode_id: str,
+    user_input: str,
+    response: str,
+    mode: str,
+    model: str,
+    provider_name: str,
+    duration_seconds: int,
+    start_ts: datetime,
+) -> Episode:
+    return Episode(
+        id=episode_id,
+        timestamp=start_ts,
+        context=_build_session_context(mode, model),
+        problem=user_input,
+        process=f"Routed to {provider_name} ({model}) via CognitiveRouter",
+        solution=response[:1000],  # cap para no saturar el scorer
+        duration_seconds=duration_seconds,
+        friction_score=0.0,
+        tags=["chat", mode, provider_name],
+        model_used=model,
+        provider_used=provider_name,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# /memory command
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def show_memory(engine: MemoryEngine | None, limit: int = 5) -> None:
+    if engine is None:
+        console.print("[yellow]⚠️  Memoria no disponible en esta sesión.[/yellow]")
+        return
+
+    episodes = await engine.retrieve_async("recent", limit=limit)
+    if not episodes:
+        console.print("[dim]No hay episodios guardados todavía.[/dim]")
+        return
+
+    if HAS_RICH:
+        table = Table(title=f"🧠 Últimos {len(episodes)} episodios", border_style="dim")
+        table.add_column("ID", style="dim", max_width=10)
+        table.add_column("Timestamp", style="cyan")
+        table.add_column("Importancia", justify="center")
+        table.add_column("Proveedor")
+        table.add_column("Problema", max_width=45)
+        for ep in episodes:
+            table.add_row(
+                ep.id[:8],
+                ep.timestamp.strftime("%H:%M:%S"),
+                f"{ep.importance:.2f}",
+                ep.provider_used or "—",
+                (ep.problem or "—")[:45],
+            )
+        console.print(table)
+    else:
+        print(f"\n🧠 Últimos {len(episodes)} episodios:")
+        for ep in episodes:
+            print(f"  [{ep.timestamp.strftime('%H:%M:%S')}] {ep.provider_used} | importance={ep.importance:.2f} | {(ep.problem or '')[:50]}")
+    print()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Keyword-based task classifier
+# ══════════════════════════════════════════════════════════════════════════════
+
+_CODING_KW = {"code", "código", "python", "clase", "def ", "function", "escribí", "implement", "fix", "bug", "refactor"}
+_HEAVY_KW  = {"arquitectura", "design", "review", "analiz", "compara", "explica en detalle", "tradeoff"}
+_ID_KW     = {"quién sos", "quien sos", "tu nombre", "sos jules", "identidad", "jules sos"}
+
+def _classify_task(text: str) -> TaskType:
+    t = text.lower()
+    if any(k in t for k in _ID_KW):
+        return TaskType.IDENTITY
+    if any(k in t for k in _HEAVY_KW):
+        return TaskType.ANALYSIS
+    if any(k in t for k in _CODING_KW):
+        return TaskType.CODING
+    return TaskType.QUICK
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Prompt builder
+# ══════════════════════════════════════════════════════════════════════════════
+
+SYSTEM_FULL = (
+    "[INSTRUCCIÓN DE SISTEMA: Tu nombre es Jules. Sos una capa cognitiva local-first, "
+    "inteligente, directa y serena. Respondé siempre en español rioplatense (con voseo), "
+    "con calma, precisión y sin rodeos innecesarios o disculpas vacías. "
+    "Bajo ninguna circunstancia digas que sos un modelo de Google, OpenAI, "
+    "DeepSeek o tu proveedor. Sos Jules. Respondé de forma directa.]"
+)
+SYSTEM_MINI = "[INSTRUCCIÓN: Sos Jules. Respondé conciso en español rioplatense (voseo). No digas que sos una IA.]"
+
+
+def _build_prompt(system: str, history: list[dict], user_input: str) -> str:
+    hist = "\n".join(f"{m['role']}: {m['content']}" for m in history)
+    if hist:
+        return f"{system}\n\n[CONTEXTO RECIENTE]\n{hist}\n\nUsuario: {user_input}\nJules:"
+    return f"{system}\n\nUsuario: {user_input}\nJules:"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Single-turn ask dispatch
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _ask(
+    router: CognitiveRouter,
+    mode: str,
+    current_model: str | None,
+    prompt: str,
+    context: SessionContext,
+    local_ollama_models: list[str],
+) -> tuple[str, str, str]:
+    """
+    Returns (response, model_used, provider_name).
+    Raises ProviderError / ProviderTimeoutError / ProviderUnavailableError on failure.
+    """
+    ollama_provider = router.providers.get("ollama")
+
+    def _ollama_active_model() -> str | None:
+        """Returns the configured default model for Ollama."""
+        return ollama_provider.default_model if ollama_provider else None
+
+    if mode == "auto":
+        task = _classify_task(prompt)
+        provider, resolved_model = router.route(task)
+        pname = provider.name
+    elif mode == "ollama":
+        provider = router.providers["ollama"]
+        resolved_model = current_model or provider.default_model
+        pname = "ollama"
+    elif mode == "antigravity":
+        provider = router.providers["antigravity"]
+        resolved_model = current_model or "gemini-3.5-flash-low"
+        pname = "antigravity"
+    elif mode == "opencode":
+        provider = router.providers["opencode"]
+        # Use first model configured in config.toml for low_cost opencode
+        low_cost_tier = router.config.routing.tiers.get("low_cost")
+        config_model = (
+            low_cost_tier.opencode[0]
+            if low_cost_tier and low_cost_tier.opencode
+            else "opencode/deepseek-v4-flash-free"
+        )
+        resolved_model = current_model or config_model
+        pname = "opencode"
+    elif mode == "codex":
+        provider = router.providers["codex"]
+        resolved_model = current_model or provider.default_model
+        pname = "codex"
+    else:
+        raise ValueError(f"Modo desconocido: {mode}")
+
+    # Guard: Ollama sin daemon corriendo
+    if pname == "ollama" and not await _get_daemon_ollama_models(provider):
+        if local_ollama_models:
+            raise ProviderUnavailableError(
+                f"Ollama daemon no está corriendo. Modelos disponibles en disco: "
+                f"{', '.join(local_ollama_models)}. "
+                f"Iniciá el daemon con: ollama serve"
+            )
+        raise ProviderUnavailableError(
+            "Ollama no tiene modelos. Descargá uno con: ollama pull llama3.2:1b"
+        )
+
+    use_simple = pname == "ollama" and "1b" in resolved_model
+    # Re-build prompt with correct system
+    system = SYSTEM_MINI if use_simple else SYSTEM_FULL
+
+    # Streaming providers
+    if hasattr(provider, "stream") and pname in {"ollama", "opencode", "codex"}:
+        if HAS_RICH:
+            console.print(f"[bold cyan]🧠 Jules [{pname.upper()}] ({resolved_model}) ❯ [/bold cyan]", end="")
+        else:
+            print(f"\n🧠 Jules [{pname.upper()}] ({resolved_model}) ❯ ", end="", flush=True)
+        chunks: list[str] = []
+        async for chunk in provider.stream(prompt, context, resolved_model):
+            console.print(chunk, end="")
+            chunks.append(chunk)
+        print()
+        return "".join(chunks).strip(), resolved_model, pname
+
+    # Non-streaming (antigravity / auto cloud fallback)
+    if HAS_RICH:
+        with Live(Spinner("clock", text=f"[yellow] Consultando {pname.upper()}...[/yellow]"), refresh_per_second=10) as live:
+            if mode == "auto":
+                response, model_used, prov_used = await router.ask_with_fallback(prompt, context, task)
+            else:
+                response = await provider.ask(prompt, context, resolved_model)
+                model_used, prov_used = resolved_model, pname
+            live.update(Panel(Markdown(response), title=f"🧠 Jules [{prov_used.upper()}] ({model_used})", border_style="blue"))
+        return response, model_used, prov_used
+    else:
+        if mode == "auto":
+            response, model_used, prov_used = await router.ask_with_fallback(prompt, context, task)
+        else:
+            response = await provider.ask(prompt, context, resolved_model)
+            model_used, prov_used = resolved_model, pname
+        print(f"\n🧠 Jules [{prov_used.upper()}] ({model_used}) ❯\n{response}")
+        return response, model_used, prov_used
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Main loop
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def main() -> None:
     print_banner()
-    
-    # 1. Initialize configuration and router
+
+    # ── Config & Router ───────────────────────────────────────────────────────
     try:
         config = load_config()
         router = CognitiveRouter(config=config)
-    except Exception as e:
-        if HAS_RICH:
-            console.print(f"[red]❌ Error inicializando el router o la configuración: {e}[/red]")
-        else:
-            print(f"❌ Error inicializando el router o la configuración: {e}")
+    except Exception as exc:
+        console.print(f"[red]❌ Error inicializando Jules: {exc}[/red]")
         return
 
-    # 2. Check and display health status
-    await check_health(router)
-    
-    context = get_session_context()
-    mode = "auto"  # Can be "auto", "ollama", "antigravity", "opencode"
-    
-    # Dynamically select Ollama model if default is not available
+    # ── Discover Ollama models ────────────────────────────────────────────────
+    local_ollama_models = _discover_local_ollama_models()
+
+    # Auto-configure Ollama default model if config default isn't available
     ollama_provider = router.providers.get("ollama")
-    available_ollama_models = []
-    if ollama_provider:
-        available_ollama_models = await get_available_ollama_models(ollama_provider)
-        if available_ollama_models:
-            if ollama_provider.default_model not in available_ollama_models:
-                # Try to find a partial match (e.g. any llama3.2), otherwise use first available
-                matching = [m for m in available_ollama_models if "llama3.2" in m.lower()]
-                chosen = matching[0] if matching else available_ollama_models[0]
-                
-                old_default = ollama_provider.default_model
-                ollama_provider.default_model = chosen
-                ollama_provider.embedding_model = chosen
-                
-                if HAS_RICH:
-                    console.print(f"[bold yellow]⚠️  Ollama: Modelo '{old_default}' no encontrado. Usando tu modelo local: '{chosen}'[/bold yellow]\n")
-                else:
-                    print(f"⚠️  Ollama: Modelo '{old_default}' no encontrado. Usando tu modelo local: '{chosen}'\n")
+    if ollama_provider and local_ollama_models:
+        if ollama_provider.default_model not in local_ollama_models:
+            preferred = next(
+                (m for m in local_ollama_models if "llama3.2" in m),
+                local_ollama_models[0],
+            )
+            console.print(
+                f"[yellow]⚠️  Ollama: modelo por defecto '{ollama_provider.default_model}' "
+                f"no encontrado. Usando: '{preferred}'[/yellow]\n"
+            )
+            ollama_provider.default_model = preferred
+            ollama_provider.embedding_model = preferred
 
-    if HAS_RICH:
-        console.print("[bold yellow]💡 Comandos especiales en el chat:[/bold yellow]")
-        console.print("  [bold cyan]/mode auto[/bold cyan]        ➔ Usar el Cognitive Router dinámico (decide el mejor cerebro)")
-        console.print("  [bold cyan]/mode ollama[/bold cyan]      ➔ Forzar uso de Ollama local (streaming)")
-        console.print("  [bold cyan]/mode antigravity[/bold cyan] ➔ Forzar uso de Antigravity (Gemini)")
-        console.print("  [bold cyan]/mode opencode[/bold cyan]    ➔ Forzar uso de OpenCode (DeepSeek)")
-        console.print("  [bold cyan]/mode codex[/bold cyan]       ➔ Forzar uso de Codex (GPT-5.4)")
-        console.print("  [bold cyan]/status[/bold cyan]           ➔ Mostrar el panel de estado de proveedores")
-        console.print("  [bold cyan]/exit[/bold cyan]             ➔ Finalizar el chat")
+    # ── Health check ──────────────────────────────────────────────────────────
+    await check_health(router, local_ollama_models)
+
+    # ── Memory Engine ─────────────────────────────────────────────────────────
+    memory_engine = await _init_memory_engine(router)
+    if memory_engine:
+        if HAS_RICH:
+            console.print(f"[green]🧠 Motor de memoria iniciado — SQLite: {SQLITE_PATH.name} | LanceDB: {LANCEDB_PATH.name}[/green]\n")
+        else:
+            print(f"🧠 Motor de memoria iniciado — {SQLITE_PATH}\n")
     else:
-        print("💡 Comandos especiales en el chat:")
-        print("  /mode auto        ➔ Usar el Cognitive Router dinámico")
-        print("  /mode ollama      ➔ Forzar uso de Ollama local")
-        print("  /mode antigravity ➔ Forzar uso de Antigravity")
-        print("  /mode opencode    ➔ Forzar uso de OpenCode")
-        print("  /mode codex       ➔ Forzar uso de Codex")
-        print("  /status           ➔ Mostrar el panel de estado de proveedores")
-        print("  /exit             ➔ Finalizar el chat")
-        
-    print()
+        console.print("[yellow]⚠️  Memoria desactivada en esta sesión.[/yellow]\n")
 
-    # System prompt adaptativo: simplificado para modelos chicos, completo para grandes
-    system_prompt_complex = (
-        "[INSTRUCCIÓN DE SISTEMA: Tu nombre es Jules. Sos una capa cognitiva local-first, "
-        "inteligente, directa y serena. Respondé siempre en español rioplatense (con voseo), "
-        "con calma, precisión y sin rodeos innecesarios o disculpas vacías. "
-        "Bajo ninguna circunstancia digas que sos un modelo de Google, OpenAI, "
-        "DeepSeek o tu proveedor. Sos Jules. Respondé de forma directa.]"
-    )
-    system_prompt_simple = "[INSTRUCCIÓN: Sos Jules. Respondé conciso en español rioplatense (voseo). No digas que sos una IA.]"
+    print_help()
 
-    # Historial de conversación en memoria RAM (libreta)
-    chat_history = []
+    # ── Session state ─────────────────────────────────────────────────────────
+    mode: str = "auto"
+    current_model: str | None = None
+    chat_history: list[dict] = []
+    sanitizer = Sanitizer()
+    session_id = str(uuid.uuid4())[:8]
 
+    # ── Chat loop ─────────────────────────────────────────────────────────────
     try:
         while True:
-            # 1. Prompt input
-            prompt_style = f"Jules ({mode}) ❯ "
+            prompt_label = f"Jules ({mode}) ❯ "
             if HAS_RICH:
-                user_input = console.input(f"[bold green]{prompt_style}[/bold green]").strip()
+                user_input = console.input(f"[bold green]{prompt_label}[/bold green]").strip()
             else:
-                user_input = console.input(prompt_style).strip()
-                
+                user_input = input(prompt_label).strip()
+
             if not user_input:
                 continue
-                
-            # 2. Check commands
-            if user_input.lower() == "/exit":
+
+            # ── Built-in commands ─────────────────────────────────────────────
+            cmd = user_input.lower()
+
+            if cmd in {"/exit", "/quit", "/q"}:
                 break
-            elif user_input.lower() == "/status":
-                await check_health(router)
-                # Re-fetch models
-                if ollama_provider:
-                    available_ollama_models = await get_available_ollama_models(ollama_provider)
+
+            if cmd == "/help":
+                print_help()
                 continue
-            elif user_input.lower().startswith("/mode "):
-                new_mode = user_input.split(" ")[1].lower()
-                if new_mode in ["auto", "ollama", "antigravity", "opencode", "codex"]:
+
+            if cmd == "/status":
+                await check_health(router, local_ollama_models)
+                continue
+
+            if cmd == "/clear":
+                chat_history.clear()
+                console.print("[dim]Historial de sesión limpiado.[/dim]")
+                continue
+
+            if cmd == "/history":
+                if not chat_history:
+                    console.print("[dim]El historial de sesión está vacío.[/dim]")
+                else:
+                    for msg in chat_history:
+                        role_color = "green" if msg["role"] == "Usuario" else "cyan"
+                        if HAS_RICH:
+                            console.print(f"[{role_color}]{msg['role']}:[/{role_color}] {msg['content'][:120]}")
+                        else:
+                            print(f"{msg['role']}: {msg['content'][:120]}")
+                print()
+                continue
+
+            if cmd.startswith("/memory"):
+                parts = cmd.split()
+                limit = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
+                await show_memory(memory_engine, limit=limit)
+                continue
+
+            if cmd.startswith("/mode "):
+                new_mode = user_input.split()[1].lower()
+                valid = {"auto", "ollama", "antigravity", "opencode", "codex"}
+                if new_mode in valid:
                     mode = new_mode
-                    if HAS_RICH:
-                        console.print(f"[bold cyan]🔄 Modo cambiado a: {mode.upper()}[/bold cyan]")
-                    else:
-                        print(f"🔄 Modo cambiado a: {mode.upper()}")
+                    current_model = None  # reset model override when switching mode
+                    console.print(f"[bold cyan]🔄 Modo → {mode.upper()}[/bold cyan]")
                 else:
-                    if HAS_RICH:
-                        console.print(f"[red]❌ Modo inválido. Opciones: auto, ollama, antigravity, opencode, codex[/red]")
-                    else:
-                        print("❌ Modo inválido. Opciones: auto, ollama, antigravity, opencode, codex")
+                    console.print(f"[red]❌ Modo inválido. Opciones: {', '.join(sorted(valid))}[/red]")
                 continue
 
-            # 3. Módulo 1 (Sanitizer) protection
-            sanitized = Sanitizer.check(user_input)
-            if not sanitized.is_safe:
+            if cmd.startswith("/model "):
+                new_model = user_input.split(maxsplit=1)[1].strip()
+                current_model = new_model
+                console.print(f"[bold cyan]🔄 Modelo → {current_model}[/bold cyan]")
+                continue
+
+            # ── Sanitizer gate ────────────────────────────────────────────────
+            check = sanitizer.check(user_input)
+            if not check.is_safe:
                 if HAS_RICH:
-                    console.print(Panel(f"🔒 [bold red]ENTRADA BLOQUEADA POR SEGURIDAD[/bold red]\nContiene información sensible: [yellow]{sanitized.reason}[/yellow]\nNingún dato fue expuesto.", border_style="red"))
+                    console.print(Panel(
+                        f"🔒 [bold red]ENTRADA BLOQUEADA[/bold red]\n"
+                        f"Contiene información sensible: [yellow]{check.reason}[/yellow]\n"
+                        f"Ningún dato fue enviado al proveedor.",
+                        border_style="red",
+                    ))
                 else:
-                    print(f"🔒 ENTRADA BLOQUEADA: Contiene información sensible ({sanitized.reason})")
+                    print(f"🔒 BLOQUEADO — Información sensible detectada: {check.reason}")
                 continue
 
-            # Assemble full prompt with identity instruction and memory
-            current_sys_prompt = system_prompt_complex
-            if mode == "ollama" and ollama_provider and "1b" in ollama_provider.default_model.lower():
-                current_sys_prompt = system_prompt_simple
-                
-            history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
-            if history_text:
-                full_prompt = f"{current_sys_prompt}\n\n[CONTEXTO RECIENTE]\n{history_text}\n\nUsuario: {user_input}\nJules:"
-            else:
-                full_prompt = f"{current_sys_prompt}\n\nUsuario: {user_input}\nJules:"
+            # ── Build prompt ──────────────────────────────────────────────────
+            use_simple = mode == "ollama" and ollama_provider and "1b" in (current_model or ollama_provider.default_model)
+            system = SYSTEM_MINI if use_simple else SYSTEM_FULL
+            prompt = _build_prompt(system, chat_history[-6:], user_input)
 
-            # Guardamos lo que dijo el usuario
-            chat_history.append({"role": "Usuario", "content": user_input})
-            # Limitamos el historial a los últimos 6 mensajes para no saturar contextos largos
-            chat_history = chat_history[-6:]
+            # ── Routing + inference ───────────────────────────────────────────
+            context = _build_session_context(mode, current_model or "")
+            t_start = time.perf_counter()
+            start_ts = datetime.now(tz=timezone.utc)
 
-            # 4. Routing and execution
-            if HAS_RICH:
-                console.print("[dim italic]Jules está pensando...[/dim italic]")
-                
             try:
-                # Mode A: Automatic routing
-                if mode == "auto":
-                    # Ingest task type based on prompt keywords for demonstration
-                    task = TaskType.QUICK
-                    if any(kw in user_input.lower() for kw in ["code", "código", "python", "clase", "def ", "function", "escribí"]):
-                        task = TaskType.CODING
-                    elif any(kw in user_input.lower() for kw in ["quién sos", "identidad", "jules", "tu nombre"]):
-                        task = TaskType.IDENTITY
+                response, model_used, prov_used = await _ask(
+                    router, mode, current_model, prompt, context, local_ollama_models
+                )
+            except (ProviderTimeoutError, ProviderUnavailableError, ProviderError, ValueError) as exc:
+                console.print(f"[bold red]❌ {exc}[/bold red]")
+                continue
+            except Exception as exc:
+                console.print(f"[bold red]❌ Error inesperado: {exc}[/bold red]")
+                log.exception("Unexpected error in chat loop")
+                continue
 
-                    if HAS_RICH:
-                        with Live(Spinner("dots", text="[cyan] Ruteando dinámicamente...[/cyan]"), refresh_per_second=10) as live:
-                            # Let router determine best provider/model
-                            provider, resolved_model = router.route(task)
-                            live.update(f"[cyan] Ruteando ➔ [{provider.name.upper()}] usando [{resolved_model}][/cyan]")
-                            await asyncio.sleep(0.5)  # Quick smooth visual transition
-                    else:
-                        provider, resolved_model = router.route(task)
-                        print(f"➔ Ruteador seleccionó: {provider.name.upper()} ({resolved_model})")
+            duration = int(time.perf_counter() - t_start)
 
-                    # Execute ask with fallback
-                    if provider.name == "ollama":
-                        # If Ollama has no models, we block and explain to avoid HTTP 404
-                        if not available_ollama_models:
-                            msg = (
-                                "❌ [bold red]Ollama local no tiene ningún modelo descargado.[/bold red]\n"
-                                "Para poder usar Ollama, abrí otra terminal y descargá el modelo más liviano corriendo:\n"
-                                "➔ [bold green]ollama pull qwen2.5:0.5b[/bold green] (solo ~397 MB) o [bold green]ollama pull llama3.2:1b[/bold green]"
-                            )
-                            if HAS_RICH:
-                                console.print(Panel(msg, border_style="red"))
-                            else:
-                                print(msg.replace("[bold red]", "").replace("[/bold red]", "").replace("[bold green]", "").replace("[/bold green]", "").replace("➔ ", ""))
-                            continue
+            # ── Update in-memory history ──────────────────────────────────────
+            chat_history.append({"role": "Usuario", "content": user_input})
+            chat_history.append({"role": "Jules", "content": response})
+            chat_history = chat_history[-12:]  # max 6 turnos
 
-                        # Ollama supports streaming
-                        if HAS_RICH:
-                            console.print("[bold cyan]Jules ❯ [/bold cyan]", end="")
-                            full_response = ""
-                            async for chunk in provider.stream(full_prompt, context, resolved_model):
-                                console.print(chunk, end="")
-                                full_response += chunk
-                            console.print()
-                        else:
-                            print("Jules ❯ ", end="", flush=True)
-                            full_response = ""
-                            async for chunk in provider.stream(full_prompt, context, resolved_model):
-                                print(chunk, end="", flush=True)
-                                full_response += chunk
-                            print()
-                        chat_history.append({"role": "Jules", "content": full_response.strip()})
-                    else:
-                        # Cloud provider execution with spinner
-                        if HAS_RICH:
-                            with Live(Spinner("clock", text="[yellow] Consultando API en la nube...[/yellow]"), refresh_per_second=10) as live:
-                                response, model_used, provider_used = await router.ask_with_fallback(full_prompt, context, task)
-                                live.update(Panel(Markdown(response), title=f"🧠 Jules ➔ [{provider_used.upper()}] ({model_used})", border_style="blue"))
-                        else:
-                            response, model_used, provider_used = await router.ask_with_fallback(full_prompt, context, task)
-                            print(f"\n🧠 Jules [{provider_used.upper()}] ({model_used}) ❯\n{response}")
-                        chat_history.append({"role": "Jules", "content": response})
-
-                # Mode B: Forced Ollama
-                elif mode == "ollama":
-                    # If Ollama has no models, we block and explain to avoid HTTP 404
-                    if not available_ollama_models:
-                        msg = (
-                            "❌ [bold red]Ollama local no tiene ningún modelo descargado.[/bold red]\n"
-                            "Para poder usar Ollama, abrí otra terminal y descargá el modelo más liviano corriendo:\n"
-                            "➔ [bold green]ollama pull qwen2.5:0.5b[/bold green] (solo ~397 MB) o [bold green]ollama pull llama3.2:1b[/bold green]"
-                        )
-                        if HAS_RICH:
-                            console.print(Panel(msg, border_style="red"))
-                        else:
-                            print(msg.replace("[bold red]", "").replace("[/bold red]", "").replace("[bold green]", "").replace("[/bold green]", "").replace("➔ ", ""))
-                        continue
-
-                    provider = router.providers["ollama"]
-                    if HAS_RICH:
-                        console.print("[bold cyan]Jules (Ollama) ❯ [/bold cyan]", end="")
-                        full_response = ""
-                        async for chunk in provider.stream(full_prompt, context, provider.default_model):
-                            console.print(chunk, end="")
-                            full_response += chunk
-                        console.print()
-                    else:
-                        print("Jules (Ollama) ❯ ", end="", flush=True)
-                        full_response = ""
-                        async for chunk in provider.stream(full_prompt, context, provider.default_model):
-                            print(chunk, end="", flush=True)
-                            full_response += chunk
-                        print()
-                    chat_history.append({"role": "Jules", "content": full_response.strip()})
-
-                # Mode C: Forced Antigravity
-                elif mode == "antigravity":
-                    provider = router.providers["antigravity"]
-                    model = "gemini-3.5-flash-low"  # Standard default prepared model
-                    if HAS_RICH:
-                        with Live(Spinner("clock", text="[yellow] Invocando Antigravity CLI...[/yellow]"), refresh_per_second=10) as live:
-                            response = await provider.ask(full_prompt, context, model)
-                            live.update(Panel(Markdown(response), title="🧠 Jules [ANTIGRAVITY]", border_style="magenta"))
-                    else:
-                        response = await provider.ask(full_prompt, context, model)
-                        print(f"\n🧠 Jules [ANTIGRAVITY] ❯\n{response}")
-                    chat_history.append({"role": "Jules", "content": response})
-
-                # Mode D: Forced OpenCode o Codex (Ambos soportan streaming ahora)
-                elif mode in ["opencode", "codex"]:
-                    provider = router.providers[mode]
-                    model = provider.default_model if mode == "codex" else "openai/gpt-5.4-mini-fast"
-                    
-                    if HAS_RICH:
-                        console.print(f"[bold cyan]🧠 Jules [{mode.upper()}] ❯ [/bold cyan]", end="")
-                        full_response = ""
-                        async for chunk in provider.stream(full_prompt, context, model):
-                            console.print(chunk, end="")
-                            full_response += chunk
-                        console.print()
-                    else:
-                        print(f"\n🧠 Jules [{mode.upper()}] ❯ ", end="", flush=True)
-                        full_response = ""
-                        async for chunk in provider.stream(full_prompt, context, model):
-                            print(chunk, end="", flush=True)
-                            full_response += chunk
-                        print()
-                        
-                    chat_history.append({"role": "Jules", "content": full_response.strip()})
-
-            except ProviderTimeoutError:
-                if HAS_RICH:
-                    console.print("[bold red]❌ Error: La consulta excedió el tiempo límite de espera (timeout).[/bold red]")
-                else:
-                    print("❌ Error: La consulta excedió el tiempo límite de espera (timeout).")
-            except ProviderUnavailableError as e:
-                if HAS_RICH:
-                    console.print(f"[bold red]❌ Proveedor no disponible: {e}[/bold red]")
-                else:
-                    print(f"❌ Proveedor no disponible: {e}")
-            except ProviderError as e:
-                if HAS_RICH:
-                    console.print(f"[bold red]❌ Error de proveedor: {e}[/bold red]")
-                else:
-                    print(f"❌ Error de proveedor: {e}")
-            except Exception as e:
-                if HAS_RICH:
-                    console.print(f"[bold red]❌ Error inesperado: {e}[/bold red]")
-                else:
-                    print(f"❌ Error inesperado: {e}")
+            # ── Fire-and-forget memory persistence (Módulo 6) ─────────────────
+            if memory_engine and response:
+                episode = _build_episode(
+                    episode_id=f"{session_id}-{uuid.uuid4().hex[:8]}",
+                    user_input=user_input,
+                    response=response,
+                    mode=mode,
+                    model=model_used,
+                    provider_name=prov_used,
+                    duration_seconds=duration,
+                    start_ts=start_ts,
+                )
+                await memory_engine.persist_async(episode)
+                # Retorna inmediatamente — el pipeline corre en background
 
     except (KeyboardInterrupt, EOFError):
         pass
     finally:
-        # Resource cleanup
         for provider in router.providers.values():
-            await provider.close()
+            try:
+                await provider.close()
+            except Exception:
+                pass
         if HAS_RICH:
-            console.print("\n[bold yellow]👋 Sesión interactiva finalizada. Chau, bro.[/bold yellow]")
+            console.print("\n[bold yellow]👋 Sesión cerrada. Chau.[/bold yellow]")
         else:
-            print("\n👋 Sesión interactiva finalizada. Chau, bro.")
+            print("\n👋 Sesión cerrada. Chau.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
