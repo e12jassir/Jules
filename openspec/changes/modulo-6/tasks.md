@@ -17,8 +17,8 @@
 
 ## Phase 1: Infrastructure & Data Setup
 
-- [ ] 1. Update `pyproject.toml` and lockfile to include `aiosqlite`.
-- [ ] 2. Update `jules/memory/persistent.py` to initialize an asynchronous SQLAlchemy engine using the `sqlite+aiosqlite://` driver, using `AsyncSession`.
+- [x] 1. Update `pyproject.toml` and lockfile to include `aiosqlite`.
+- [x] 2. Update `jules/memory/persistent.py` to initialize an asynchronous SQLAlchemy engine using the `sqlite+aiosqlite://` driver, using `AsyncSession`.
 
 ## Phase 2: Relational Persistence (`jules/memory/persistent.py`)
 
