@@ -1,3 +1,5 @@
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
@@ -20,6 +22,44 @@ def test_init_defers_lancedb_connection(tmp_path, monkeypatch):
 
     assert memory._table is None
     connect.assert_not_called()
+
+
+def test_open_or_create_table_handles_list_tables_response(tmp_path, monkeypatch):
+    table = Mock()
+    db = Mock()
+    db.list_tables.return_value = ["episodes_vector"]
+    db.open_table.return_value = table
+    monkeypatch.setattr("jules.memory.episodic.lancedb.connect", Mock(return_value=db))
+
+    memory = EpisodicMemory(db_path=str(tmp_path))
+
+    assert memory._open_or_create_table() is table
+    db.open_table.assert_called_once_with("episodes_vector")
+    db.create_table.assert_not_called()
+
+
+async def test_lazy_table_initialization_is_thread_safe(tmp_path, monkeypatch):
+    table = Mock()
+    open_calls = 0
+
+    def open_table_once():
+        nonlocal open_calls
+        open_calls += 1
+        time.sleep(0.05)
+        return table
+
+    monkeypatch.setattr(EpisodicMemory, "_open_or_create_table", lambda self: open_table_once())
+    memory = EpisodicMemory(db_path=str(tmp_path))
+    first = make_episode("first-threaded", datetime.now(timezone.utc))
+    second = make_episode("second-threaded", datetime.now(timezone.utc))
+
+    await asyncio.gather(
+        memory.store_async(first, [1.0, 0.0, 0.0]),
+        memory.store_async(second, [0.0, 1.0, 0.0]),
+    )
+
+    assert open_calls == 1
+    assert table.add.call_count == 2
 
 
 def make_episode(episode_id: str, timestamp: datetime) -> Episode:

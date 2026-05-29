@@ -1,6 +1,8 @@
 import asyncio
+import threading
 import time
 from pathlib import Path
+from typing import cast
 
 import lancedb
 import pyarrow as pa
@@ -23,10 +25,12 @@ class EpisodicMemory:
         self.table_name = table_name
         self.vector_dimension = vector_dimension
         self._table = None
+        self._table_lock = threading.Lock()
 
     def _open_or_create_table(self):
         db = lancedb.connect(self.db_path)
-        if self.table_name in db.list_tables().tables:
+        table_names = cast(list[str], db.list_tables())
+        if self.table_name in table_names:
             return db.open_table(self.table_name)
 
         schema = pa.schema(
@@ -44,8 +48,9 @@ class EpisodicMemory:
 
     def _store(self, episode_id: str, vector: list[float], timestamp: float) -> None:
         self._validate_vector(vector)
-        if self._table is None:
-            self._table = self._open_or_create_table()
+        with self._table_lock:
+            if self._table is None:
+                self._table = self._open_or_create_table()
         self._table.add([{"id": episode_id, "vector": vector, "timestamp_ts": timestamp}])
 
     async def store_async(self, episode: Episode, vector: list[float]) -> None:
@@ -56,8 +61,9 @@ class EpisodicMemory:
         if limit <= 0:
             return []
 
-        if self._table is None:
-            self._table = self._open_or_create_table()
+        with self._table_lock:
+            if self._table is None:
+                self._table = self._open_or_create_table()
 
         now = time.time()
         results = self._table.search(query_vector).limit(limit * 2).to_list()
