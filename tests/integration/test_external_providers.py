@@ -131,10 +131,19 @@ async def test_antigravity_embed_raises_not_implemented() -> None:
         await provider.embed("hello")
 
 
-async def test_opencode_stream_raises_not_implemented() -> None:
-    provider = OpenCodeProvider()
-    with pytest.raises(NotImplementedError):
-        provider.stream("hello", context=_context(), model="openai/gpt-4o")
+async def test_opencode_stream_yields_chunks() -> None:
+    _require_cli("opencode")
+    provider = OpenCodeProvider(timeout_seconds=60.0)
+    try:
+        chunks = []
+        async for chunk in provider.stream("Responde Jules", _context(), OPENCODE_TEST_MODEL):
+            chunks.append(chunk)
+    finally:
+        await provider.close()
+
+    assert len(chunks) > 0
+    full_text = "".join(chunks)
+    assert full_text.strip()
 
 
 async def test_opencode_embed_raises_not_implemented() -> None:
