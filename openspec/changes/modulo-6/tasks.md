@@ -28,10 +28,10 @@
 
 ## Phase 3: Vector Storage (`jules/memory/episodic.py`)
 
-- [ ] 6. Implement LanceDB schema initialization, strictly enforcing vector dimensions to match the embedding model configuration.
-- [ ] 7. Implement `store_async(episode: Episode) -> None` by wrapping LanceDB's synchronous `.add()` call inside `asyncio.to_thread()` to prevent event loop blocking.
-- [ ] 8. Implement `retrieve_async(query: str, limit: int) -> list[str]` using `asyncio.to_thread()`. Fetch `limit * 2` vectors by cosine distance, apply time-decay penalty locally in Python using `timestamp`, re-sort, and slice to the top `limit` IDs.
-- [ ] 9. Write unit tests for `episodic.py` with an in-memory/temp LanceDB instance to assert non-blocking thread offloading and correct mathematical time-decay penalty.
+- [x] 6. Implement LanceDB schema initialization, strictly enforcing vector dimensions to match the embedding model configuration.
+- [x] 7. Implement `store_async(episode: Episode) -> None` by wrapping LanceDB's synchronous `.add()` call inside `asyncio.to_thread()` to prevent event loop blocking.
+- [x] 8. Implement `retrieve_async(query: str, limit: int) -> list[str]` using `asyncio.to_thread()`. Fetch `limit * 2` vectors by cosine distance, apply time-decay penalty locally in Python using `timestamp`, re-sort, and slice to the top `limit` IDs.
+- [x] 9. Write unit tests for `episodic.py` with an in-memory/temp LanceDB instance to assert non-blocking thread offloading and correct mathematical time-decay penalty.
 
 ## Phase 4: Importance Scoring (`jules/memory/scoring.py`)
 
