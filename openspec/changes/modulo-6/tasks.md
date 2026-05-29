@@ -35,10 +35,10 @@
 
 ## Phase 4: Importance Scoring (`jules/memory/scoring.py`)
 
-- [ ] 10. Implement `evaluate_importance(episode: Episode) -> float` to construct a Llama 3.2 1B prompt that requires the output to end exactly with `SCORE: X.X`.
-- [ ] 11. Implement robust regular expression parsing (e.g., `r"SCORE:\s*(0\.\d+|1\.0)"`) inside `evaluate_importance` to extract the score reliably, bypassing full JSON schemas.
-- [ ] 12. Implement fallback behavior to log a warning and return a default score of `0.5` if the LLM output is malformed and fails regex extraction.
-- [ ] 13. Write unit tests for `scoring.py` mocking `OllamaProvider` with well-formed and malformed responses to validate the regex parsing and fallback safety.
+- [x] 10. Implement `evaluate_importance(episode: Episode) -> float` to construct a Llama 3.2 1B prompt that requires the output to end exactly with `SCORE: X.X`.
+- [x] 11. Implement robust regular expression parsing (e.g., `r"SCORE:\s*(0\.\d+|1\.0)"`) inside `evaluate_importance` to extract the score reliably, bypassing full JSON schemas.
+- [x] 12. Implement fallback behavior to log a warning and return a default score of `0.5` if the LLM output is malformed and fails regex extraction.
+- [x] 13. Write unit tests for `scoring.py` mocking `OllamaProvider` with well-formed and malformed responses to validate the regex parsing and fallback safety.
 
 ## Phase 5: Engine Orchestration (`jules/memory/engine.py`)
 
