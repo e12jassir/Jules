@@ -443,6 +443,7 @@ Esta fase existe para evitar el error clásico: construir expansión sobre una b
 - probar modo degradado sin SQLite
 - probar modo degradado sin Antigravity
 - probar modo degradado sin OpenCode
+- verificar unificación de Ollama systemd (ejecución del daemon bajo el usuario local para asegurar visibilidad de modelos sin duplicar almacenamiento)
 
 ### Regla
 
@@ -507,6 +508,12 @@ No empezar hasta que Fase 1 y Fase 1.5 estén 100% done y usándose en el workfl
    → Tauri + SvelteKit
    → muestra modelo activo, tier, contexto, memoria
    → Modelo: GPT 5.5 para lógica / Deepseek para UI básica
+
+7. Optimización de Latencia Cloud (CLI Daemon / Server mode) **(MECÁNICO - Rendimiento)**
+   → Configurar el acoplamiento a 'opencode serve' (u homólogos en segundo plano)
+   → Comunicación directa vía HTTP/Sockets locales para eliminar los ~2 segundos de 'subprocess exec boot tax'
+   → Aprovechar credenciales y suscripciones premium del usuario activas en el daemon
+   → Modelo: GPT 5.4 / Deepseek
 ```
 
 ---
