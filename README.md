@@ -12,8 +12,8 @@
 **Capa cognitiva persistente para Linux**
 
 [![Estado](https://img.shields.io/badge/fase-1%20en%20progreso-yellow?style=flat-square)](https://github.com/tu-usuario/jules)
-[![Módulos](https://img.shields.io/badge/módulos%20done-7%20%2F%2011-blue?style=flat-square)](https://github.com/tu-usuario/jules/blob/main/ROADMAP.md)
-[![Tests](https://img.shields.io/badge/tests-103%20passing-brightgreen?style=flat-square)](https://github.com/tu-usuario/jules)
+[![Módulos](https://img.shields.io/badge/módulos%20done-8%20%2F%2011-blue?style=flat-square)](https://github.com/tu-usuario/jules/blob/main/ROADMAP.md)
+[![Tests](https://img.shields.io/badge/tests-118%20passing-brightgreen?style=flat-square)](https://github.com/tu-usuario/jules)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](https://www.python.org/)
 [![Licencia](https://img.shields.io/badge/licencia-MIT-gray?style=flat-square)](LICENSE)
 [![Entorno](https://img.shields.io/badge/entorno-EndeavourOS%20%2B%20KDE%20Plasma-blueviolet?style=flat-square)](https://endeavouros.com/)
@@ -50,7 +50,7 @@ Es el único sistema que sabe cómo piensas, cómo resuelves problemas y cómo h
 
 ## Características principales
 
-### Ya implementado (Fase 1 — 70%)
+### Ya implementado (Fase 1 — 80%)
 
 **Memoria episódica persistente**
 Jules no guarda logs. Guarda episodios: qué problema resolvías, cómo lo abordaste, qué funcionó, qué modelo respondió. La recuperación es semántica, no cronológica — Jules encuentra lo relevante, no lo más reciente.
@@ -67,10 +67,14 @@ Llama 3.2 1B evalúa la relevancia de cada episodio (0.0–1.0) sin consumir cuo
 **Inferencia de intención de contexto**
 Jules no pregunta para qué estás haciendo algo — lo infiere. La misma acción tiene respuestas distintas según el contexto: abrir un archivo después de un error es debugging; abrirlo después de leer docs es aprendizaje.
 
+**Sistema de Eventos y Watcher (Módulo 8)**
+EventBus reactivo totalmente asíncrono y desacoplado mediante `asyncio.to_thread` para mantener latencia cero en la terminal del usuario. Observa cambios del sistema de archivos en background con `LinuxWatcher` inteligente (omitiendo carpetas masivas como `.git`, `node_modules` y `.venv`) e instala ganchos interactivos seguros para el Shell (`zsh`).
+
+**Rendimiento & Optimización Híbrida**
+Optimización de bajo nivel para arquitecturas de CPU híbridas (como Intel Alder Lake P/E-cores) forzando el mapeo sobre hilos de alto rendimiento y sistema de **pre-carga asíncrona preventiva** para erradicar las latencias de carga en frío de modelos locales.
+
 ### En construcción (Fase 1 — pendiente)
 
-- Sistema de eventos (session_started, project_opened, coding_detected...)
-- Shell hooks para fish / zsh / bash según el shell detectado
 - Sistema de permisos con confirmación explícita para acciones con consecuencias
 - `jules doctor` — diagnóstico completo del entorno al arranque
 - CLI principal que conecta todo
