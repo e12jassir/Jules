@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from pathlib import Path
-import re
 
 from jules.core.session import SessionContext
 
@@ -14,6 +13,7 @@ class BuiltContext:
     project_root: str | None
     intent: str
     time_of_day: int
+    shell: str
 
 
 class ContextEngine:
@@ -22,11 +22,12 @@ class ContextEngine:
         del user_input
         project_root = ContextEngine._find_project_root(session.cwd)
         intent = ContextEngine._infer_intent(session)
-        time_of_day = datetime.now().hour
+        time_of_day = datetime.now(timezone.utc).hour
         return BuiltContext(
             project_root=project_root,
             intent=intent,
             time_of_day=time_of_day,
+            shell=os.environ.get("SHELL", "unknown"),
         )
 
     @staticmethod
