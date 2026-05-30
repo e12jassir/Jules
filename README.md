@@ -1,5 +1,3 @@
-<div align="center">
-
 ```
    ██╗██╗   ██╗██╗     ███████╗███████╗
    ██║██║   ██║██║     ██╔════╝██╔════╝
@@ -9,226 +7,219 @@
  ╚════╝  ╚═════╝ ╚══════╝╚══════╝╚══════╝
 ```
 
-**Capa cognitiva persistente para Linux**
+**Persistent cognitive layer for Linux**
 
-[![Estado](https://img.shields.io/badge/fase-1%20en%20progreso-yellow?style=flat-square)](https://github.com/tu-usuario/jules)
-[![Módulos](https://img.shields.io/badge/módulos%20done-8%20%2F%2011-blue?style=flat-square)](https://github.com/tu-usuario/jules/blob/main/ROADMAP.md)
-[![Tests](https://img.shields.io/badge/tests-118%20passing-brightgreen?style=flat-square)](https://github.com/tu-usuario/jules)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](https://www.python.org/)
-[![Licencia](https://img.shields.io/badge/licencia-MIT-gray?style=flat-square)](LICENSE)
-[![Entorno](https://img.shields.io/badge/entorno-EndeavourOS%20%2B%20KDE%20Plasma-blueviolet?style=flat-square)](https://endeavouros.com/)
-
-</div>
+[![Phase](https://img.shields.io/badge/phase-1%20in%20progress-yellow?style=flat-square)](https://github.com/e12jassir/Jules) [![Modules](https://img.shields.io/badge/modules%20done-8%20%2F%2011-blue?style=flat-square)](https://github.com/e12jassir/Jules/blob/main/ROADMAP.md) [![Tests](https://img.shields.io/badge/tests-103%20passing-brightgreen?style=flat-square)](https://github.com/e12jassir/Jules) [![Python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](https://www.python.org/) [![License](https://img.shields.io/badge/license-MIT-gray?style=flat-square)](https://github.com/e12jassir/Jules/blob/main/LICENSE) [![Environment](https://img.shields.io/badge/env-EndeavourOS%20%2B%20KDE%20Plasma-blueviolet?style=flat-square)](https://endeavouros.com/)
 
 ---
 
-## Qué es Jules
+## What is Jules
 
-Jules no es un chatbot. No es un wrapper de APIs. No es un copiloto desechable que se reinicia sin saber quién eres.
+Jules is not a chatbot. Not an API wrapper. Not a disposable copilot that resets without knowing who you are.
 
-Jules es una **capa cognitiva persistente** que vive dentro de tu sistema operativo Linux. Recuerda entre sesiones. Infiere tu intención sin que la declares. Sabe con qué modelo resolviste mejor un bug la semana pasada. Nunca filtra tus credenciales. No interrumpe a menos que lo actives explícitamente.
+Jules is a **persistent cognitive layer** that lives inside your Linux OS. It remembers across sessions. It infers your intent without you having to declare it. It knows which model helped you debug that async issue last week. It never leaks your credentials. It never interrupts unless you explicitly enable it.
 
-La diferencia central con cualquier otro asistente de IA: **Jules ≠ el modelo**. El modelo aporta razonamiento. Jules aporta continuidad, identidad y contexto acumulado. Puedes cambiar de modelo sin que Jules pierda quién es.
+The core distinction from every other AI assistant: **Jules ≠ the model**. The model provides reasoning. Jules provides continuity, identity, and accumulated context. You can swap models without Jules losing who it is.
 
 ```bash
-jules "¿por qué falla este async?"
-# → responde con contexto de la sesión actual
-# → recupera episodios semánticamente relevantes de semanas anteriores
-# → usa el modelo correcto para el tipo de tarea, sin quemar cuota
-# → persiste la solución en background sin hacerte esperar
+jules "why is this async failing?"
+# → responds with active session context
+# → retrieves semantically relevant episodes from weeks ago
+# → uses the right model for the task type, without burning quota
+# → persists the solution in background without making you wait
 ```
 
 ---
 
-## Por qué existe
+## Why it exists
 
-La mayoría de los asistentes de IA responden. Jules observa, recuerda y devuelve.
+Most AI assistants respond. Jules observes, remembers, and reflects back.
 
-Es el único sistema que sabe cómo piensas, cómo resuelves problemas y cómo has cambiado con el tiempo. No como un log — como un **espejo cognitivo**.
+It's the only system that knows how you think, how you solve problems, and how you've changed over time. Not as a log — as a **cognitive mirror**.
 
 ---
 
-## Características principales
+## Features
 
-### Ya implementado (Fase 1 — 80%)
+### Implemented (Phase 1 — 80%)
 
-**Memoria episódica persistente**
-Jules no guarda logs. Guarda episodios: qué problema resolvías, cómo lo abordaste, qué funcionó, qué modelo respondió. La recuperación es semántica, no cronológica — Jules encuentra lo relevante, no lo más reciente.
+**Persistent episodic memory**
+Jules doesn't save logs. It saves episodes: what problem you were solving, how you approached it, what worked, which model responded. Retrieval is semantic, not chronological — Jules finds what's relevant, not what's newest.
 
-**Router quota-aware**
-Clasifica cada tarea (identidad, coding, razonamiento, análisis) y selecciona el modelo óptimo según el tier disponible. Nunca quema cuota premium en tareas que no lo justifican. Fallback automático a Ollama cuando los providers externos no responden.
+**Quota-aware router**
+Classifies every task (identity, coding, reasoning, analysis) and selects the optimal model based on available tier. Never burns premium quota on tasks that don't justify it. Automatic fallback to Ollama when external providers don't respond.
 
-**Sanitizador de credenciales**
-El primer módulo que corre, siempre. Antes del scoring, antes de la memoria, antes de todo. Detecta y descarta API keys, tokens, secrets y credenciales antes de que lleguen a cualquier base de datos. Corre dos veces: sobre el input y sobre los episodios candidatos antes de persistir.
+**Credential sanitizer**
+The first module to run, always. Before scoring, before memory, before everything. Detects and discards API keys, tokens, secrets, and credentials before they reach any database. Runs twice: on input and on candidate episodes before persisting.
 
-**Importancia scoring local**
-Llama 3.2 1B evalúa la relevancia de cada episodio (0.0–1.0) sin consumir cuota externa. Con scoring defensivo: si el modelo se degenera y devuelve scores constantes, Jules lo detecta y entra en modo de persistencia conservadora en lugar de descartar o guardar todo silenciosamente.
+**Local importance scoring**
+Llama 3.2 1B evaluates the relevance of each episode (0.0–1.0) without consuming external quota. Includes defensive scoring: if the model degenerates and returns constant scores, Jules detects it and enters conservative persistence mode rather than silently discarding or saving everything.
 
-**Inferencia de intención de contexto**
-Jules no pregunta para qué estás haciendo algo — lo infiere. La misma acción tiene respuestas distintas según el contexto: abrir un archivo después de un error es debugging; abrirlo después de leer docs es aprendizaje.
+**Context intent inference**
+Jules doesn't ask what you're doing — it infers it. The same action triggers different responses based on context: opening a file after an error is debugging; opening it after reading docs is learning.
 
-**Sistema de Eventos y Watcher (Módulo 8)**
-EventBus reactivo totalmente asíncrono y desacoplado mediante `asyncio.to_thread` para mantener latencia cero en la terminal del usuario. Observa cambios del sistema de archivos en background con `LinuxWatcher` inteligente (omitiendo carpetas masivas como `.git`, `node_modules` y `.venv`) e instala ganchos interactivos seguros para el Shell (`zsh`).
+**Event system and file watcher (Module 8)**
+Fully async, decoupled reactive EventBus via `asyncio.to_thread` to maintain zero latency in the user's terminal. Observes filesystem changes in background with a smart `LinuxWatcher` that skips heavy directories (`.git`, `node_modules`, `.venv`) and installs safe interactive shell hooks for `zsh`.
 
-**Rendimiento & Optimización Híbrida**
-Optimización de bajo nivel para arquitecturas de CPU híbridas (como Intel Alder Lake P/E-cores) forzando el mapeo sobre hilos de alto rendimiento y sistema de **pre-carga asíncrona preventiva** para erradicar las latencias de carga en frío de modelos locales.
+**Hybrid CPU performance optimization**
+Low-level optimization for hybrid CPU architectures (such as Intel Alder Lake P/E-cores), forcing mapping to high-performance threads, plus an async preloading system to eliminate cold-start latency for local models.
 
-### En construcción (Fase 1 — pendiente)
+### In progress (Phase 1 — remaining)
 
-- Sistema de permisos con confirmación explícita para acciones con consecuencias
-- `jules doctor` — diagnóstico completo del entorno al arranque
-- CLI principal que conecta todo
+- Permission system with explicit confirmation for consequential actions
+- `jules doctor` — full environment diagnostic at startup
+- Main CLI that connects everything
 
-### Planificado (Fases 2–4)
+### Planned (Phases 2–4)
 
-- Sistema de voz (whisper.cpp + Piper)
-- Automatización de entorno KDE Plasma via D-Bus / KWin
-- Replay system — reconstrucción de sesiones de debugging
+- Voice system (whisper.cpp + Piper)
+- KDE Plasma environment automation via D-Bus / KWin
+- Replay system — reconstruction of debugging sessions
 - Desktop app (Tauri + SvelteKit)
-- Perfilador cognitivo y diff cognitivo
-- Iniciativa contextual opt-in
+- Cognitive profiler and cognitive diff
+- Opt-in contextual initiative
 
 ---
 
-## Arquitectura
+## Architecture
 
 ```
-Usuario
+User input
   ↓
-Sanitizador  ←── PRIMER PASO SIEMPRE
+Sanitizer  ←── ALWAYS FIRST
   ↓
-Detector de Intención de Contexto
+Context Intent Detector
   ↓
-Motor de Contexto + Memoria
-  ├─ RAM          (sesión activa)
-  ├─ LanceDB      (episodios + embeddings)
-  └─ SQLite       (hechos, preferencias, proyectos)
+Context + Memory Engine
+  ├─ RAM          (active session)
+  ├─ LanceDB      (episodes + embeddings)
+  └─ SQLite       (facts, preferences, projects)
   ↓
-Router quota-aware
-  ├─ Ollama / Llama 3.2    (local / offline / identidad / scoring)
+Quota-aware Router
+  ├─ Ollama / Llama 3.2    (local / offline / identity / scoring)
   ├─ Antigravity CLI       (Google + Claude + GPT)
-  └─ OpenCode CLI          (GPT / Codex / Deepseek / Llama)
+  └─ OpenCode CLI          (GPT-5 / Codex / Deepseek / Llama)
   ↓
-Respuesta al usuario  ←── INMEDIATA, sin bloqueo
+Response to user  ←── IMMEDIATE, non-blocking
   ↓ (background async)
-Post-procesamiento → Sanitizador → Scoring → Persistencia
+Post-processing → Sanitizer → Scoring → Persistence
 ```
 
-**Regla crítica de latencia:** la respuesta al usuario no espera a nada del post-procesamiento. Todo corre en `asyncio.create_task()` separado. El usuario nunca espera por la memoria.
+**Critical latency rule:** the response to the user never waits for anything in post-processing. Everything runs in a separate `asyncio.create_task()`. The user never waits on memory.
 
 ---
 
-## Stack tecnológico
+## Tech stack
 
-| Capa | Tecnología |
+| Layer | Technology |
 |---|---|
-| Lenguaje | Python 3.11+ |
-| Aislamiento | virtualenv dedicado |
+| Language | Python 3.11+ |
+| Isolation | Dedicated virtualenv |
 | CLI | Click + asyncio |
-| DB relacional | SQLite (→ PostgreSQL cuando escale) |
-| Migraciones | Alembic |
-| DB vectorial | LanceDB |
-| Inferencia local | Ollama + Llama 3.2 1B |
-| Provider externo 1 | Antigravity CLI |
-| Provider externo 2 | OpenCode CLI |
-| Frontend (Fase 2) | Tauri + SvelteKit |
+| Relational DB | SQLite (→ PostgreSQL when scaled) |
+| Migrations | Alembic |
+| Vector DB | LanceDB |
+| Local inference | Ollama + Llama 3.2 1B |
+| External provider 1 | Antigravity CLI |
+| External provider 2 | OpenCode CLI |
+| Frontend (Phase 2) | Tauri + SvelteKit |
 
 ---
 
-## Providers y modelos
+## Providers and models
 
-Jules opera con tres providers. Los externos se invocan como subprocesses — Jules no toca credenciales, cada CLI maneja su propia autenticación.
+Jules operates with three providers. External ones are invoked as subprocesses — Jules never touches credentials; each CLI manages its own authentication.
 
-| Provider | Tier | Modelos |
+| Provider | Tier | Models |
 |---|---|---|
-| Ollama (local) | free | Llama 3.2 1B — identidad, scoring, offline |
+| Ollama (local) | free | Llama 3.2 1B — identity, scoring, offline |
 | Antigravity CLI | low / high cost | Gemini Flash, Gemini Pro, Claude Sonnet/Opus |
-| OpenCode CLI | low / high cost | GPT, Codex, Deepseek, Qwen |
+| OpenCode CLI | low / high cost | GPT-5, GPT-5.4, Codex, Deepseek, Qwen |
 
-El router asigna cada tipo de tarea al tier correcto. `IDENTITY` y `MEMORY_SCORING` van siempre a Ollama, sin excepción. `CODING` va a OpenCode. `ANALYSIS` va a Antigravity high_cost. Ningún modelo está hardcodeado en el código — todo vive en `config.toml`.
+The router assigns each task type to the correct tier. `IDENTITY` and `MEMORY_SCORING` always go to Ollama, no exceptions. `CODING` goes to OpenCode. `ANALYSIS` goes to Antigravity high_cost. No model is hardcoded in the source — everything lives in `config.toml`.
 
 ---
 
-## Entorno objetivo
+## Target environment
 
-Jules se desarrolla y opera en:
+Jules is developed and operated on:
 
 - **OS:** EndeavourOS (Arch-based, rolling release)
-- **Escritorio:** KDE Plasma 6 + Wayland
-- **Shell:** fish / zsh / bash (detectado en runtime)
-- **Python:** virtualenv dedicado — nunca el Python del sistema
+- **Desktop:** KDE Plasma 6 + Wayland
+- **Shell:** fish / zsh / bash (detected at runtime)
+- **Python:** dedicated virtualenv — never the system Python
 
-Toda integración de sistema (ventanas, eventos, hooks de shell) está diseñada para este entorno desde el inicio, no como adaptación posterior.
+All system integrations (window management, events, shell hooks) are designed for this environment from the ground up, not retrofitted.
 
 ---
 
-## Instalación
+## Installation
 
-> Jules está en Fase 1 activa. No hay release estable todavía. Lo siguiente es el setup de desarrollo.
+> Jules is in active Phase 1 development. No stable release yet. The following is the development setup.
 
 ```bash
-# Clonar el repositorio
-git clone https://github.com/tu-usuario/jules.git
-cd jules
+# Clone the repository
+git clone https://github.com/e12jassir/Jules.git
+cd Jules
 
-# Crear y activar virtualenv — obligatorio
+# Create and activate virtualenv — required
 python -m venv .venv
 source .venv/bin/activate
 
-# Instalar dependencias
+# Install dependencies
 pip install -e ".[dev]"
 
-# Inicializar base de datos
+# Initialize the database
 alembic upgrade head
 
-# Verificar entorno
+# Verify environment
 jules doctor
 ```
 
-### Requisitos previos
+### Prerequisites
 
 ```bash
-# Ollama con Llama 3.2
+# Ollama with Llama 3.2
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull llama3.2:1b
 
-# Verificar inotify (EndeavourOS / Arch)
+# Check inotify (EndeavourOS / Arch)
 cat /proc/sys/fs/inotify/max_user_watches
-# Si está por debajo de 65536:
+# If below 65536:
 echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.d/jules.conf
 sudo sysctl -p /etc/sysctl.d/jules.conf
 ```
 
 ---
 
-## Uso
+## Usage
 
 ```bash
-# Pregunta directa
-jules "¿cómo funciona el GIL de Python?"
+# Direct question
+jules "how does Python's GIL work?"
 
-# Con override de modelo
-jules --model claude-sonnet-4-6 "revisa esta arquitectura"
+# With model override
+jules --model claude-sonnet-4-6 "review this architecture"
 
-# Sin memoria (sesión limpia)
-jules --no-memory "explícame asyncio desde cero"
+# No memory (clean session)
+jules --no-memory "explain asyncio from scratch"
 
-# Ver episodios recientes
+# View recent episodes
 jules memory
 
-# Estado de providers y memoria
+# Provider and memory status
 jules status
 
-# Diagnóstico completo del entorno
+# Full environment diagnostic
 jules doctor
 
-# Última ejecución detallada
+# Last execution details
 jules debug last
 
-# Log del sanitizador
+# Sanitizer log
 jules logs --sanitized
 
-# Salud del importance scorer
+# Importance scorer health
 jules logs --scoring
 ```
 
@@ -236,81 +227,81 @@ jules logs --scoring
 
 ## `jules doctor`
 
-Antes de cualquier sesión, Jules verifica su propio entorno:
+Before any session, Jules verifies its own environment:
 
 ```
 jules doctor
 ──────────────────────────────────────────────
-✓ Ollama          activo · llama3.2:1b disponible
-✓ Antigravity     disponible en PATH
-✓ OpenCode        disponible en PATH
-✓ LanceDB         vectores OK
-✓ SQLite          migraciones al día (rev: a3f9c1)
-✗ inotify         8192 watches — recomendado ≥65536
-✓ Virtualenv      activo (.venv)
-✓ ~/.jules/       permisos OK
-⚠ Scoring         sin datos suficientes aún
-✓ Shell           fish · hooks en conf.d/jules.fish
+✓ Ollama          active · llama3.2:1b available
+✓ Antigravity     available in PATH
+✓ OpenCode        available in PATH
+✓ LanceDB         vectors OK
+✓ SQLite          migrations current (rev: a3f9c1)
+✗ inotify         8192 watches — recommended ≥65536
+✓ Virtualenv      active (.venv)
+✓ ~/.jules/       permissions OK
+⚠ Scoring         insufficient data yet
+✓ Shell           fish · hooks in conf.d/jules.fish
 ──────────────────────────────────────────────
-1 problema detectado. Jules opera parcialmente.
+1 issue detected. Jules operating partially.
 ```
 
-Doctor nunca bloquea el arranque. Reporta y deja que el usuario decida.
+Doctor never blocks startup. It reports and lets the user decide.
 
 ---
 
-## Principios de diseño
+## Design principles
 
-**Local-first.** Jules funciona sin conexión. La privacidad no es un feature — es la base.
+**Local-first.** Jules works offline. Privacy is not a feature — it's the foundation.
 
-**Latencia cero en terminal.** La respuesta llega antes de que termine la persistencia. Siempre.
+**Zero latency in terminal.** The response arrives before persistence finishes. Always.
 
-**Degradación elegante.** Si LanceDB falla, Jules sigue sin memoria semántica. Si SQLite falla, entra en modo degradado. Si todos los providers externos fallan, Ollama responde. El usuario siempre sabe qué está degradado — nunca hay errores silenciosos.
+**Graceful degradation.** If LanceDB fails, Jules continues without semantic memory. If SQLite fails, it enters degraded mode. If all external providers fail, Ollama responds. The user always knows what's degraded — no silent errors.
 
-**Iniciativa apagada por defecto.** Jules no interrumpe. No interpreta silencio como bloqueo. Cuando el usuario activa la iniciativa contextual, tiene reglas estrictas: una sola intervención por razón por sesión.
+**Initiative off by default.** Jules doesn't interrupt. It doesn't interpret silence as a blocker. When the user enables contextual initiative, it operates under strict rules: one intervention per reason per session.
 
-**Privacidad por diseño.** El sanitizador es el primer módulo que corre, siempre. Nada sensible toca la base de datos.
+**Privacy by design.** The sanitizer is the first module to run, always. Nothing sensitive touches the database.
 
 ---
 
-## Estado del proyecto
+## Project status
 
 ```
-Fase 1 — Núcleo
-  [x] Módulo 0  — Estructura base + virtualenv
-  [x] Módulo 1  — Sanitizador
-  [x] Módulo 2  — Modelos de datos
-  [x] Módulo 3  — Provider Ollama
-  [x] Módulo 4  — Providers externos (Antigravity + OpenCode)
-  [x] Módulo 5  — Router quota-aware
-  [x] Módulo 6  — Motor de memoria (SQLite + LanceDB + Scoring)
-  [x] Módulo 7  — Detector de intención de contexto
-  [ ] Módulo 8  — Sistema de eventos + shell hooks
-  [ ] Módulo 9  — Sistema de permisos
-  [ ] Módulo 10 — jules doctor
-  [ ] Módulo 11 — CLI principal
-  [ ]           — Revisión final Fase 1 (Opus)
+Phase 1 — Core
+  [x] Module 0  — Base structure + virtualenv
+  [x] Module 1  — Sanitizer
+  [x] Module 2  — Data models
+  [x] Module 3  — Ollama provider
+  [x] Module 4  — External providers (Antigravity + OpenCode)
+  [x] Module 5  — Quota-aware router
+  [x] Module 6  — Memory engine (SQLite + LanceDB + Scoring)
+  [x] Module 7  — Context intent detector
+  [x] Module 8  — Event system + shell hooks
+  [ ] Module 9  — Permission system
+  [ ] Module 10 — jules doctor
+  [ ] Module 11 — Main CLI
+  [ ]           — Phase 1 final review (Opus)
 
-Fase 1.5 — Estabilización     (pendiente)
-Fase 2   — Expansión          (pendiente)
-Fase 3   — Inteligencia       (pendiente)
-Fase 4   — Autonomía          (pendiente)
+Phase 1.5 — Stabilization     (pending)
+Phase 2   — Expansion         (pending)
+Phase 3   — Intelligence      (pending)
+Phase 4   — Autonomy          (pending)
 ```
 
-103 tests pasando sobre los módulos completados.
+103 tests passing across completed modules.
 
 ---
 
-## Documentación
+## Documentation
 
-- [`JULES.md`](JULES.md) — especificación canónica del sistema: arquitectura, principios, módulos, configuración completa
-- [`ROADMAP.md`](ROADMAP.md) — plan de construcción detallado: módulos, criterios de done, orden de implementación
+- [`JULES.md`](./JULES.md) — canonical system specification: architecture, principles, modules, full configuration
+- [`ROADMAP.md`](./ROADMAP.md) — detailed build plan: modules, done criteria, implementation order
 
 ---
 
-## Configuración
+## Configuration
 
-Jules se configura desde `~/.jules/config.toml`. Valores relevantes:
+Jules is configured from `~/.jules/config.toml`. Key values:
 
 ```toml
 [memory]
@@ -322,7 +313,7 @@ max_episodes_retrieved = 5
 default_tier = "low_cost"
 
 [initiative]
-enabled = false  # apagada por defecto
+enabled = false  # off by default
 
 [sanitizer]
 strict_mode = true
@@ -332,27 +323,23 @@ inotify_min_watches        = 65536
 scoring_variance_threshold = 0.01
 ```
 
-La configuración completa está documentada en [`JULES.md`](JULES.md).
+Full configuration is documented in [`JULES.md`](./JULES.md).
 
 ---
 
-## Contribuir
+## Contributing
 
-Jules es un proyecto personal en construcción activa. No hay contribuciones externas abiertas por ahora — el núcleo necesita estabilizarse primero.
+Jules is a personal project in active construction. External contributions aren't open yet — the core needs to stabilize first.
 
-Si encontrás algo interesante o tenés feedback, podés abrir un issue.
-
----
-
-## Licencia
-
-MIT — ver [`LICENSE`](LICENSE)
+If you find something interesting or have feedback, feel free to open an issue.
 
 ---
 
-<div align="center">
+## License
 
-*Jules no es otro chatbot.*
-*Es el único sistema que sabe cómo pensás.*
+MIT — see [`LICENSE`](./LICENSE)
 
-</div>
+---
+
+*Jules is not another chatbot.*  
+*It's the only system that knows how you think.*
