@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 from jules.memory.engine import MemoryEngine
 from jules.memory.models import Episode, SessionContext
+from jules.memory.scoring import ScoringHealthMonitor
 
 
 def make_episode() -> Episode:
@@ -120,3 +121,98 @@ async def test_engine_uses_episodic_vector_dimension(monkeypatch):
 
     episodic.store_async.assert_awaited_once_with(episode, [0.0, 0.0, 0.0, 0.0, 0.0])
     episodic.retrieve_async.assert_awaited_once_with([0.0, 0.0, 0.0, 0.0, 0.0], 2)
+
+
+async def test_pipeline_skips_low_importance_when_scoring_is_healthy(monkeypatch):
+    persistent = AsyncMock()
+    episodic = AsyncMock()
+    episodic.vector_dimension = 3
+    provider = AsyncMock()
+    engine = MemoryEngine(persistent=persistent, episodic=episodic, provider=provider)
+    engine.persistence_delay_seconds = 0.0
+    episode = make_episode()
+
+    monkeypatch.setattr("jules.memory.engine.evaluate_importance", AsyncMock(return_value=0.2))
+
+    await engine._run_persistence_pipeline(episode)
+
+    episodic.store_async.assert_not_awaited()
+    persistent.save_async.assert_not_awaited()
+
+
+async def test_pipeline_conservative_mode_persists_high_friction_episode(monkeypatch):
+    persistent = AsyncMock()
+    episodic = AsyncMock()
+    episodic.vector_dimension = 3
+    provider = AsyncMock()
+    monitor = ScoringHealthMonitor(scoring_variance_threshold=0.01, scoring_window_size=10)
+    engine = MemoryEngine(
+        persistent=persistent,
+        episodic=episodic,
+        provider=provider,
+        scoring_health_monitor=monitor,
+    )
+    engine.persistence_delay_seconds = 0.0
+    episode = make_episode()
+    episode.friction_score = 0.9
+
+    monkeypatch.setattr("jules.memory.engine.evaluate_importance", AsyncMock(return_value=0.4))
+
+    await engine._run_persistence_pipeline(episode)
+    await engine._run_persistence_pipeline(episode)
+    await engine._run_persistence_pipeline(episode)
+
+    assert episodic.store_async.await_count == 3
+    assert persistent.save_async.await_count == 3
+
+
+async def test_pipeline_conservative_mode_discards_low_friction_without_active_project(monkeypatch):
+    persistent = AsyncMock()
+    episodic = AsyncMock()
+    episodic.vector_dimension = 3
+    provider = AsyncMock()
+    monitor = ScoringHealthMonitor(scoring_variance_threshold=0.01, scoring_window_size=10)
+    engine = MemoryEngine(
+        persistent=persistent,
+        episodic=episodic,
+        provider=provider,
+        scoring_health_monitor=monitor,
+    )
+    engine.persistence_delay_seconds = 0.0
+    episode = make_episode()
+    episode.friction_score = 0.1
+
+    monkeypatch.setattr("jules.memory.engine.evaluate_importance", AsyncMock(return_value=0.4))
+
+    await engine._run_persistence_pipeline(episode)
+    await engine._run_persistence_pipeline(episode)
+    await engine._run_persistence_pipeline(episode)
+
+    assert episodic.store_async.await_count == 2
+    assert persistent.save_async.await_count == 2
+
+
+async def test_pipeline_conservative_mode_persists_active_project_tag(monkeypatch):
+    persistent = AsyncMock()
+    episodic = AsyncMock()
+    episodic.vector_dimension = 3
+    provider = AsyncMock()
+    monitor = ScoringHealthMonitor(scoring_variance_threshold=0.01, scoring_window_size=10)
+    engine = MemoryEngine(
+        persistent=persistent,
+        episodic=episodic,
+        provider=provider,
+        scoring_health_monitor=monitor,
+    )
+    engine.persistence_delay_seconds = 0.0
+    episode = make_episode()
+    episode.tags = ["memory", "project:Jules"]
+
+    monkeypatch.setattr("jules.memory.engine.evaluate_importance", AsyncMock(return_value=0.4))
+
+    await engine._run_persistence_pipeline(episode)
+    await engine._run_persistence_pipeline(episode)
+    await engine._run_persistence_pipeline(episode)
+
+    assert episodic.store_async.await_count == 3
+    assert persistent.save_async.await_count == 3

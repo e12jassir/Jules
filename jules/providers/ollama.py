@@ -46,10 +46,12 @@ class OllamaProvider:
         model: str,
         options: dict[str, object] | None = None,
     ) -> str:
-        del context
-        payload = {"model": model, "prompt": prompt, "stream": False}
+        # Usar num_thread=4 por defecto para optimizar la arquitectura híbrida (P-cores) de Intel Alder Lake
+        options_payload = {"num_thread": 4}
         if options:
-            payload["options"] = options
+            options_payload.update(options)
+
+        payload = {"model": model, "prompt": prompt, "stream": False, "options": options_payload}
             
         data = await self._post_json("/api/generate", payload)
 
@@ -63,15 +65,21 @@ class OllamaProvider:
         prompt: str,
         context: SessionContext,
         model: str,
+        options: dict[str, object] | None = None,
     ) -> AsyncIterator[str]:
         del context
         timeout = aiohttp.ClientTimeout(total=None, sock_read=self.timeout_seconds, connect=5.0)
+
+        # Usar num_thread=4 por defecto para optimizar la arquitectura híbrida (P-cores) de Intel Alder Lake
+        options_payload = {"num_thread": 4}
+        if options:
+            options_payload.update(options)
 
         try:
             session = self._get_session()
             async with session.post(
                 f"{self.base_url}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": True},
+                json={"model": model, "prompt": prompt, "stream": True, "options": options_payload},
                 timeout=timeout,
             ) as response:
                 await self._raise_for_status(response)
@@ -127,6 +135,17 @@ class OllamaProvider:
                 return True
         except (asyncio.TimeoutError, aiohttp.ClientError, ProviderError):
             return False
+
+    async def preload(self, model: str) -> None:
+        """Carga el modelo en memoria RAM en background para eliminar la latencia del primer token."""
+        try:
+            # Mandamos un request vacío con keep_alive de 10 minutos
+            await self._post_json(
+                "/api/generate",
+                {"model": model, "prompt": "", "keep_alive": "10m", "options": {"num_thread": 8}}
+            )
+        except Exception:
+            pass
 
     async def _post_json(self, path: str, payload: dict[str, object]) -> dict[str, object]:
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)

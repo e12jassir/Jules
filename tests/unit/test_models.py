@@ -16,6 +16,7 @@ def test_session_context_initialization():
     )
     assert ctx.project == "Jules"
     assert ctx.active_files == ["README.md"]
+    assert ctx.shell == "unknown"
 
 
 def test_episode_initialization():
@@ -62,6 +63,7 @@ def test_session_context_orm_conversion():
 
     assert orm_ctx.project == "Jules"
     assert orm_ctx.active_files == ["models.py"]
+    assert orm_ctx.shell == "unknown"
     assert orm_ctx.to_dataclass() == ctx
 
 
@@ -100,6 +102,7 @@ def test_episode_orm_conversion():
     assert orm_ep.timestamp == original_ep.timestamp.replace(tzinfo=None)
     assert orm_ep.session_context.project == "Jules"
     assert orm_ep.session_context.active_files == ["models.py"]
+    assert orm_ep.session_context.shell == "unknown"
     assert orm_ep.model_used == "gpt-5.4"
     assert orm_ep.tags == ["db", "orm"]
     
@@ -110,6 +113,7 @@ def test_episode_orm_conversion():
     assert restored_ep.timestamp == original_ep.timestamp
     assert restored_ep.context.project == "Jules"
     assert restored_ep.context.active_files == ["models.py"]
+    assert restored_ep.context.shell == "unknown"
     assert restored_ep.problem == "DB error"
     assert restored_ep.tags == ["db", "orm"]
     assert restored_ep.importance == 0.8
@@ -156,6 +160,7 @@ def test_episode_orm_sqlite_round_trip():
         assert stored is not None
         assert stored.session_context.directory == "/home/user/Jules"
         assert stored.session_context.active_files == ["models.py", "test_models.py"]
+        assert stored.session_context.shell == "unknown"
 
         restored = stored.to_dataclass()
 

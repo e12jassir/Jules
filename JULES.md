@@ -1,9 +1,26 @@
 # JULES
 ## Capa Cognitiva Persistente para el Sistema Operativo
 
-> **Versión:** 1.3 — Canónica  
-> **Estado:** Listo para implementación  
+> **Versión:** 1.4 — Canónica
+> **Estado:** Fase 1 en progreso — Módulos 0–7 completados y validados (103 tests). Módulos 8, 9, 10 y 11 pendientes.
 > **Principio rector:** Construir lo mínimo que funcione, no lo máximo que se pueda imaginar.
+
+---
+
+## ENTORNO OBJETIVO
+
+Jules se desarrolla y opera en el siguiente entorno de referencia:
+
+| Componente | Valor |
+|---|---|
+| Distribución | EndeavourOS (Arch-based, rolling release) |
+| Escritorio | KDE Plasma 6 |
+| Servidor de display | Wayland (KWin como compositor) |
+| Shell | Verificar antes del Módulo 8: `echo $SHELL` |
+| Python | Virtualenv dedicado — nunca el Python del sistema |
+| Gestor de paquetes | pacman + AUR (yay / paru) |
+
+Toda decisión de arquitectura que toque el sistema operativo, ventanas, shell o servicios systemd debe validarse contra este entorno antes de considerarse done.
 
 ---
 
@@ -81,6 +98,8 @@ Regla operativa: si no está en el scope de la Fase actual, no existe todavía.
 
 9. **HUMAN-CENTERED** — Jules augmenta al usuario. No lo reemplaza ni genera dependencia.
 
+10. **ENTORNO-AWARE** — Jules conoce el entorno en el que vive. Las integraciones de sistema se diseñan para KDE Plasma + Wayland desde el inicio, no como adaptación posterior.
+
 ---
 
 ## PERSONALIDAD DE JULES
@@ -113,7 +132,7 @@ Cada modelo interpreta los prompts de forma diferente. Jules mantiene identidad 
 2. **Memoria contextual compartida** — todos los providers acceden al mismo estado de memoria
 3. **Tests de coherencia de identidad** — cada provider pasa un conjunto de prompts de referencia antes de activarse en producción (`tests/integration/test_provider_coherence.py`)
 
-La verificación de coherencia en post-procesamiento async (`personality/coherence.py`) es **Fase 2**. En Fase 1, la consistencia se garantiza con `master.md` bien escrito, los presets por provider, y los tests de integración. El post-procesamiento async de una respuesta ya entregada al usuario no tiene utilidad práctica en Fase 1.
+La verificación de coherencia en post-procesamiento async (`personality/coherence.py`) es **Fase 2**. En Fase 1, la consistencia se garantiza con `master.md` bien escrito, los presets por provider, y los tests de integración.
 
 ---
 
@@ -143,14 +162,14 @@ Router de Modelos (quota-aware)
   ├─ Selecciona modelo óptimo
   └─ Invoca provider
        ├─ Ollama / Llama 3.2    (local / offline / identidad / scoring)
-       ├─ Antigravity CLI      (Google + Claude + GPT)
-       └─ OpenCode CLI         (GPT / Codex / Deepseek / Llama)
+       ├─ Antigravity CLI       (Google + Claude + GPT)
+       └─ OpenCode CLI          (GPT / Codex / Deepseek / Llama)
   ↓
 Respuesta al usuario  ←─── INMEDIATA, sin bloqueo
   ↓ (en background, async)
 Post-Procesamiento
-  ├─ coherencia de identidad
-  └─ extracción de episodios candidatos
+  ├─ extracción de episodios candidatos
+  └─ validación de scoring (ver: Scoring Defensivo)
   ↓ (en background, async)
 Sanitizador (segunda pasada sobre episodios candidatos)
   ↓
@@ -169,6 +188,7 @@ Motor de Persistencia
 | Capa | Tecnología | Razón |
 |---|---|---|
 | Lenguaje | Python 3.11+ | Ecosistema IA, async nativo, ML tooling |
+| Aislamiento | virtualenv dedicado | Rolling release — nunca depender del Python del sistema |
 | CLI | Click + asyncio | Fase 1: CLI pura, sin servidor HTTP |
 | Backend | FastAPI | Fase 2+: solo si el dashboard Tauri lo requiere |
 | DB relacional | SQLite → PostgreSQL | Local-first; migrar solo cuando escale |
@@ -179,6 +199,29 @@ Motor de Persistencia
 | Provider externo 1 | Antigravity CLI | Google + Claude + GPT via subprocess |
 | Provider externo 2 | OpenCode CLI | GPT / Codex / Deepseek / Llama via subprocess |
 
+### Nota crítica: LanceDB en EndeavourOS
+
+LanceDB no está en los repositorios oficiales de Arch. Se instala vía pip y compila dependencias de Rust localmente. Requisitos:
+
+- `base-devel` instalado
+- Rust actualizado (`rustup update`)
+- Todo dentro del virtualenv de Jules — nunca en el Python del sistema
+
+En rolling release, una actualización de sistema puede romper dependencias compiladas sin aviso. Si LanceDB falla después de una actualización, reconstruir el virtualenv antes de asumir que el problema es del código.
+
+### Nota crítica: virtualenv es obligatorio
+
+```bash
+# Al iniciar el proyecto — una sola vez
+python -m venv .venv
+source .venv/bin/activate
+
+# En cada sesión de desarrollo
+source .venv/bin/activate
+```
+
+Jules nunca corre fuera de su virtualenv. Nunca.
+
 ---
 
 ## PROVIDERS Y MODELOS
@@ -187,17 +230,36 @@ Jules opera con tres providers. Los externos se invocan como subprocesses — Ju
 
 ### Ollama — Local / Offline
 
-Invocación: API REST `http://localhost:11434`  
-Tier: **free** — sin cuota, siempre disponible  
+Invocación: API REST `http://localhost:11434`
+Tier: **free** — sin cuota, siempre disponible
 Uso exclusivo: identidad, routing, importance scoring, modo offline
 
 | Modelo | Rol |
 |---|---|
 | Llama 3.2 1B | Identidad base, scoring de memoria, offline |
 
+#### Nota crítica: Ollama y systemd en EndeavourOS
+
+Ollama instalado vía AUR crea `ollama.service`, que corre como usuario del sistema `ollama`, no como tu usuario. Los modelos descargados con `ollama pull` bajo tu usuario pueden no ser visibles para el servicio del sistema, y viceversa.
+
+Verificar antes de dar el Módulo 3 por done:
+
+```bash
+# Ver bajo qué usuario corre el servicio
+systemctl show ollama.service | grep User
+
+# Si corre como usuario del sistema, verificar que los modelos sean visibles
+sudo -u ollama ollama list
+
+# Alternativa: correr Ollama como servicio de usuario
+systemctl --user enable --now ollama
+```
+
+La verificación de este punto es criterio de done del Módulo 3, no de Fase 1.5.
+
 ### Antigravity CLI — Google + Claude + GPT
 
-Invocación: `subprocess → antigravity`  
+Invocación: `subprocess → antigravity`
 Antigravity CLI es el sucesor oficial de Gemini CLI desde Google I/O 2026. Closed-source — toda integración encapsulada en `providers/antigravity.py`.
 
 | Modelo | Tier | Uso |
@@ -208,12 +270,12 @@ Antigravity CLI es el sucesor oficial de Gemini CLI desde Google I/O 2026. Close
 | `claude-sonnet-4-6` | high_cost | Razonamiento alternativo, escritura técnica |
 | `claude-opus-4-6` | high_cost | Máxima capacidad — cuota limitada, criterio estricto |
 
+**Advertencia:** CLI closed-source. Puede cambiar interfaz sin aviso. Probar flags de modo no-interactivo manualmente antes de escribir el provider. Tener un test de integración corriendo en cada sesión de desarrollo.
+
 ### OpenCode CLI — GPT / Codex / Deepseek / Llama
 
-Invocación: `subprocess → opencode run --model provider/model "prompt"`  
+Invocación: `subprocess → opencode run --model provider/model "prompt"`
 Modo no-interactivo nativo. Ideal para coding con contexto de archivos y repos.
-
-> **Nota sobre nombres de modelos:** los nombres listados en esta tabla y en ROADMAP.md son ilustrativos del esquema de tiers en el momento de escribir esta versión. Los modelos reales disponibles pueden cambiar. La fuente de verdad siempre es `config.toml` — nunca asumir que los nombres en los docs coinciden exactamente con los strings que acepta el CLI. Verificar con `opencode --help` y `antigravity --help` antes de configurar.
 
 | Modelo | Tier | Uso |
 |---|---|---|
@@ -226,7 +288,9 @@ Modo no-interactivo nativo. Ideal para coding con contexto de archivos y repos.
 | `openai/gpt-5.4` | high_cost | Tareas premium OpenAI |
 | `openai/gpt-5.5` | high_cost | Máxima capacidad OpenAI |
 
-> **Advertencia:** OpenCode puede colgar esperando confirmaciones interactivas cuando se invoca como subprocess. Configurar permisos en modo automático antes de invocar desde Jules.
+**Advertencia:** OpenCode puede colgar esperando confirmaciones interactivas cuando se invoca como subprocess. Configurar permisos en modo automático antes de integrar. Verificar con `opencode --help` que el modo no-interactivo esté disponible.
+
+> **Nota sobre nombres de modelos:** los nombres en estas tablas son ilustrativos del esquema de tiers. Los strings exactos que acepta cada CLI pueden diferir. La fuente de verdad siempre es `config.toml`. Verificar con `antigravity --help` y `opencode --help` antes de configurar.
 
 ---
 
@@ -312,14 +376,15 @@ SENSITIVE_PATTERNS = [
 ]
 ```
 
-> **Nota:** El patrón genérico `[A-Za-z0-9]{20,}` fue deliberadamente excluido. Genera falsos positivos sobre código legítimo (hashes, UUIDs, base64, nombres de función). Los patrones anteriores son suficientemente específicos para cubrir los casos reales de filtración de credenciales.
+> El patrón genérico `[A-Za-z0-9]{20,}` fue deliberadamente excluido. Genera falsos positivos sobre código legítimo (hashes, UUIDs, base64, nombres de función). Los patrones anteriores son suficientemente específicos.
 
 ### Reglas de sanitización
 
 - Si el input contiene un patrón sensible → **descartar completamente**, nunca al scoring
 - El sanitizador corre **dos veces**: sobre el input antes de procesar, y sobre los episodios candidatos antes de persistir
 - Los descartes se loggean (sin el contenido sensible) para auditoría
-- El usuario puede ver en `jules logs --sanitized` cuántos inputs fueron descartados y por qué categoría, sin ver el contenido
+- `jules logs --sanitized` muestra cuántos inputs fueron descartados y por categoría, sin el contenido
+- En modo `strict_mode = true`: descartar ante la duda. Nunca intentar limpiar parcialmente.
 
 ### Lo que no sanitiza
 
@@ -359,38 +424,23 @@ class SessionContext:
     active_files: list[str]
     inferred_intent: str | None  # debugging / learning / refactoring / etc.
     time_of_day: str
+    shell: str                   # fish / zsh / bash — poblado al arranque
 ```
 
-El campo `model_used` habilita el diff cognitivo de Fase 3: Jules puede analizar con qué modelos el usuario resuelve mejor cada tipo de problema.  
-El campo `memory_schema_version` permite que Jules migre episodios antiguos sin romper compatibilidad.
-
+El campo `model_used` habilita el diff cognitivo de Fase 3.
+El campo `memory_schema_version` permite migraciones sin romper compatibilidad.
+El campo `shell` en `SessionContext` documenta el entorno de ejecución para depuración futura.
 
 ---
 
 ## VERSIONADO DE MEMORIA
 
-La estructura de memoria evolucionará con el tiempo.
+Cada `Episode` persistido incluye `memory_schema_version`. Objetivos:
 
-Cada `Episode` persistido debe incluir:
+- permitir migraciones futuras sin perder episodios viejos
+- facilitar exportación e importación entre versiones
 
-```python
-memory_schema_version: str
-```
-
-### Objetivos
-
-- permitir migraciones futuras
-- evitar incompatibilidad entre versiones
-- preservar episodios antiguos aunque cambie el modelo interno
-- facilitar exportación e importación de memoria entre versiones
-
-### Regla
-
-Nunca asumir que todos los episodios tienen la estructura más reciente.
-
-Jules debe poder leer episodios antiguos, migrarlos si es seguro, o ignorarlos de forma explícita si ya no son compatibles.
-
-Un episodio incompatible nunca debe romper el arranque de Jules.
+**Regla:** un episodio incompatible nunca rompe el arranque de Jules. Jules puede leerlo, migrarlo si es seguro, o ignorarlo de forma explícita.
 
 ---
 
@@ -412,12 +462,39 @@ Una memoria se persiste si cumple al menos uno:
 
 El sistema aplica:
 - **Importance scoring** — Llama local evalúa relevancia (0.0–1.0). Score < 0.3 se descarta.
-
-  > **Calibración obligatoria antes de integrar:** antes de conectar el scoring al flujo real, probar el prompt de scoring contra 10–15 episodios de ejemplo con Llama corriendo en Ollama. Llama 3.2 1B necesita un prompt bien diseñado para devolver floats coherentes sobre contenido técnico. Si el modelo no lo hace bien en pruebas aisladas, el threshold de 0.3 será arbitrario y el motor de persistencia descartará o guardará basura. Ajustar prompt y threshold con datos reales antes de dar el módulo por done.
 - **Summarización** — compresión periódica de episodios similares antiguos
 - **Pruning** — eliminación de memorias contradichas u obsoletas
 - **Decay** — memorias sin acceso reducen su peso (10% por cada 30 días, mínimo 0.1)
 - **Retrieval contextual** — recuperación por similitud semántica, no cronología
+
+### Scoring defensivo
+
+Llama 3.2 1B es un modelo pequeño. Puede devolver scores incoherentes (siempre 0.0, siempre 1.0, o constantes fuera de rango) especialmente con inputs técnicos que no se parecen a los ejemplos de calibración.
+
+Jules detecta esto y actúa:
+
+```python
+def is_scoring_healthy(scores: list[float]) -> bool:
+    """
+    Detecta si el scoring está degenerado.
+    Un scorer sano produce varianza real entre episodios distintos.
+    """
+    if len(scores) < 3:
+        return True  # muestra insuficiente para diagnosticar
+    variance = statistics.variance(scores)
+    return variance > 0.01  # threshold empírico — ajustar con datos reales
+
+# En el motor de persistencia:
+if not is_scoring_healthy(recent_scores):
+    logger.warning("scoring_degenerate", variance=variance, recent=recent_scores)
+    # Entrar en modo de persistencia conservadora:
+    # guardar todo lo que supere friction_score > 0.5 o tenga tags de proyecto activo
+    # No descartar silenciosamente, no guardar todo indiscriminadamente
+```
+
+`jules doctor` y `jules debug last` reportan si el scoring está en modo degradado.
+
+**Calibración obligatoria antes de integrar al flujo:** probar el prompt de scoring contra 10–15 episodios de ejemplo con Llama corriendo en Ollama. El threshold 0.3 es punto de partida, no valor definitivo. Ajustar con datos reales.
 
 ### Flujo de escritura (async, no bloquea al usuario)
 
@@ -430,9 +507,13 @@ Sanitizador (segunda pasada)
   ↓
 ImportanceScorer.score(episode) via Llama local
   ↓
-if score >= 0.3:
+ScoringHealthMonitor.record(score)
+  ↓
+if score >= 0.3 AND scoring_healthy:
     EpisodicMemory.persist(episode)     # LanceDB
     PersistentMemory.upsert_facts(...)  # SQLite si hay hechos estables
+elif not scoring_healthy:
+    persistencia conservadora (ver: Scoring Defensivo)
 else:
     descartar silenciosamente
 ```
@@ -457,7 +538,7 @@ Contexto ensamblado → Router → Provider
 
 ## DETECTOR DE INTENCIÓN DE CONTEXTO
 
-Jules no solo observa *qué haces* — infiere *para qué lo haces*. La misma acción tiene respuestas distintas según el contexto.
+Jules no solo observa *qué haces* — infiere *para qué lo haces*.
 
 | Acción | Contexto previo | Intención inferida |
 |---|---|---|
@@ -468,53 +549,6 @@ Jules no solo observa *qué haces* — infiere *para qué lo haces*. La misma ac
 Señales usadas: actividad terminal previa, directorio activo, historial de sesión, hora del día, patrón habitual del usuario.
 
 El usuario nunca declara su intención — Jules la infiere.
-
----
-
-## INICIATIVA CONTEXTUAL — APAGADA POR DEFECTO
-
-**La iniciativa contextual está desactivada por defecto.**
-
-Jules no interrumpe al usuario a menos que el usuario la active explícitamente:
-
-```toml
-[initiative]
-enabled = false  # apagada por defecto
-```
-
-Cuando el usuario la activa, aplican reglas estrictas:
-
-| Situación | Acción de Jules |
-|---|---|
-| Mismo archivo >2h sin avance visible | Una sola pregunta |
-| Proyecto no tocado >2 semanas, recién abierto | Ofrece resumen de estado |
-| Error idéntico a uno ya resuelto | Sugiere solución anterior |
-| Sesión larga sin break | Sugiere pausa, una sola vez |
-
-**Regla de oro:** Jules no interrumpe dos veces por la misma razón en una sesión.
-
-**Qué nunca hace Jules:** interpretar silencio, descanso o pensamiento como bloqueo. Jules solo actúa sobre señales objetivas (tiempo en archivo, error repetido), nunca sobre inactividad sola.
-
-La iniciativa contextual es Fase 2. En Fase 1 no existe — Jules solo responde cuando el usuario habla.
-
----
-
-## DIFF COGNITIVO
-
-Jules puede responder preguntas sobre la evolución del usuario en el tiempo:
-
-```
-"Jules, ¿con qué modelo resuelvo mejor bugs de async?"
-"Jules, ¿cómo ha cambiado mi forma de debuggear en 6 meses?"
-"Jules, ¿en qué áreas he mejorado este trimestre?"
-"Jules, ¿qué tipos de errores ya no cometo?"
-```
-
-El campo `model_used` en cada episodio permite además:
-- ¿qué modelo te da mejores resultados para coding?
-- ¿con qué provider resuelves problemas más rápido?
-
-**Prioridad:** Fase 3. Requiere mínimo 3 meses de episodios acumulados para ser útil.
 
 ---
 
@@ -531,6 +565,34 @@ class EventType(str, Enum):
     SESSION_ENDED   = "session_ended"
 ```
 
+### Nota crítica: shell hooks en EndeavourOS
+
+Los hooks de shell dependen del shell activo. **Verificar antes de implementar:**
+
+```bash
+echo $SHELL
+# /usr/bin/fish  → usar fish_preexec / fish_postexec / fish_prompt
+# /usr/bin/zsh   → usar precmd / preexec en .zshrc
+# /usr/bin/bash  → usar PROMPT_COMMAND / trap DEBUG en .bashrc
+```
+
+Fish no es compatible con los hooks de bash/zsh. Si el shell activo es fish, los hooks deben implementarse en `~/.config/fish/conf.d/jules.fish` usando las funciones de evento de fish. No intentar adaptar hooks de bash a fish.
+
+### Nota crítica: inotify en EndeavourOS
+
+Los filesystem watchers usan inotify. El límite por defecto puede ser insuficiente en proyectos grandes:
+
+```bash
+# Ver límite actual
+cat /proc/sys/fs/inotify/max_user_watches
+
+# Si está por debajo de 65536, aumentar
+echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.d/jules.conf
+sudo sysctl -p /etc/sysctl.d/jules.conf
+```
+
+Jules verifica este límite al arranque (`jules doctor`) y advierte si está cerca del techo. Un watcher que se agota silenciosamente es difícil de depurar.
+
 ### Fase 2
 
 ```
@@ -543,7 +605,92 @@ focus_started, focus_broken, music_changed, error_repeated
 frustration_detected, productivity_anomaly, burnout_signal
 ```
 
-Los eventos cognitivos de Fase 3 requieren semanas de datos reales del usuario para calibrarse. Implementarlos antes genera falsos positivos que degradan la experiencia de forma permanente.
+Los eventos cognitivos de Fase 3 requieren semanas de datos reales del usuario para calibrarse. Implementarlos antes genera falsos positivos permanentes.
+
+---
+
+## INICIATIVA CONTEXTUAL — APAGADA POR DEFECTO
+
+```toml
+[initiative]
+enabled = false  # apagada por defecto
+```
+
+Cuando el usuario la activa:
+
+| Situación | Acción de Jules |
+|---|---|
+| Mismo archivo >2h sin avance visible | Una sola pregunta |
+| Proyecto no tocado >2 semanas, recién abierto | Ofrece resumen de estado |
+| Error idéntico a uno ya resuelto | Sugiere solución anterior |
+| Sesión larga sin break | Sugiere pausa, una sola vez |
+
+**Regla de oro:** Jules no interrumpe dos veces por la misma razón en una sesión.
+
+Jules nunca interpreta silencio, descanso o pensamiento como bloqueo. Solo actúa sobre señales objetivas (tiempo en archivo, error repetido), nunca sobre inactividad sola.
+
+La iniciativa contextual es Fase 2. En Fase 1 no existe.
+
+---
+
+## COMANDO `jules doctor`
+
+Antes de cualquier sesión de trabajo, `jules doctor` verifica que el entorno esté sano. Es el primer comando que corre Jules al arrancar en modo diagnóstico.
+
+```
+jules doctor
+```
+
+Verifica y reporta:
+
+| Check | Qué verifica |
+|---|---|
+| Ollama | Servicio activo, modelos descargados, usuario correcto |
+| Antigravity CLI | Disponible en PATH, responde a `--help` |
+| OpenCode CLI | Disponible en PATH, responde a `--help` |
+| LanceDB | Directorio de vectores accesible, no corrupto |
+| SQLite | `jules.db` accesible, migraciones Alembic al día |
+| inotify | Límite de watches verificado contra threshold |
+| Virtualenv | Jules corre dentro de su entorno aislado |
+| Permisos `~/.jules/` | Escritura disponible en todos los subdirectorios |
+| Scoring health | Último estado conocido del importance scorer |
+| Shell detectado | fish / zsh / bash — para validar hooks |
+
+Output example:
+
+```
+jules doctor
+──────────────────────────────────────
+✓ Ollama          activo, llama3.2:1b disponible (usuario: esteban)
+✓ Antigravity     disponible en PATH
+✓ OpenCode        disponible en PATH
+✓ LanceDB         vectores OK
+✓ SQLite          migraciones al día (rev: a3f9c1)
+✗ inotify         8192 watches (recomendado: ≥65536) — ver docs
+✓ Virtualenv      activo (.venv)
+✓ ~/.jules/       permisos OK
+⚠ Scoring         sin datos suficientes para evaluar salud
+✓ Shell           fish detectado — hooks en conf.d/jules.fish
+──────────────────────────────────────
+1 problema detectado. Jules opera en modo parcialmente degradado.
+```
+
+`jules doctor` nunca bloquea el arranque. Reporta, advierte, y deja que el usuario decida.
+
+---
+
+## DIFF COGNITIVO
+
+Jules puede responder preguntas sobre la evolución del usuario en el tiempo:
+
+```
+"Jules, ¿con qué modelo resuelvo mejor bugs de async?"
+"Jules, ¿cómo ha cambiado mi forma de debuggear en 6 meses?"
+"Jules, ¿en qué áreas he mejorado este trimestre?"
+"Jules, ¿qué tipos de errores ya no cometo?"
+```
+
+**Prioridad:** Fase 3. Requiere mínimo 3 meses de episodios acumulados para ser útil.
 
 ---
 
@@ -567,18 +714,11 @@ Jules analiza patrones a lo largo del tiempo:
 - errores recurrentes y sus causas raíz
 - qué modelos dan mejores resultados para cada tipo de tarea
 
-**Output ejemplo:**
-```
-"Tu productividad pico es 9–12am.
-Para bugs de red resuelves mejor con Gemini Pro.
-Para refactoring, Codex te da resultados más rápido."
-```
-
 **Prioridad:** Fase 3.
 
 ---
 
-## ENTORNO ADAPTATIVO
+## ENTORNO ADAPTATIVO (Fase 2)
 
 Jules puede controlar el entorno Linux:
 - abrir workspaces y organizar ventanas por proyecto
@@ -587,13 +727,19 @@ Jules puede controlar el entorno Linux:
 - manejar sesiones tmux / zellij
 - automatizar workflows repetitivos
 
-| Herramienta | Uso |
-|---|---|
-| `subprocess` | Comandos y CLIs externos |
-| `DBus` | Eventos del desktop |
-| `wmctrl` / `hyprctl` | Gestión de ventanas |
-| filesystem watchers | Actividad de archivos |
-| hooks de shell | Eventos de terminal |
+### Herramientas por función — KDE Plasma + Wayland
+
+| Función | Herramienta | Nota |
+|---|---|---|
+| Gestión de ventanas | `qdbus` / `dbus-send` → KWin | Correcto para KDE Plasma |
+| Gestión de ventanas | `wmctrl` | Soporte parcial bajo Wayland — usar con precaución |
+| Eventos del desktop | `DBus` | Funciona en Plasma |
+| Sesiones tmux/zellij | `subprocess` | Sin restricciones |
+| Actividad de archivos | filesystem watchers (inotify) | Ver nota de límites |
+| Hooks de shell | fish / zsh / bash | Según shell detectado |
+| Comandos y CLIs | `subprocess` | General |
+
+> `hyprctl` es exclusivo de Hyprland y no existe en KDE Plasma. No usar.
 
 **Prioridad:** Fase 2.
 
@@ -618,7 +764,7 @@ Jules vive en la terminal. Sin overhead visual.
 **Fase 2 — Desktop App:**
 - Framework: Tauri + SvelteKit
 - Ligera, bajo consumo de recursos
-- Muestra: modelo activo, tier, contexto de sesión, estado de memoria
+- Muestra: modelo activo, tier, contexto de sesión, estado de memoria, salud del scoring
 - Complemento a la CLI, nunca reemplazo
 
 ---
@@ -638,8 +784,49 @@ Jules vive en la terminal. Sin overhead visual.
 │   └── vectors/           # LanceDB — memoria semántica
 ├── logs/
 │   ├── sessions/          # episodios por sesión
-│   └── sanitized.log      # log de descartes por sanitizador (sin contenido)
+│   ├── sanitized.log      # log de descartes por sanitizador (sin contenido)
+│   └── scoring.log        # log de salud del importance scorer
 └── backups/               # snapshots diarios automáticos
+```
+
+```
+jules/                     # repositorio del proyecto
+├── .venv/                 # virtualenv — nunca commitear
+├── pyproject.toml
+├── alembic.ini
+├── alembic/
+├── jules/
+│   ├── cli/
+│   │   └── main.py        # entrypoint Click
+│   ├── core/
+│   │   ├── router.py
+│   │   ├── context.py
+│   │   ├── events.py
+│   │   └── permissions.py
+│   ├── memory/
+│   │   ├── models.py
+│   │   ├── episodic.py
+│   │   ├── persistent.py
+│   │   ├── engine.py
+│   │   └── scoring.py
+│   ├── providers/
+│   │   ├── base.py
+│   │   ├── ollama.py
+│   │   ├── antigravity.py
+│   │   └── opencode.py
+│   ├── sanitizer/
+│   │   └── sanitizer.py
+│   ├── personality/
+│   │   └── loader.py
+│   ├── linux/
+│   │   ├── watcher.py     # filesystem watchers + inotify health check
+│   │   ├── shell.py       # hooks fish / zsh / bash según shell detectado
+│   │   └── doctor.py      # jules doctor — diagnóstico de entorno
+│   └── observability/
+│       └── logger.py
+└── tests/
+    ├── unit/
+    └── integration/
 ```
 
 ---
@@ -674,16 +861,13 @@ Jules vive en la terminal. Sin overhead visual.
 - **Versionado de personalidad** — `master.md` tiene versión semántica; Jules detecta cambios y alerta
 - **Resiliencia de CLIs externos** — si Antigravity u OpenCode cambian interfaz, solo se toca `providers/nombre.py`
 - **Test de coherencia por provider** — cada provider nuevo pasa test de personalidad antes de activarse
-
+- **Virtualenv versionado** — `requirements.lock` generado en cada sesión de desarrollo estable
 
 ---
 
 ## OBSERVABILIDAD Y DEBUGGING
 
-Jules no puede depender de intuición para depurarse.  
-Cada decisión importante del sistema debe poder inspeccionarse después.
-
-El objetivo no es generar logs masivos — es poder reconstruir qué ocurrió cuando algo falla.
+Jules no puede depender de intuición para depurarse. Cada decisión importante del sistema debe poder inspeccionarse después.
 
 ### Eventos que siempre deben loggearse
 
@@ -695,6 +879,8 @@ El objetivo no es generar logs masivos — es poder reconstruir qué ocurrió cu
 | Sanitizador bloquea input | categoría detectada |
 | Provider timeout | provider, duración |
 | Retrieval de memoria | episodios recuperados |
+| Scoring degenerado | varianza observada, modo activado |
+| inotify cerca del límite | watches actuales vs máximo |
 | Error inesperado | traceback completo |
 
 ### Reglas de logging
@@ -705,20 +891,16 @@ El objetivo no es generar logs masivos — es poder reconstruir qué ocurrió cu
 - Los logs deben poder desactivarse por categoría
 - El modo debug nunca cambia comportamiento del sistema — solo visibilidad
 
-### Comando obligatorio
+### Comandos de observabilidad
 
 ```bash
-jules debug last
+jules debug last       # última ejecución: provider, modelo, fallback, memoria, scoring
+jules logs --sanitized # descartes del sanitizador sin contenido sensible
+jules logs --scoring   # historial de salud del importance scorer
+jules doctor           # diagnóstico completo del entorno
+jules memory           # episodios recientes
+jules status           # estado de providers y memoria
 ```
-
-Muestra:
-- provider usado
-- modelo usado
-- tiempo de respuesta
-- fallback ocurrido o no
-- episodios recuperados
-- episodios persistidos o descartados
-- errores degradados durante la ejecución
 
 ---
 
@@ -740,7 +922,8 @@ Antes que:
 
 | Operación | Objetivo |
 |---|---|
-| Startup CLI | <500ms |
+| Startup CLI (Ollama caliente) | <500ms |
+| Startup CLI (Ollama frío) | <3s — advertir al usuario |
 | Routing | <50ms |
 | Retrieval memoria | <150ms |
 | Respuesta local Ollama | <5s |
@@ -759,7 +942,7 @@ Antes que:
 
 ## MODOS DE FALLO Y DEGRADACIÓN
 
-Jules debe degradarse gradualmente. Nunca colapsar por una sola dependencia.
+Jules se degrada gradualmente. Nunca colapsa por una sola dependencia.
 
 | Falla | Comportamiento |
 |---|---|
@@ -769,23 +952,12 @@ Jules debe degradarse gradualmente. Nunca colapsar por una sola dependencia.
 | Antigravity no disponible | fallback automático |
 | OpenCode no disponible | fallback automático |
 | Todos los providers fallan | informar claramente al usuario |
+| Scoring degenerado | modo de persistencia conservadora |
+| inotify agotado | desactivar watchers, notificar al usuario |
 
-### Regla crítica
-
-Una falla de memoria nunca debe impedir responder al usuario.
-
-### Regla crítica
-
-Una falla de provider nunca debe corromper memoria.
-
-### Regla crítica
-
-El usuario siempre debe saber:
-- qué falló
-- qué funcionalidad quedó degradada
-- si Jules sigue operativa parcialmente
-
-El modo degradado no es un error silencioso. Es un estado explícito.
+**Regla crítica:** una falla de memoria nunca impide responder al usuario.
+**Regla crítica:** una falla de provider nunca corrompe memoria.
+**Regla crítica:** el usuario siempre sabe qué falló, qué quedó degradado, y si Jules sigue operativa parcialmente. El modo degradado no es un error silencioso — es un estado explícito.
 
 ---
 
@@ -849,15 +1021,19 @@ log_discards = true   # loggea descartes sin contenido sensible
 strict_mode  = true   # descartar ante la duda, no intentar limpiar
 
 [observability]
-structured_logs = true
-debug_command_enabled = true
-log_prompts = false
-log_responses = false
+structured_logs        = true
+debug_command_enabled  = true
+log_prompts            = false
+log_responses          = false
 
 [performance]
-startup_target_ms = 500
-routing_timeout_ms = 50
-memory_retrieval_timeout_ms = 150
+startup_target_ms              = 500
+routing_timeout_ms             = 50
+memory_retrieval_timeout_ms    = 150
+
+[doctor]
+inotify_min_watches            = 65536   # advertir si está por debajo
+scoring_variance_threshold     = 0.01    # mínimo para considerar scoring sano
 ```
 
 ---
@@ -865,21 +1041,27 @@ memory_retrieval_timeout_ms = 150
 ## CRITERIOS DE ÉXITO POR FASE
 
 ### Fase 1 — Done cuando:
-- Jules responde en terminal con contexto de sesión activa
-- La respuesta llega al usuario sin latencia perceptible por memoria
-- La memoria persiste correctamente entre reinicios
-- El sanitizador descarta secrets antes de persistir — verificable con test
-- El router selecciona el modelo correcto según tipo de tarea y tier
-- El fallback a Ollama funciona cuando los CLIs externos no responden
-- La búsqueda semántica recupera memorias relevantes (no solo las más recientes)
-- Llama local hace importance scoring sin consumir cuota externa
-- El sistema de permisos rechaza acciones no autorizadas
+- [ ] Jules responde en terminal con contexto de sesión activa
+- [x] La respuesta llega sin latencia perceptible por memoria (persistencia async)
+- [x] La memoria persiste entre reinicios (SQLite + LanceDB)
+- [x] El sanitizador descarta secrets antes de persistir — verificable con tests
+- [x] El router selecciona el modelo correcto según tipo de tarea y tier
+- [x] El fallback a Ollama funciona cuando los CLIs externos no responden
+- [x] La búsqueda semántica recupera memorias relevantes (no solo las más recientes)
+- [x] Llama local hace importance scoring sin consumir cuota externa
+- [ ] Ollama corre bajo el usuario correcto y los modelos son visibles — verificado
+- [ ] El sistema de permisos rechaza acciones no autorizadas
+- [ ] `jules doctor` reporta estado completo del entorno
+- [ ] Shell detectado correctamente y hooks implementados para ese shell
+- [ ] Límite de inotify verificado y configurado si es necesario
+- [ ] Scoring defensivo activo y loggeable
 
 ### Fase 2 — Done cuando:
 - Sistema de voz funciona en condiciones reales
 - Jules prepara entornos de trabajo automáticamente para ≥2 proyectos
+- Integración con KDE Plasma via D-Bus/KWin funciona sin `wmctrl`
 - Replay system reconstruye una sesión de debugging real
-- Dashboard muestra modelo activo, tier y contexto en tiempo real
+- Dashboard Tauri muestra modelo activo, tier, contexto y salud del sistema
 - Iniciativa contextual activable con reglas funcionando correctamente
 
 ### Fase 3 — Done cuando:
@@ -893,42 +1075,6 @@ memory_retrieval_timeout_ms = 150
 
 ---
 
-## ROADMAP
-
-### Fase 1 — Núcleo (todo lo demás espera)
-- CLI funcional con respuesta sin latencia perceptible
-- Sanitizador con tests de seguridad
-- Memoria persistente (SQLite + LanceDB)
-- Llama 3.2 via Ollama — identidad local y scoring
-- Antigravity CLI — provider principal externo
-- OpenCode CLI — provider de coding
-- Router quota-aware con tiers
-- Sistema de permisos
-- Migraciones con Alembic
-- Fallback a Ollama cuando providers externos fallan
-
-### Fase 2 — Expansión
-- Sistema de voz (Whisper + Piper)
-- Replay system
-- Desktop app (Tauri + SvelteKit)
-- Automatización de entorno Linux
-- Iniciativa contextual calibrada (opt-in)
-- Detector de intención de contexto mejorado
-
-### Fase 3 — Inteligencia adaptativa
-- Perfilador cognitivo
-- Diff cognitivo (evolución del usuario)
-- Análisis de modelo óptimo por tipo de tarea
-- Eventos cognitivos calibrados con datos reales
-- Mentoría técnica avanzada
-
-### Fase 4 — Autonomía
-- Asistencia predictiva
-- Adaptación profunda del entorno
-- Personalización autónoma
-
----
-
 ## FILOSOFÍA UX
 
 Jules se siente:
@@ -938,21 +1084,13 @@ Jules se siente:
 - **calmada** — nunca urge, nunca alarma sin razón
 - **segura** — el usuario sabe que sus credenciales nunca se filtran
 - **confiable** — el usuario sabe exactamente qué puede y qué no puede hacer
-
-La experiencia prioriza:
-- **latencia cero** — la terminal no espera por la memoria
-- **continuidad** — Jules siempre sabe dónde estás y de dónde vienes
-- **claridad** — nunca confunde, nunca exagera, nunca halaga
-- **privacidad** — nada sensible toca la base de datos
-- **eficiencia de cuota** — el modelo correcto para cada tarea, siempre
+- **honesta sobre su estado** — si algo está degradado, lo dice
 
 ### UX en terminal
 
-Jules vive en terminal.  
-La terminal no tolera fricción innecesaria.
+Jules vive en terminal. La terminal no tolera fricción innecesaria.
 
-### Principios
-
+Principios:
 - una acción → una respuesta clara
 - evitar verbosity por defecto
 - no repetir contexto innecesario
@@ -960,16 +1098,14 @@ La terminal no tolera fricción innecesaria.
 - no interrumpir el flujo del usuario
 - formato legible sin ruido visual
 
-### Jules evita
-
+Jules evita:
 - banners gigantes
 - ASCII art decorativo
 - logs verbosos mezclados con respuestas
 - confirmaciones redundantes
 - respuestas infladas para parecer inteligentes
 
-### Jules prioriza
-
+Jules prioriza:
 - claridad
 - velocidad
 - densidad útil de información

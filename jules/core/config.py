@@ -39,9 +39,16 @@ class ProviderConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DoctorConfig:
+    scoring_variance_threshold: float
+    scoring_window_size: int
+
+
+@dataclass(frozen=True, slots=True)
 class JulesConfig:
     routing: RoutingConfig
     providers: ProviderConfig
+    doctor: DoctorConfig
 
 
 def default_config_paths() -> tuple[Path, ...]:
@@ -75,6 +82,7 @@ def _parse_config(raw: dict[str, object], config_path: Path) -> JulesConfig:
     tiers_raw = _require_table(routing_raw, "tiers", config_path)
     fallback_raw = _optional_table(routing_raw, "fallback")
     providers_raw = _optional_table(raw, "providers")
+    doctor_raw = _optional_table(raw, "doctor")
 
     tiers = {
         name: _parse_tier(name, value, config_path)
@@ -96,6 +104,7 @@ def _parse_config(raw: dict[str, object], config_path: Path) -> JulesConfig:
             fallback_chain=fallback_chain,
         ),
         providers=_parse_providers(providers_raw),
+        doctor=_parse_doctor(doctor_raw, config_path),
     )
 
 
@@ -107,6 +116,29 @@ def _parse_tier(name: str, raw: object, config_path: Path) -> RoutingTier:
         opencode=_str_tuple(raw.get("opencode", []), config_path, f"routing.tiers.{name}.opencode"),
         provider=_optional_str(raw.get("provider"), config_path, f"routing.tiers.{name}.provider"),
         models=_str_tuple(raw.get("models", []), config_path, f"routing.tiers.{name}.models"),
+    )
+
+
+def _parse_doctor(raw: dict[str, object], config_path: Path) -> DoctorConfig:
+    scoring_variance_threshold = _optional_float(
+        raw.get("scoring_variance_threshold"),
+        0.01,
+        config_path,
+        "doctor.scoring_variance_threshold",
+    )
+    scoring_window_size = _optional_int(
+        raw.get("scoring_window_size"),
+        10,
+        config_path,
+        "doctor.scoring_window_size",
+    )
+    if scoring_variance_threshold < 0:
+        raise ValueError(f"{config_path}: doctor.scoring_variance_threshold must be >= 0")
+    if scoring_window_size < 3:
+        raise ValueError(f"{config_path}: doctor.scoring_window_size must be >= 3")
+    return DoctorConfig(
+        scoring_variance_threshold=scoring_variance_threshold,
+        scoring_window_size=scoring_window_size,
     )
 
 
@@ -165,12 +197,21 @@ def _optional_provider_url(value: object) -> str:
     return value
 
 
-def _optional_float(value: object, default: float) -> float:
+def _optional_float(value: object, default: float, config_path: Path | None = None, key: str = "provider timeout_seconds") -> float:
     if value is None:
         return default
     if not isinstance(value, (int, float)):
-        raise ValueError("provider timeout_seconds must be a number")
+        prefix = f"{config_path}: " if config_path is not None else ""
+        raise ValueError(f"{prefix}{key} must be a number")
     return float(value)
+
+
+def _optional_int(value: object, default: int, config_path: Path, key: str) -> int:
+    if value is None:
+        return default
+    if not isinstance(value, int):
+        raise ValueError(f"{config_path}: {key} must be an integer")
+    return value
 
 
 def _str_tuple(value: object, config_path: Path, key: str) -> tuple[str, ...]:

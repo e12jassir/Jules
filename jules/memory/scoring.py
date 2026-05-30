@@ -1,5 +1,8 @@
+from collections import deque
+from collections.abc import Sequence
 import logging
 import re
+import statistics
 from typing import Protocol
 
 from jules.memory.models import Episode
@@ -10,6 +13,28 @@ SCORE_PATTERN = r"SCORE:\s*(0\.\d+|1\.0|0|1)(?![\w.])"
 
 class TextGenerationProvider(Protocol):
     async def generate_text(self, prompt: str) -> str: ...
+
+
+class ScoringHealthMonitor:
+    def __init__(self, scoring_variance_threshold: float = 0.01, scoring_window_size: int = 10) -> None:
+        if scoring_variance_threshold < 0:
+            raise ValueError("scoring_variance_threshold must be >= 0")
+        if scoring_window_size < 3:
+            raise ValueError("scoring_window_size must be >= 3")
+        self.scoring_variance_threshold = scoring_variance_threshold
+        self._scores: deque[float] = deque(maxlen=scoring_window_size)
+
+    @property
+    def scores(self) -> Sequence[float]:
+        return tuple(self._scores)
+
+    def record(self, score: float) -> None:
+        self._scores.append(score)
+
+    def is_healthy(self) -> bool:
+        if len(self._scores) < 3:
+            return True
+        return statistics.variance(self._scores) > self.scoring_variance_threshold
 
 
 def _build_prompt(episode: Episode) -> str:

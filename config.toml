@@ -16,6 +16,10 @@ opencode = ["opencode/deepseek-r1-heavy"]
 [routing.fallback]
 chain = ["primary", "ollama"]
 
+[doctor]
+scoring_variance_threshold = 0.01
+scoring_window_size = 10
+
 [providers.ollama]
 base_url = "http://localhost:11434"
 timeout_seconds = 30

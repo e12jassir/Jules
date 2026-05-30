@@ -79,6 +79,45 @@ def config_path(tmp_path: Path) -> Path:
     return path
 
 
+def test_config_uses_default_doctor_values_when_section_is_missing(config_path: Path) -> None:
+    config = load_config(config_path)
+
+    assert config.doctor.scoring_variance_threshold == 0.01
+    assert config.doctor.scoring_window_size == 10
+
+
+def test_config_parses_doctor_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        CONFIG_TEXT
+        + """
+[doctor]
+scoring_variance_threshold = 0.02
+scoring_window_size = 12
+"""
+    )
+
+    config = load_config(config_path)
+
+    assert config.doctor.scoring_variance_threshold == 0.02
+    assert config.doctor.scoring_window_size == 12
+
+
+@pytest.mark.parametrize(
+    ("doctor_text", "error"),
+    [
+        ("scoring_variance_threshold = -0.01\nscoring_window_size = 10\n", "must be >= 0"),
+        ("scoring_variance_threshold = 0.01\nscoring_window_size = 2\n", "must be >= 3"),
+    ],
+)
+def test_config_rejects_invalid_doctor_values(tmp_path: Path, doctor_text: str, error: str) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(CONFIG_TEXT + "\n[doctor]\n" + doctor_text)
+
+    with pytest.raises(ValueError, match=error):
+        load_config(config_path)
+
+
 @pytest.fixture()
 def context() -> SessionContext:
     return SessionContext(

@@ -18,6 +18,7 @@ class FixedDateTime(datetime):
 
 def test_build_returns_debugging_when_last_command_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
+    monkeypatch.setenv("SHELL", "/bin/zsh")
     session = SessionContext(cwd="/tmp", last_exit_code=1, recent_commands=["pytest"])
 
     built = ContextEngine.build(session, "fix this")
@@ -25,6 +26,7 @@ def test_build_returns_debugging_when_last_command_failed(monkeypatch: pytest.Mo
     assert built.intent == "debugging"
     assert built.project_root is None
     assert built.time_of_day == 9
+    assert built.shell == "/bin/zsh"
 
 
 @pytest.mark.parametrize(
@@ -71,6 +73,16 @@ def test_build_finds_nearest_git_project_root(monkeypatch: pytest.MonkeyPatch, t
     built = ContextEngine.build(session, "check context")
 
     assert built.project_root == str(project_root)
+
+
+def test_build_uses_unknown_shell_when_environment_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
+    monkeypatch.delenv("SHELL", raising=False)
+    session = SessionContext(cwd="/tmp", recent_commands=[])
+
+    built = ContextEngine.build(session, "context")
+
+    assert built.shell == "unknown"
 
 
 def test_build_completes_under_ten_milliseconds(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

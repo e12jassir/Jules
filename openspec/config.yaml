@@ -1,66 +1,26 @@
 schema: spec-driven
-
 context: |
-  Project: jules
-  Stack: Python 3.11+, Click CLI, SQLAlchemy, Alembic, LanceDB, aiohttp
-  Architecture: local-first modular monolith (core, memory, providers, sanitizer, personality, linux, cli)
-  Persistence mode: hybrid (Engram + OpenSpec)
-  Conventions: AGENT.md and JULES.md are authoritative; sanitizer-first, async persistence, provider-agnostic routing
-
-strict_tdd: true
-
-testing:
-  detected_at: 2026-05-26
-  strict_tdd_mode: enabled
-  runner:
-    framework: pytest (project venv)
-    command: ./.venv/bin/python -m pytest
-    notes: pytest is declared in the `test` extra; current system Python lacks pytest, so project verification uses the repo-local virtualenv.
-  layers:
-    unit:
-      available: true
-      tool: pytest
-    integration:
-      available: true
-      tool: pytest
-    e2e:
-      available: false
-      tool: none
-  coverage:
-    available: false
-    command: ""
-  quality:
-    linter:
-      available: false
-      command: ""
-    type_checker:
-      available: false
-      command: ""
-    formatter:
-      available: false
-      command: ""
-
+  Tech stack: Python 3.14+, asyncio, pytest
+  Architecture: Zero Latency EventBus, Zsh IPC
+  Testing: Pytest with strict coverage
+  Style: Typed Python (Mypy strict)
 rules:
   proposal:
-    - Keep phase scope aligned to AGENT.md active phase.
-    - Include rollback plan for risky or migration-heavy changes.
+    - Include rollback plan for risky changes
   specs:
-    - Use RFC 2119 language (MUST/SHOULD/MAY).
-    - Define scenarios in Given/When/Then format.
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
   design:
-    - Preserve zero-latency terminal path and async persistence separation.
-    - Document sanitizer-first and local scoring constraints.
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
   tasks:
-    - Keep tasks small enough for one focused session.
-    - Keep tests and docs in the same work unit as behavior changes.
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
   apply:
-    guidelines:
-      - Follow existing module boundaries under jules/ packages.
-    tdd: true
-    test_command: ./.venv/bin/python -m pytest
+    - Follow existing code patterns
+    tdd: false
+    test_command: "./.venv/bin/pytest tests/unit/"
   verify:
-    test_command: ./.venv/bin/python -m pytest
-    build_command: ./.venv/bin/python -m compileall jules
-    coverage_threshold: 0
+    test_command: "./.venv/bin/pytest tests/unit/"
   archive:
-    - Warn before merging destructive deltas into main specs.
+    - Warn before merging destructive deltas

@@ -13,6 +13,7 @@ class SessionContext:
     active_files: list[str]
     inferred_intent: str | None
     time_of_day: str
+    shell: str = "unknown"
 
 
 @dataclass(slots=True)
@@ -68,6 +69,7 @@ class SessionContextORM(Base):
     active_files: Mapped[list[str]] = mapped_column(JSON)
     inferred_intent: Mapped[str | None] = mapped_column()
     time_of_day: Mapped[str] = mapped_column()
+    shell: Mapped[str] = mapped_column(default="unknown", server_default="unknown")
 
     episode: Mapped["EpisodeORM"] = relationship(back_populates="session_context")
 
@@ -79,6 +81,7 @@ class SessionContextORM(Base):
             active_files=list(ctx.active_files),
             inferred_intent=ctx.inferred_intent,
             time_of_day=ctx.time_of_day,
+            shell=ctx.shell,
         )
 
     def to_dataclass(self) -> SessionContext:
@@ -88,6 +91,7 @@ class SessionContextORM(Base):
             active_files=list(self.active_files),
             inferred_intent=self.inferred_intent,
             time_of_day=self.time_of_day,
+            shell=self.shell,
         )
 
 

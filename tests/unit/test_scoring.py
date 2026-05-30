@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 from jules.memory.models import Episode, SessionContext
-from jules.memory.scoring import evaluate_importance
+from jules.memory.scoring import ScoringHealthMonitor, evaluate_importance
 
 
 def make_episode() -> Episode:
@@ -68,3 +68,30 @@ async def test_evaluate_importance_provider_error():
     score = await evaluate_importance(make_episode(), provider)
 
     assert score == 0.5
+
+
+def test_scoring_health_monitor_assumes_healthy_until_three_scores():
+    monitor = ScoringHealthMonitor(scoring_variance_threshold=0.01, scoring_window_size=10)
+
+    monitor.record(0.5)
+    monitor.record(0.5)
+
+    assert monitor.is_healthy()
+
+
+def test_scoring_health_monitor_detects_degenerate_constant_scores():
+    monitor = ScoringHealthMonitor(scoring_variance_threshold=0.01, scoring_window_size=10)
+
+    for score in (0.5, 0.5, 0.5):
+        monitor.record(score)
+
+    assert not monitor.is_healthy()
+
+
+def test_scoring_health_monitor_uses_mathematical_variance_threshold():
+    monitor = ScoringHealthMonitor(scoring_variance_threshold=0.01, scoring_window_size=10)
+
+    for score in (0.1, 0.5, 0.9):
+        monitor.record(score)
+
+    assert monitor.is_healthy()

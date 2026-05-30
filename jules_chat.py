@@ -1,3 +1,4 @@
+# pyright: reportPossiblyUnboundVariable=false
 """
 jules_chat.py — Terminal interactivo de Jules (Fase 1 completa)
 
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -31,6 +33,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Rich (UI premium) — graceful fallback a texto plano
@@ -53,11 +56,13 @@ from jules.core.config import load_config
 from jules.core.router import CognitiveRouter, TaskType
 from jules.core.session import SessionContext as TerminalSessionContext
 from jules.core.context import ContextEngine
+from jules.core.events import EventBus, EventType
+from jules.linux.watcher import LinuxWatcher
 from jules.memory.engine import MemoryEngine
 from jules.memory.episodic import EpisodicMemory
 from jules.memory.models import Base, Episode, SessionContext
 from jules.memory.persistent import PersistentMemory
-from jules.memory.scoring import evaluate_importance
+from jules.memory.scoring import ScoringHealthMonitor, evaluate_importance
 from jules.providers.base import ProviderError, ProviderTimeoutError, ProviderUnavailableError
 from jules.providers.ollama import OllamaProvider
 from jules.sanitizer.sanitizer import Sanitizer
@@ -100,20 +105,21 @@ VECTOR_DIM = 3  # dummy — real embeddings in a future module
 
 def print_banner() -> None:
     art = r"""
- ██████╗██╗   ██╗██╗     ███████╗███████╗
-   ██╔══╝██║   ██║██║     ██╔════╝██╔════╝
-   ██║   ██║   ██║██║     █████╗  ███████╗
-   ██║   ██║   ██║██║     ██╔══╝  ╚════██║
- ╚██████╗╚██████╔╝███████╗███████╗███████║
-  ╚═════╝ ╚═════╝ ╚══════╝╚══════╝╚══════╝
-  🧠 CAPA COGNITIVA LOCAL-FIRST — Fase 1
+    ╭──────────╮
+    │  JULES   │
+    ╰──────────╯
     """
     if HAS_RICH:
-        console.print(Panel(art.strip(), style="bold cyan", border_style="cyan"))
+        console.print(Panel(
+            "[bold white]J U L E S[/bold white]\n[dim]Cognitive Local-First AI • Módulos 1-8[/dim]",
+            style="cyan",
+            border_style="dim",
+            padding=(1, 4)
+        ))
     else:
-        print("=" * 62)
-        print(art.strip())
-        print("=" * 62)
+        print("—" * 40)
+        print(" J U L E S — Cognitive Local-First AI")
+        print("—" * 40)
 
 
 def print_help() -> None:
@@ -185,8 +191,10 @@ def _discover_local_ollama_models() -> list[str]:
 async def _get_daemon_ollama_models(provider: OllamaProvider) -> list[str]:
     """Consulta el daemon de Ollama vía HTTP. Retorna lista vacía si no corre."""
     try:
+        import aiohttp
+
         session = provider._get_session()
-        async with session.get(f"{provider.base_url}/api/tags", timeout=3) as r:
+        async with session.get(f"{provider.base_url}/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as r:
             if r.status == 200:
                 data = await r.json()
                 return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
@@ -214,7 +222,8 @@ async def check_health(router: CognitiveRouter, local_models: list[str]) -> None
             healthy = False
 
         if name == "ollama":
-            daemon_models = await _get_daemon_ollama_models(provider) if healthy else []
+            ollama = cast(OllamaProvider, provider)
+            daemon_models = await _get_daemon_ollama_models(ollama) if healthy else []
             models_str = ", ".join(daemon_models) if daemon_models else (
                 "Sin modelos activos (daemon offline)" if not healthy else "Sin modelos en el daemon"
             )
@@ -224,8 +233,9 @@ async def check_health(router: CognitiveRouter, local_models: list[str]) -> None
                 status = "[yellow]DAEMON OFF ⚠️[/yellow]" if local_models else "[red]OFFLINE ❌[/red]"
         else:
             models_str = getattr(provider, "default_model", "—")
-            if hasattr(provider, "_prepared_models"):
-                models_str = ", ".join(provider._prepared_models) or models_str
+            prepared_models = getattr(provider, "_prepared_models", ())
+            if prepared_models:
+                models_str = ", ".join(prepared_models) or models_str
             status = "[green]ONLINE ✅[/green]" if healthy else "[red]OFFLINE ❌[/red]"
 
         rows.append((name.capitalize(), models_str, status))
@@ -299,18 +309,26 @@ async def _init_memory_engine(router: CognitiveRouter) -> MemoryEngine | None:
                     directory="",
                     active_files=[],
                     inferred_intent="scoring",
-                    time_of_day="now"
+                    time_of_day="now",
+                    shell=os.environ.get("SHELL", "unknown"),
                 )
                 # Ensure we use default_model or a fallback string if it's missing
                 model_to_use = getattr(self.prov, "default_model", "llama3.2:1b")
                 return await self.prov.ask(prompt, ctx, model_to_use, options={"num_predict": 15, "temperature": 0.0})
 
-        adapter = ScoringAdapter(ollama_provider) if ollama_provider else None
+        if ollama_provider is None:
+            raise RuntimeError("Ollama provider is required for local memory scoring")
+        adapter = ScoringAdapter(ollama_provider)
+        doctor_config = router.config.doctor
 
         return MemoryEngine(
             persistent=persistent,
             episodic=episodic,
             provider=adapter,
+            scoring_health_monitor=ScoringHealthMonitor(
+                scoring_variance_threshold=doctor_config.scoring_variance_threshold,
+                scoring_window_size=doctor_config.scoring_window_size,
+            ),
         )
     except Exception as exc:
         log.warning("MemoryEngine no pudo inicializarse: %s — Jules operará sin memoria persistente.", exc)
@@ -339,6 +357,7 @@ def _build_session_context(mode: str, model: str, detected_intent: str, project_
         active_files=[],
         inferred_intent=detected_intent,
         time_of_day=tod,
+        shell=os.environ.get("SHELL", "unknown"),
     )
 
 
@@ -463,7 +482,8 @@ async def _ask(
     Returns (response, model_used, provider_name).
     Raises ProviderError / ProviderTimeoutError / ProviderUnavailableError on failure.
     """
-    ollama_provider = router.providers.get("ollama")
+    ollama_provider = cast(OllamaProvider | None, router.providers.get("ollama"))
+    task: TaskType | None = None
 
     def _ollama_active_model() -> str | None:
         """Returns the configured default model for Ollama."""
@@ -474,7 +494,7 @@ async def _ask(
         provider, resolved_model = router.route(task)
         pname = provider.name
     elif mode == "ollama":
-        provider = router.providers["ollama"]
+        provider = cast(OllamaProvider, router.providers["ollama"])
         resolved_model = current_model or provider.default_model
         pname = "ollama"
     elif mode == "antigravity":
@@ -494,13 +514,13 @@ async def _ask(
         pname = "opencode"
     elif mode == "codex":
         provider = router.providers["codex"]
-        resolved_model = current_model or provider.default_model
+        resolved_model = current_model or getattr(provider, "default_model", "codex")
         pname = "codex"
     else:
         raise ValueError(f"Modo desconocido: {mode}")
 
     # Guard: Ollama sin daemon corriendo
-    if pname == "ollama" and not await _get_daemon_ollama_models(provider):
+    if pname == "ollama" and not await _get_daemon_ollama_models(cast(OllamaProvider, provider)):
         if local_ollama_models:
             raise ProviderUnavailableError(
                 f"Ollama daemon no está corriendo. Modelos disponibles en disco: "
@@ -541,6 +561,7 @@ async def _ask(
     if HAS_RICH:
         with Live(Spinner("clock", text=f"[yellow] Consultando {pname.upper()}...[/yellow]"), refresh_per_second=10) as live:
             if mode == "auto":
+                assert task is not None
                 response, model_used, prov_used = await router.ask_with_fallback(prompt, context, task)
             else:
                 response = await provider.ask(prompt, context, resolved_model)
@@ -557,6 +578,7 @@ async def _ask(
         return response, model_used, prov_used
     else:
         if mode == "auto":
+            assert task is not None
             response, model_used, prov_used = await router.ask_with_fallback(prompt, context, task)
         else:
             response = await provider.ask(prompt, context, resolved_model)
@@ -575,7 +597,6 @@ async def main() -> None:
 
     # ── Parse arguments and environment for Context Intent Detector ───────────
     import argparse
-    import os
     
     parser = argparse.ArgumentParser(description="Jules Terminal Interactive")
     parser.add_argument("--exit-code", type=int, default=None, help="Código de salida del último comando")
@@ -614,7 +635,7 @@ async def main() -> None:
     local_ollama_models = _discover_local_ollama_models()
 
     # Auto-configure Ollama default model if config default isn't available
-    ollama_provider = router.providers.get("ollama")
+    ollama_provider = cast(OllamaProvider | None, router.providers.get("ollama"))
     if ollama_provider and local_ollama_models:
         if ollama_provider.default_model not in local_ollama_models:
             preferred = next(
@@ -641,7 +662,24 @@ async def main() -> None:
     else:
         console.print("[yellow]⚠️  Memoria desactivada en esta sesión.[/yellow]\n")
 
+    # ── Pre-cargar Ollama en background ────────────────────────────────────────
+    if ollama_provider:
+        asyncio.create_task(ollama_provider.preload(ollama_provider.default_model))
+
     print_help()
+
+    # ── Módulo 8: Event System & Watcher ──────────────────────────────────────
+    terminal_session = TerminalSessionContext(
+        cwd=env_cwd,
+        last_exit_code=env_exit_code,
+        recent_commands=list(env_recent_commands)
+    )
+    event_bus = EventBus(session=terminal_session)
+    watcher = LinuxWatcher(event_bus=event_bus, current_directory=env_cwd)
+    watcher.initialize()
+    
+    # Optional: We could print tiny logs when events happen, but to avoid 
+    # messing up the input prompt, we just let it update the `runtime` state in background.
 
     # ── Session state ─────────────────────────────────────────────────────────
     mode: str = "auto"
@@ -654,14 +692,19 @@ async def main() -> None:
     try:
         while True:
             if HAS_RICH:
-                prompt_label = f"\n[bold cyan]╭─[/bold cyan] [bold white]Jules[/bold white] ─ [dim]{mode}[/dim]"
+                prompt_label = f"\n[bold cyan]╭─[/bold cyan] [bold white]Jules[/bold white] [dim]({mode}"
                 if current_model:
-                    prompt_label += f" ─ [dim]{current_model}[/dim]"
-                prompt_label += "\n[bold cyan]╰─❯[/bold cyan] "
-                user_input = console.input(prompt_label).strip()
+                    prompt_label += f": {current_model}"
+                if event_bus.runtime.is_idle:
+                    prompt_label += " 💤"
+                prompt_label += ")[/dim]\n[bold cyan]╰─❯[/bold cyan] "
+                # IMPORTANT: Run input in a separate thread so asyncio background tasks (Memory, Watcher, Events) don't freeze!
+                user_input = await asyncio.to_thread(console.input, prompt_label)
+                user_input = user_input.strip()
             else:
                 prompt_label = f"\nJules ({mode}) ❯ "
-                user_input = input(prompt_label).strip()
+                user_input = await asyncio.to_thread(input, prompt_label)
+                user_input = user_input.strip()
 
             if not user_input:
                 continue
@@ -711,6 +754,9 @@ async def main() -> None:
                     mode = new_mode
                     current_model = None  # reset model override when switching mode
                     console.print(f"[bold cyan]🔄 Modo → {mode.upper()}[/bold cyan]")
+                    if mode == "ollama" and ollama_provider:
+                        console.print("[dim]⚡ Pre-cargando modelo de Ollama en RAM en background...[/dim]")
+                        asyncio.create_task(ollama_provider.preload(ollama_provider.default_model))
                 else:
                     console.print(f"[red]❌ Modo inválido. Opciones: {', '.join(sorted(valid))}[/red]")
                 continue
@@ -719,6 +765,9 @@ async def main() -> None:
                 new_model = user_input.split(maxsplit=1)[1].strip()
                 current_model = new_model
                 console.print(f"[bold cyan]🔄 Modelo → {current_model}[/bold cyan]")
+                if mode == "ollama" and ollama_provider:
+                    console.print(f"[dim]⚡ Pre-cargando nuevo modelo '{current_model}' en RAM...[/dim]")
+                    asyncio.create_task(ollama_provider.preload(current_model))
                 continue
 
             if cmd.startswith("/context"):
@@ -738,7 +787,9 @@ async def main() -> None:
                     built = ContextEngine.build(t_session, "")
                     
                     if HAS_RICH:
-                        table = Table(title="🔍 Contexto del Terminal (Modulo 7)", border_style="cyan")
+                        from rich.table import Table as RichTable
+
+                        table = RichTable(title="🔍 Contexto del Terminal (Modulo 7)", border_style="cyan")
                         table.add_column("Propiedad", style="bold yellow")
                         table.add_column("Valor")
                         table.add_row("Directorio de Trabajo (CWD)", curr_cwd)
@@ -804,7 +855,9 @@ async def main() -> None:
             check = sanitizer.check(user_input)
             if not check.is_safe:
                 if HAS_RICH:
-                    console.print(Panel(
+                    from rich.panel import Panel as RichPanel
+
+                    console.print(RichPanel(
                         f"🔒 [bold red]ENTRADA BLOQUEADA[/bold red]\n"
                         f"Contiene información sensible: [yellow]{check.reason}[/yellow]\n"
                         f"Ningún dato fue enviado al proveedor.",

@@ -14,6 +14,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+import os
+from pathlib import Path
+db_path = os.environ.get("JULES_DATABASE_PATH") or str(Path.home() / ".jules" / "memory.sqlite3")
+Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+
 # add your model's MetaData object here
 # for 'autogenerate' support
 from jules.memory.models import Base
