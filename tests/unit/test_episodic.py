@@ -11,7 +11,7 @@ from jules.memory.models import Episode, SessionContext
 
 @pytest.fixture
 async def temp_episodic(tmp_path):
-    yield EpisodicMemory(db_path=str(tmp_path))
+    yield EpisodicMemory(db_path=str(tmp_path), vector_dimension=3)
 
 
 def test_init_defers_lancedb_connection(tmp_path, monkeypatch):
@@ -49,7 +49,7 @@ async def test_lazy_table_initialization_is_thread_safe(tmp_path, monkeypatch):
         return table
 
     monkeypatch.setattr(EpisodicMemory, "_open_or_create_table", lambda self: open_table_once())
-    memory = EpisodicMemory(db_path=str(tmp_path))
+    memory = EpisodicMemory(db_path=str(tmp_path), vector_dimension=3)
     first = make_episode("first-threaded", datetime.now(timezone.utc))
     second = make_episode("second-threaded", datetime.now(timezone.utc))
 

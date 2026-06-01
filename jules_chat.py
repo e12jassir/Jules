@@ -96,7 +96,7 @@ else:
 JULES_HOME = Path.home() / ".jules"
 SQLITE_PATH = JULES_HOME / "memory.sqlite3"
 LANCEDB_PATH = JULES_HOME / "vectors"
-VECTOR_DIM = 3  # dummy — real embeddings in a future module
+VECTOR_DIM = 2048  # llama3.2:1b via Ollama /api/embed
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -329,6 +329,7 @@ async def _init_memory_engine(router: CognitiveRouter) -> MemoryEngine | None:
                 scoring_variance_threshold=doctor_config.scoring_variance_threshold,
                 scoring_window_size=doctor_config.scoring_window_size,
             ),
+            embedding_provider=ollama_provider,
         )
     except Exception as exc:
         log.warning("MemoryEngine no pudo inicializarse: %s — Jules operará sin memoria persistente.", exc)
@@ -677,6 +678,7 @@ async def main() -> None:
     event_bus = EventBus(session=terminal_session)
     watcher = LinuxWatcher(event_bus=event_bus, current_directory=env_cwd)
     watcher.initialize()
+    asyncio.create_task(watcher.start())
     
     # Optional: We could print tiny logs when events happen, but to avoid 
     # messing up the input prompt, we just let it update the `runtime` state in background.

@@ -831,7 +831,7 @@ Construir solo si las tres fases anteriores funcionan bien en uso real.
 [x] 5.  Router quota-aware              → GPT 5.5 + Opus       (Completado)
 [x] 6.  Motor de memoria                → GPT 5.5 + Opus       (Completado)
 [x] 7.  Detector de contexto            → GPT 5.4              (Completado)
-[ ] 8.  Sistema de eventos              → GPT 5.4              (Pendiente)
+[x] 8.  Sistema de eventos              → GPT 5.4              (Completado)
 [ ] 9.  Sistema de permisos             → GPT 5.4              (Pendiente)
 [ ] 10. jules doctor                    → GPT 5.4              (Pendiente)
 [ ] 11. CLI principal                   → GPT 5.4 + Deepseek   (Pendiente)

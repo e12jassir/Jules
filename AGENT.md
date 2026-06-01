@@ -27,17 +27,18 @@ Lee `JULES.md` para el spec completo.
 
 **Solo construir lo que está en esta lista. Todo lo demás no existe todavía.**
 
-- [ ] CLI funcional — respuesta en terminal sin latencia perceptible
-- [ ] Sanitizador con tests de seguridad
-- [ ] Memoria persistente (SQLite + LanceDB)
-- [ ] Llama 3.2 via Ollama — identidad local y scoring
-- [ ] Antigravity CLI — provider externo principal
-- [ ] OpenCode CLI — provider de coding
-- [ ] Router quota-aware con tiers (free / low_cost / high_cost)
-- [ ] Importance scoring via Llama local (nunca modelo externo)
+- [x] CLI funcional — respuesta en terminal sin latencia perceptible
+- [x] Sanitizador con tests de seguridad
+- [x] Memoria persistente (SQLite + LanceDB)
+- [x] Llama 3.2 via Ollama — identidad local y scoring
+- [x] Antigravity CLI — provider externo principal
+- [x] OpenCode CLI — provider de coding
+- [x] Router quota-aware con tiers (free / low_cost / high_cost)
+- [x] Importance scoring via Llama local (nunca modelo externo)
+- [x] Sistema de eventos + watcher + shell hooks
 - [ ] Sistema de permisos con PermissionGate
-- [ ] Migraciones con Alembic
-- [ ] Fallback a Ollama cuando providers externos fallan
+- [x] Migraciones con Alembic
+- [x] Fallback a Ollama cuando providers externos fallan
 
 Si una tarea no está en esta lista: crear issue, no implementar.
 
@@ -114,7 +115,7 @@ jules/
 | Migraciones | Alembic — desde el día uno, sin excepciones |
 | DB vectorial | LanceDB |
 | Inferencia local | Ollama |
-| Modelo local | Llama 3.2 1B |
+| Modelo local | Llama 3.2 1B — embeddings: 2048 dims, scoring, identidad |
 | Provider 1 | Antigravity CLI (subprocess) |
 | Provider 2 | OpenCode CLI (subprocess) |
 
@@ -502,11 +503,40 @@ async def run_script(path: str) -> None:
     await subprocess_runner.run(["bash", path])
 ```
 
-### 7. Iniciativa contextual apagada en Fase 1
+### 7. SQLite como fuente de verdad, LanceDB como índice
+
+```python
+# Correcto — SQLite primero, LanceDB después
+await self.persistent.save_async(episode)   # fuente de verdad
+await self.episodic.store_async(episode, vector)  # índice reconstruible
+
+# PROHIBIDO — si LanceDB falla, el episodio se pierde
+await self.episodic.store_async(episode, vector)
+await self.persistent.save_async(episode)
+```
+
+Si LanceDB se corrompe, se puede reconstruir desde SQLite. Al revés no.
+
+### 8. Scoring corre antes del delay de persistencia
+
+```python
+# Correcto — score calculado antes de esperar
+episode.importance = await evaluate_importance(episode, provider)
+await asyncio.sleep(persistence_delay_seconds)  # delay después del score
+await persist_if_allowed(episode)
+
+# PROHIBIDO — si se cancela antes del score, persiste con importance=0.5
+await asyncio.sleep(persistence_delay_seconds)
+episode.importance = await evaluate_importance(episode, provider)
+```
+
+Esto garantiza que `CancelledError` (por nueva query del usuario) usa el score real, no el default.
+
+### 9. Iniciativa contextual apagada en Fase 1
 
 No implementar ningún sistema de intervención proactiva en Fase 1. Jules solo responde cuando el usuario habla. La iniciativa contextual es Fase 2 y es opt-in.
 
-### 8. El contexto recuperado siempre es limitado
+### 10. El contexto recuperado siempre es limitado
 
 ```python
 # Correcto
@@ -524,7 +554,7 @@ El retrieval excesivo:
 - incrementa costo de tokens
 - introduce ruido semántico
 
-### 9. Observabilidad sin exposición sensible
+### 11. Observabilidad sin exposición sensible
 
 ```python
 # Correcto

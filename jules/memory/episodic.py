@@ -10,7 +10,7 @@ import pyarrow as pa
 from jules.memory.models import Episode
 
 DEFAULT_TABLE_NAME = "episodes_vector"
-DEFAULT_VECTOR_DIMENSION = 3
+DEFAULT_VECTOR_DIMENSION = 2048  # llama3.2:1b via Ollama /api/embed
 TIME_DECAY_FACTOR = 1e-9
 
 

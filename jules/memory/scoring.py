@@ -53,7 +53,7 @@ async def evaluate_importance(episode: Episode, provider: TextGenerationProvider
         matches = re.findall(SCORE_PATTERN, response, re.IGNORECASE)
         if matches:
             return float(matches[-1])
-        logging.info("Scoring fallback: could not parse score from provider response")
+        logging.warning("Scoring fallback: could not parse score from provider response")
     except Exception as error:
-        logging.info("Scoring fallback: provider evaluation failed: %s", error)
+        logging.error("Scoring fallback: provider evaluation failed: %s", error)
     return DEFAULT_IMPORTANCE_SCORE

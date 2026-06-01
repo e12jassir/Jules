@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import threading
 from pathlib import Path
 import re
 import shutil
@@ -25,6 +26,7 @@ class AntigravityProvider:
         self.profile_root = Path.home() / ".jules" / "agy_profiles"
         self.source_config = Path.home() / ".config" / "antigravity"
         self._prepared_models: set[str] = set()
+        self._profile_lock = threading.Lock()
         self.prepare_profiles(models)
 
     def prepare_profiles(self, models: tuple[str, ...]) -> None:
@@ -35,10 +37,8 @@ class AntigravityProvider:
         del context
         if model not in self._prepared_models:
             raise ProviderError(f"Antigravity profile for model {model!r} was not prepared")
-        if prompt.startswith("-"):
-            raise ProviderError("Invalid prompt: must not start with '-' to prevent argument injection.")
         return await self._run_cli(
-            [self.executable, "--print", prompt],
+            [self.executable, "--print", "--", prompt],
             timeout=self.timeout_seconds,
             model=model,
         )
@@ -67,19 +67,20 @@ class AntigravityProvider:
         pass
 
     def _ensure_profile(self, model: str) -> Path:
-        if model in self._prepared_models:
-            return self._profile_path(model)
+        with self._profile_lock:
+            if model in self._prepared_models:
+                return self._profile_path(model)
 
-        profile_path = self._profile_path(model)
-        config_dir = profile_path / "antigravity"
-        if self.source_config.is_dir():
-            self._copy_config(self.source_config, config_dir)
-        else:
-            config_dir.mkdir(parents=True, exist_ok=True)
+            profile_path = self._profile_path(model)
+            config_dir = profile_path / "antigravity"
+            if self.source_config.is_dir():
+                self._copy_config(self.source_config, config_dir)
+            else:
+                config_dir.mkdir(parents=True, exist_ok=True)
 
-        self._write_model_config(profile_path, model)
-        self._prepared_models.add(model)
-        return profile_path
+            self._write_model_config(profile_path, model)
+            self._prepared_models.add(model)
+            return profile_path
 
     def _copy_config(self, src: Path, dest: Path) -> None:
         shutil.copytree(src, dest, dirs_exist_ok=True, symlinks=False)
