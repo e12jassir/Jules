@@ -18,19 +18,16 @@
 
 ---
 
-## STACK DE MODELOS POR TAREA
+## STACK DE MODELOS POR TAREA (PIPELINE SDD ESTRICTO)
 
-| Tarea | Modelo |
-|---|---|
-| Módulos críticos | GPT 5.5 en OpenCode |
-| Desarrollo diario | GPT 5.4 en OpenCode |
-| Boilerplate y mecánico | Deepseek V4 Flash en OpenCode |
-| Diseño previo a codear | Gemini 3.1 Pro High en Antigravity |
-| Dudas rápidas | Gemini Flash 3.5 High en Antigravity |
-| Revisión por módulo | Sonnet 4.6 Thinking en Antigravity |
-| Revisión crítica final | Opus 4.6 Thinking en Antigravity |
+| Fase SDD | Tarea | Modelo Asignado | Entorno |
+|---|---|---|---|
+| **1. Explore, Propose, Spec** | Arquitectura inicial y requerimientos | Gemini 3.1 Pro High | Antigravity |
+| **2. Design, Tasks, Apply** | Diseño técnico, plan de tareas e implementación | GPT 5.5 | OpenCode |
+| **3. Verify** | Auditoría de seguridad y revisión destructiva | Sonnet 4.6 Thinking | Antigravity |
+| **4. Archive** | Documentación y cierre | Gemini Flash 3.5 | Antigravity |
 
-**Regla de oro:** antes de codear cualquier módulo complejo, usar Gemini Pro para diseñarlo. Después GPT 5.5 para construirlo. Después Sonnet o Opus para revisarlo. En ese orden siempre.
+**Regla de oro:** El proceso SDD es innegociable. Gemini orquesta la fase inicial hasta el **spec**. Luego, se pasa la batuta a GPT para que haga el **design**, desglose las **tasks** y construya el código (**apply**). Una vez que el código funciona y pasa los tests, Sonnet lo somete a revisión crítica (**verify**). Finalmente, Gemini Flash cierra el ciclo (**archive**).
 
 > **Nota sobre nombres de modelos:** los nombres en este ROADMAP son ilustrativos del esquema de tiers. Los strings exactos que acepta cada CLI pueden diferir. La fuente de verdad es siempre `config.toml`. Verificar con `antigravity --help` y `opencode --help` antes de configurar.
 
