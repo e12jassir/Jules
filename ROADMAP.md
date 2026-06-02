@@ -18,46 +18,22 @@
 
 ---
 
-## STACK DE MODELOS POR TAREA (PIPELINE SDD ESTRICTO)
+## MODELOS POR FASE SDD
 
-| Fase SDD | Tarea | Modelo Asignado | Entorno |
-|---|---|---|---|
-| **1. Explore, Propose, Spec** | Arquitectura inicial y requerimientos | Gemini 3.1 Pro High | Antigravity |
-| **2. Design, Tasks, Apply** | Diseño técnico, plan de tareas e implementación | GPT 5.5 | OpenCode |
-| **3. Verify** | Auditoría de seguridad y revisión destructiva | Sonnet 4.6 Thinking | Antigravity |
-| **4. Archive** | Documentación y cierre | Gemini Flash 3.5 | Antigravity |
-
-**Regla de oro:** El proceso SDD es innegociable. Gemini orquesta la fase inicial hasta el **spec**. Luego, se pasa la batuta a GPT para que haga el **design**, desglose las **tasks** y construya el código (**apply**). Una vez que el código funciona y pasa los tests, Sonnet lo somete a revisión crítica (**verify**). Finalmente, Gemini Flash cierra el ciclo (**archive**).
-
-> **Nota sobre nombres de modelos:** los nombres en este ROADMAP son ilustrativos del esquema de tiers. Los strings exactos que acepta cada CLI pueden diferir. La fuente de verdad es siempre `config.toml`. Verificar con `antigravity --help` y `opencode --help` antes de configurar.
+> Los modelos asignados por fase están en `AGENT.md` → sección **MODELOS POR FASE SDD — REGLA INVIOLABLE**.
+> Cada módulo pendiente (9, 10, 11) tiene su propia tabla con flujo y modelos específicos.
+> Fuente de verdad de strings de modelos: `config.toml`.
 
 ---
 
 ## REGLAS DE DESARROLLO
 
-### Antes de codear cualquier módulo
-1. Leer la sección correspondiente en `JULES.md`
-2. Usar Gemini Pro para diseñar la arquitectura del módulo
-3. Tener claro el criterio de "done" antes de empezar
-
-### Durante el desarrollo
-- Un módulo a la vez. Sin paralelizar módulos.
-- Si aparece algo de Fase 2 mientras construyes Fase 1 → issue, no código
-- Commit por módulo terminado, no por feature parcial
-- Si un test falla → arreglar antes de seguir
-
-### Después de cada módulo
-- Sonnet 4.6 Thinking lo revisa
-- Para módulos críticos (sanitizador, memoria, router, permisos, doctor): Opus 4.6 Thinking
-- Si la revisión encuentra algo importante → arreglar antes del siguiente módulo
-
-### Señales de que algo va mal
-- Llevas más de 3 sesiones en el mismo módulo sin tenerlo done
-- Estás construyendo algo de Fase 2 porque "es pequeño"
-- No tienes tests para lo que acabas de construir
-- El módulo funciona manualmente pero no tiene tests
-
-Si cualquiera de estas señales aparece: parar, evaluar, retomar desde el criterio de done.
+- Un módulo a la vez. Sin paralelizar. Commit por módulo terminado.
+- Si aparece algo de Fase 2 mientras construís Fase 1 → issue, no código.
+- Si un test falla → arreglar antes de seguir. Nunca avanzar con rojo.
+- Leer la sección de `JULES.md` correspondiente antes de codear cualquier módulo.
+- Si llevás más de 3 sesiones en el mismo módulo sin tenerlo done: parar y re-evaluar el criterio de done.
+- Un módulo que funciona manualmente pero sin tests no está done.
 
 ---
 
@@ -67,434 +43,48 @@ El objetivo de Fase 1 es simple: Jules responde en terminal, recuerda entre sesi
 
 ---
 
-### MÓDULO 0 — Estructura base del proyecto
-**Clasificación:** MECÁNICO
-**Modelo:** Deepseek V4 Flash
-**Tiempo estimado:** 1 sesión
-**Depende de:** nada
-
-Esto es lo primero. Sin estructura no hay nada.
-
-```
-Tareas:
-- Crear virtualenv dedicado:
-    python -m venv .venv
-    source .venv/bin/activate
-  (Nunca saltar este paso. En rolling release es obligatorio.)
-
-- Inicializar repositorio git
-- Crear pyproject.toml con dependencias base:
-    click, rich, sqlalchemy, alembic, lancedb, aiohttp
-    (NO incluir fastapi ni uvicorn — Fase 1 es CLI pura)
-- Agregar al .gitignore:
-    .venv/
-    ~/.jules/memory/
-    *.db
-    vectors/
-    __pycache__/
-- Crear estructura de carpetas según JULES.md
-- Crear __init__.py en todos los paquetes
-- Inicializar Alembic: alembic init
-- Crear ~/.jules/ con estructura de archivos
-- Crear config.toml base con valores de JULES.md
-- Generar requirements.lock después de instalar dependencias:
-    pip freeze > requirements.lock
-```
-
-**Verificación:** `python -m jules.cli.main` corre sin errores de import.
-
-**Done cuando:** estructura creada, virtualenv activo, `requirements.lock` generado, primer commit hecho.
+### [x] MÓDULO 0 — Estructura base del proyecto
+**Clasificación:** MECÁNICO | **Modelo:** Deepseek V4 Flash | **Estado:** ✅ Completado
 
 ---
 
-### MÓDULO 1 — Sanitizador
-**Clasificación:** CRÍTICO — Requiere Diseño SDD
-**Modelo:** GPT 5.5 para implementación / Opus para revisión final
-**Tiempo estimado:** 1–2 sesiones
-**Depende de:** Módulo 0
-
-El sanitizador es el primer módulo real porque todo lo demás depende de que exista. Sin él, nada puede tocar la memoria.
-
-```
-Tareas:
-- Implementar jules/sanitizer/sanitizer.py
-  - SENSITIVE_PATTERNS con los casos de JULES.md
-    (SIN el patrón genérico r'[A-Za-z0-9]{20,}' — genera falsos positivos)
-  - Sanitizer.check(text) → SanitizeResult
-  - Logger de descartes sin contenido sensible
-  - strict_mode: descartar ante la duda, nunca limpiar parcialmente
-
-- Escribir tests exhaustivos (tests/unit/test_sanitizer.py):
-  Casos positivos:
-    - API keys (OpenAI sk-, Google AIza, GitHub ghp_)
-    - Bearer tokens
-    - exports con credenciales
-    - URLs con usuario:password
-    - private keys en bloque
-    - Slack tokens
-  Casos negativos (NO deben ser descartados):
-    - código Python normal
-    - comandos git con hashes
-    - imports estándar
-    - UUIDs
-    - base64 inocente
-    - nombres de función largos
-    - paths de archivo
-  Edge cases:
-    - partial matches
-    - multiline
-    - credenciales en medio de código legítimo
-```
-
-**Verificación:** `pytest tests/unit/test_sanitizer.py -v` — todos los casos pasan.
-
-**Done cuando:** todos los tests pasan incluyendo edge cases. Opus lo revisa antes de avanzar.
+### [x] MÓDULO 1 — Sanitizador
+**Clasificación:** CRÍTICO | **Modelo:** GPT 5.5 + Opus revisión | **Estado:** ✅ Completado
 
 ---
 
-### MÓDULO 2 — Modelos de datos
-**Clasificación:** CRÍTICO — Requiere Diseño SDD
-**Modelo:** GPT 5.4
-**Tiempo estimado:** 1 sesión
-**Depende de:** Módulo 0
-
-Definir las estructuras canónicas antes de cualquier lógica. Todo el proyecto depende de que `Episode` y `SessionContext` estén bien definidos desde el inicio.
-
-```
-Tareas:
-- Implementar jules/memory/models.py
-  - dataclass SessionContext:
-      project, directory, active_files,
-      inferred_intent, time_of_day, shell
-    (el campo shell se puebla al arranque detectando $SHELL)
-  - dataclass Episode:
-      todos los campos de JULES.md incluyendo
-      model_used, provider_used, memory_schema_version
-
-- Implementar modelos SQLAlchemy para SQLite:
-  - EpisodeORM, SessionContextORM
-
-- Primera migración Alembic:
-    alembic revision --autogenerate -m "initial_schema"
-    alembic upgrade head
-
-- Tests unitarios de los modelos:
-  - serialización / deserialización
-  - conversión ORM ↔ dataclass
-  - memory_schema_version presente en todos los episodios
-```
-
-**Verificación:** `alembic upgrade head` sin errores. `pytest tests/unit/test_models.py -v`.
-
-**Done cuando:** migración aplicada, tests pasan, `memory_schema_version` presente en el modelo.
+### [x] MÓDULO 2 — Modelos de datos
+**Clasificación:** CRÍTICO | **Modelo:** GPT 5.4 | **Estado:** ✅ Completado
 
 ---
 
-### MÓDULO 3 — Provider local Ollama
-**Clasificación:** MECÁNICO
-**Modelo:** GPT 5.4
-**Tiempo estimado:** 1 sesión
-**Depende de:** Módulo 2
-
-Ollama es el provider de identidad y el único que nunca puede fallar. Va antes que los CLIs externos porque el fallback depende de que funcione.
-
-```
-Tareas:
-- Implementar jules/providers/base.py
-  - Protocol Provider con todos los métodos
-  - Excepciones: ProviderError, ProviderUnavailableError, ProviderTimeoutError
-
-- Implementar jules/providers/ollama.py
-  - ask() via aiohttp a localhost:11434
-  - embed() para generar embeddings
-  - health_check()
-  - Manejo de timeout configurable
-
-- Verificación crítica de Ollama en EndeavourOS:
-  Ver bajo qué usuario corre el servicio:
-    systemctl show ollama.service | grep User
-  Si corre como usuario del sistema (no como el usuario actual):
-    Opción A: sudo -u ollama ollama list → verificar que los modelos sean visibles
-    Opción B: systemctl --user enable --now ollama → correr como servicio de usuario
-  La visibilidad de los modelos bajo el usuario correcto es criterio de done.
-  No delegar esta verificación a Fase 1.5.
-
-- Tests de integración (requiere Ollama corriendo con Llama 3.2):
-  - health_check retorna True cuando Ollama está activo
-  - ask() retorna respuesta coherente
-  - embed() retorna vector de dimensión correcta
-  - Timeout funciona correctamente
-  - Los modelos son visibles desde el proceso de Jules
-```
-
-**Verificación:** `jules status` (prototipo) muestra Ollama activo con usuario correcto.
-
-**Done cuando:** Ollama responde desde Jules con Llama 3.2, modelos visibles, usuario verificado.
+### [x] MÓDULO 3 — Provider local Ollama
+**Clasificación:** MECÁNICO | **Modelo:** GPT 5.4 | **Estado:** ✅ Completado
 
 ---
 
-### MÓDULO 4 — Providers externos (Antigravity y OpenCode)
-**Clasificación:** MECÁNICO
-**Modelo:** GPT 5.5 para implementación / Sonnet para revisión
-**Tiempo estimado:** 2 sesiones
-**Depende de:** Módulo 3
-
-Los providers externos son subprocesses. Antes de escribir una línea, probar manualmente cómo se invocan.
-
-```
-Preparación obligatoria (antes de codear):
-- antigravity --help → anotar flags exactos de modo no-interactivo
-- opencode --help → anotar flags de modelo y prompt
-- Probar manualmente:
-    antigravity ask "hola" --model gemini-3.5-flash-high
-    opencode run --model openai/gpt-5.5 "hola"
-- Verificar que responden a stdout y terminan solos sin input adicional
-- Verificar comportamiento con permisos automáticos en OpenCode
-- Verificar comportamiento bajo Wayland (algunos CLIs tienen problemas con TTY)
-
-Tareas:
-- Implementar jules/providers/antigravity.py
-  - _run_cli() con patrón async subprocess
-  - ask() con model como parámetro
-  - health_check() verificando que el CLI existe y responde a --help
-  - Manejo de timeout y returncode != 0
-  - Solo traducción de I/O — ninguna lógica de decisión aquí
-
-- Implementar jules/providers/opencode.py
-  - Mismo patrón que Antigravity
-  - Configurar permisos automáticos para evitar cuelgues en subprocess
-  - Solo traducción de I/O — ninguna lógica de decisión aquí
-
-- Tests de integración:
-  - Antigravity responde con Gemini Flash
-  - OpenCode responde con Deepseek
-  - health_check retorna False cuando el CLI no está en PATH
-  - Fallback funciona cuando el CLI no está disponible
-  - Timeout funciona en ambos providers
-```
-
-**Verificación:** los tres providers responden desde Jules en prueba manual en terminal.
-
-**Done cuando:** los tres providers responden. Sonnet revisa antes de avanzar.
+### [x] MÓDULO 4 — Providers externos (Antigravity y OpenCode)
+**Clasificación:** MECÁNICO | **Modelo:** GPT 5.5 + Sonnet revisión | **Estado:** ✅ Completado
 
 ---
 
-### MÓDULO 5 — Router quota-aware
-**Clasificación:** CRÍTICO — Requiere Diseño SDD
-**Modelo:** GPT 5.5 para implementación / Opus para revisión
-**Tiempo estimado:** 1–2 sesiones
-**Depende de:** Módulo 4
-
-El router es la pieza más crítica después de la memoria. Un error aquí quema cuota o deja a Jules sin respuesta.
-
-```
-Tareas:
-- Implementar jules/core/router.py
-  - Enum TaskType con todos los tipos de JULES.md
-  - route(task, user_override) → (Provider, model)
-  - ask_with_fallback() → (response, model_used, provider_used)
-  - Leer tiers desde config.toml — sin hardcodear modelos en el código
-  - Fallback chain: primary → secondary_same_tier → ollama
-  - Logging estructurado de qué modelo se usó en cada llamada
-
-- Tests unitarios exhaustivos:
-  - IDENTITY/MEMORY_SCORING/OFFLINE → siempre Ollama (nunca otros)
-  - CODING → OpenCode low_cost
-  - CODING_HEAVY → OpenCode high_cost
-  - Fallback cuando provider principal falla
-  - user_override respetado siempre
-  - Sin modelos hardcodeados en el código (verificar con grep)
-  - Modificar config.toml en test → router respeta el cambio
-```
-
-**Verificación:** `pytest tests/unit/test_router.py -v` — todos los casos pasan. `grep -r "gpt-5\|gemini\|claude" jules/core/router.py` → sin resultados (modelos solo en config.toml).
-
-**Done cuando:** Opus revisa el router y todos los tests pasan.
+### [x] MÓDULO 5 — Router quota-aware
+**Clasificación:** CRÍTICO | **Modelo:** GPT 5.5 + Opus revisión | **Estado:** ✅ Completado
 
 ---
 
-### MÓDULO 6 — Motor de memoria
-**Clasificación:** CRÍTICO — Requiere Diseño SDD
-**Modelo:** GPT 5.5 para implementación / Opus para revisión
-**Tiempo estimado:** 2–3 sesiones
-**Depende de:** Módulos 1, 2, 3, 5
-
-El módulo más complejo de Fase 1. La memoria rota es el tipo de bug que aparece semanas después, cuando ya confiás en ella.
-
-```
-Tareas:
-
-- Implementar jules/memory/scoring.py
-  - score(episode) → float via Llama local (NUNCA modelo externo)
-  - Prompt de scoring diseñado para Llama 3.2 1B sobre contenido técnico
-  - Retorna 0.0–1.0
-  - ScoringHealthMonitor:
-    - record(score) — acumula scores recientes
-    - is_healthy() → bool — detecta scoring degenerado (varianza < 0.01)
-    - Threshold configurable desde config.toml
-
-  CALIBRACIÓN OBLIGATORIA antes de integrar al flujo:
-    Probar el prompt de scoring contra 10–15 episodios de ejemplo
-    con Llama corriendo en Ollama. Verificar que la varianza sea real
-    entre episodios de distinta importancia. El threshold 0.3 es punto
-    de partida — ajustar con datos reales. Si el modelo devuelve scores
-    constantes, rediseñar el prompt antes de continuar.
-
-- Implementar jules/memory/episodic.py
-  - LanceDB como store vectorial
-  - persist(episode) — con embeddings via Ollama
-  - retrieve(query, context, limit) — búsqueda semántica
-  - Decay: ajuste de score por tiempo sin acceso
-
-- Implementar jules/memory/persistent.py
-  - SQLite via SQLAlchemy
-  - upsert_facts(episode) — hechos estables
-  - get_facts(project) — recuperación por proyecto
-
-- Implementar jules/memory/engine.py
-  - retrieve(query, context) — orquesta episodic + persistent
-  - persist_async(response, context) — corre en background:
-      sanitizar → score → ScoringHealthMonitor.record() →
-      guardar si importa (o modo conservador si scoring degenerado)
-  - La persistencia es siempre asyncio.create_task(), nunca await directo
-  - Modo conservador cuando scoring degenerado:
-      guardar episodios con friction_score > 0.5
-      o con tags de proyecto activo
-      loggear que se está en modo conservador
-
-- Tests:
-  - Episodio persiste y se recupera entre sesiones (reinicio real)
-  - Scoring usa Ollama, no providers externos (mock para verificar)
-  - Retrieval por relevancia, no por recencia
-  - Decay funciona con timestamps artificiales
-  - Sanitizador bloquea secrets antes del scoring
-  - ScoringHealthMonitor detecta scoring constante
-  - Modo conservador activa cuando scoring degenerado
-```
-
-**Verificación:** crear un episodio → cerrar Jules → abrir Jules → recuperar el episodio. Si funciona, el módulo está done.
-
-**Done cuando:** Opus revisa el motor completo y el test de persistencia entre sesiones pasa manualmente.
+### [x] MÓDULO 6 — Motor de memoria
+**Clasificación:** CRÍTICO | **Modelo:** GPT 5.5 + Opus revisión | **Estado:** ✅ Completado
 
 ---
 
-### MÓDULO 7 — Detector de intención de contexto
-**Clasificación:** MECÁNICO
-**Modelo:** GPT 5.4
-**Tiempo estimado:** 1 sesión
-**Depende de:** Módulo 6
-
-Simple en Fase 1. Infiere intención del contexto observable, no del comportamiento declarado.
-
-```
-Tareas:
-- Implementar jules/core/context.py
-  - build(session, input) → SessionContext
-  - Detectar shell activo y poblarlo en SessionContext.shell:
-      import os; os.environ.get("SHELL", "unknown")
-  - Inferir inferred_intent desde:
-      actividad terminal previa (errores recientes, comandos)
-      directorio activo y proyecto
-      historial de sesión
-      hora del día
-  - Mapeado simple:
-      error reciente → "debugging"
-      docs recientes → "learning"
-      sin contexto → "review"
-
-- Tests:
-  - Contexto de debugging detectado correctamente
-  - Contexto de aprendizaje detectado correctamente
-  - Shell poblado correctamente en SessionContext
-  - Hora del día poblada correctamente
-```
-
-**Verificación:** `pytest tests/unit/test_context.py -v`. `SessionContext.shell` siempre tiene valor.
-
-**Done cuando:** SessionContext se construye con intención inferida y shell detectado en casos básicos.
+### [x] MÓDULO 7 — Detector de intención de contexto
+**Clasificación:** MECÁNICO | **Modelo:** GPT 5.4 | **Estado:** ✅ Completado
 
 ---
 
-### MÓDULO 8 — Sistema de eventos
-**Clasificación:** SEMI-CRÍTICO
-**Modelo:** GPT 5.4
-**Tiempo estimado:** 1–2 sesiones
-**Depende de:** Módulo 7
-
-Solo los cinco eventos básicos. Sin eventos cognitivos, sin iniciativa. Más complejo de lo que parece por las particularidades del entorno.
-
-```
-Preparación obligatoria (antes de codear):
-
-1. Detectar shell activo:
-     echo $SHELL
-   La implementación de hooks depende de este valor.
-   No asumir bash. En EndeavourOS con KDE es común fish o zsh.
-
-2. Verificar límite de inotify:
-     cat /proc/sys/fs/inotify/max_user_watches
-   Si está por debajo de 65536:
-     echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.d/jules.conf
-     sudo sysctl -p /etc/sysctl.d/jules.conf
-   Jules no puede depender de que este límite sea suficiente
-   sin haberlo verificado primero.
-
-Tareas:
-
-- Implementar jules/core/events.py
-  - Enum EventType (solo los 5 de Fase 1):
-      SESSION_STARTED, PROJECT_OPENED, CODING_DETECTED,
-      IDLE_DETECTED, SESSION_ENDED
-  - EventBus simple con subscribe/emit
-  - Handlers para cada evento:
-      session_started → inicializar SessionContext con shell detectado
-      project_opened  → actualizar directorio activo
-      coding_detected → marcar actividad de código
-      idle_detected   → registrar en sesión
-      session_ended   → cerrar sesión y persistir resumen
-
-- Implementar jules/linux/watcher.py
-  - Detectar cambio de directorio activo
-  - Detectar actividad de archivos de código
-  - Verificar límite de inotify al inicializar:
-      leer /proc/sys/fs/inotify/max_user_watches
-      si está cerca del límite → loggear advertencia
-      si se agota → desactivar watchers, emitir evento de degradación
-
-- Implementar jules/linux/shell.py
-  - Detectar shell activo desde $SHELL
-  - Generar hooks para el shell correspondiente:
-
-    Si fish → ~/.config/fish/conf.d/jules.fish
-      function jules_session_start --on-event fish_prompt
-          # solo en primera ejecución de la sesión
-      end
-      function jules_preexec --on-event fish_preexec
-          # comandos antes de ejecutar
-      end
-
-    Si zsh → fragmento para ~/.zshrc
-      precmd() { ... }
-      preexec() { ... }
-
-    Si bash → fragmento para ~/.bashrc
-      PROMPT_COMMAND="..."
-      trap '...' DEBUG
-
-  - Nunca intentar adaptar hooks de bash a fish o viceversa.
-  - El installer de hooks debe ser idempotente (correrlo dos veces no genera duplicados).
-
-- Tests:
-  - EventBus emite y recibe correctamente
-  - session_started puebla SessionContext con shell correcto
-  - Watcher detecta cambio de directorio
-  - Watcher detecta actividad de código
-  - Límite de inotify bajo → advertencia loggeada sin crashear
-```
-
-**Verificación:** Jules detecta cuando se abre un proyecto y cuando termina una sesión. Verificar manualmente con el shell activo real.
-
-**Done cuando:** hooks instalados para el shell correcto, watcher detecta actividad, inotify verificado.
+### [x] MÓDULO 8 — Sistema de eventos
+**Clasificación:** SEMI-CRÍTICO | **Modelo:** GPT 5.4 | **Estado:** ✅ Completado
 
 ---
 
@@ -503,6 +93,24 @@ Tareas:
 **Modelo:** GPT 5.4
 **Tiempo estimado:** 1 sesión
 **Depende de:** Módulo 0
+
+#### Fases SDD para este módulo
+
+> Este módulo está marcado CRÍTICO porque el Módulo 11 hereda su contrato. Un Enum mal diseñado aquí se propaga a todo el CLI. Las fases de propuesta y spec son obligatorias por eso.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Una vez por sesión — detectar contexto del proyecto |
+| `sdd-explore` | ⚠️ Breve | Gemini 3.1 Pro | Solo verificar que `config.toml` ya tiene sección `[permissions]` y revisar cómo el CLI futuro lo invocará. No requiere mapeo extenso |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Decisiones reales: granularidad del Enum Action, extensibilidad para Fase 2 (acciones de entorno Linux), contrato de `PermissionDeniedError`. Sin esto el CLI no puede integrarlo |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Producir spec técnico preciso: enum completo, firma de `check()`, modo test, estructura de config. Evita ambigüedad en el apply |
+| `sdd-design` | ❌ No | — | Si propose + spec son precisos, el diseño es trivial para un solo archivo |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomponer en tasks atómicas: Enum, `check()`, prompts Rich, config, modo test, tests unitarios |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | CRÍTICO: verificar que ninguna acción prohibida puede ser overrideada, modo test funciona, config se lee correctamente |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Persistir spec para que Módulo 11 tenga el contrato de referencia |
+
+**Flujo:** `init` → `explore (breve)` → `propose` → `spec` → `tasks` → `apply` → `verify` → `archive`
 
 ```
 Tareas:
@@ -533,6 +141,24 @@ Tareas:
 **Depende de:** Módulos 3, 6, 8, 9
 
 Doctor va antes que el CLI principal porque el CLI va a depender de él para el arranque. En un entorno rolling release, este comando es el primero que corre cuando algo falla.
+
+#### Fases SDD para este módulo
+
+> Módulo mecánico. El spec completo ya existe en JULES.md (tabla de checks, reglas de output, exit codes). No hay ambigüedad que explorar ni decisiones arquitectónicas que tomar. Flujo SDD mínimo.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Una vez por sesión |
+| `sdd-explore` | ❌ No | — | El spec en JULES.md está completo. No hay ambigüedad que investigar |
+| `sdd-propose` | ❌ No | — | Módulo mecánico. No hay decisiones arquitectónicas — el diseño está canonizado |
+| `sdd-spec` | ❌ No | — | El spec funcional ya vive en JULES.md. Duplicarlo sería ruido |
+| `sdd-design` | ❌ No | — | 10 checks independientes. Diseño trivial y directo |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomponer los 10 checks en tasks atómicas verificables + output JSON + integración CLI |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que cada check retorna resultado correcto, JSON parseable, exit code correcto |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+**Flujo:** `init` → `tasks` → `apply` → `verify` → `archive` ← el más corto de los módulos pendientes
 
 ```
 Tareas:
@@ -573,12 +199,30 @@ Tareas:
 ---
 
 ### MÓDULO 11 — CLI principal
-**Clasificación:** MECÁNICO
+**Clasificación:** MECÁNICO (en superficie) / ALTA COMPLEJIDAD (en integración)
 **Modelo:** GPT 5.4 / Deepseek para boilerplate
 **Tiempo estimado:** 2–3 sesiones
-**Depende de:** todos los módulos anteriores
+**Depende de:** todos los módulos anteriores (0–10)
 
 El entrypoint que conecta todo. Más lento de lo estimado en versiones anteriores — aquí aparecen los bugs que no surgieron en tests aislados.
+
+#### Fases SDD para este módulo
+
+> Este es el único módulo que justifica el flujo SDD completo sin excepciones. No por complejidad algorítmica, sino por superficie de integración: conecta todos los módulos, maneja asyncio+Click, gestiona Wayland/KDE, y es el primero en ejecutar el sistema end-to-end. `sdd-explore` es especialmente crítico aquí — sin mapear los contratos reales de los módulos 0–10, el apply corre ciego.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto del proyecto completo |
+| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | Mapear contratos reales de módulos 0–10, identificar gaps (¿`persist_async` tiene la firma que el CLI asume? ¿el PermissionGate tiene el contrato correcto?), verificar estado de `personality/loader.py` que no existe aún |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Decisiones reales: estructura de `personality/loader.py` + detección de cambios en `master.md`, diseño del output de `jules debug last`, cómo manejar asyncio+Click sin conflictos, cómo comunicar el modo degradado |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | El flujo principal está en JULES.md pero el spec técnico del CLI (comandos, flags, timeouts, manejo de errores por módulo, startup sequence) necesita estar escrito antes del apply |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño de `personality/loader.py` + integración asyncio/Click + estructura del logging para `jules debug last` no son triviales |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Más de 8 componentes (comandos, flujo principal, personality loader, tests e2e, verificaciones Wayland, medición de startup). Sin descomposición es fácil perderse |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación — la más grande de Fase 1 |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Flujo e2e, medición real de startup (<500ms), persistencia entre reinicios (reinicio real del proceso), que la respuesta llega ANTES de que termine la persistencia |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre — el archive debe documentar el estado final para que la Revisión Final tenga contexto |
+
+**Flujo:** flujo SDD completo sin excepciones — `init` → `explore` → `propose` → `spec` → `design` → `tasks` → `apply` → `verify` → `archive`
 
 ```
 Tareas:
@@ -630,10 +274,29 @@ Tareas:
 ---
 
 ### REVISIÓN FINAL DE FASE 1
-**Modelo:** Opus 4.6 Thinking
+**Modelo:** Claude Opus 4.8 (con Thinking activado)
 **Tiempo estimado:** 1 sesión
+**Depende de:** Módulo 11 completado + todos los checks de abajo en verde
 
-Antes de declarar Fase 1 done, Opus revisa el proyecto completo.
+Antes de declarar Fase 1 done, Opus revisa el proyecto completo. Es una auditoría destructiva — puede descubrir problemas en módulos ya completados (0–8) que requieran retrabajo. Esto es por diseño.
+
+#### Fases SDD para esta revisión
+
+> No es implementación — es validación. No genera código nuevo salvo fixes puntuales. El flujo SDD es mínimo y orientado exclusivamente a verificación.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto del proyecto para el agente que hace la auditoría |
+| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | La revisión debe leer el sistema completo para validar contra los 20 items del checklist. Sin esto la verificación es superficial |
+| `sdd-propose` | ❌ No | — | No hay decisiones nuevas — es validación de decisiones ya tomadas |
+| `sdd-spec` | ❌ No | — | No genera spec nuevo |
+| `sdd-design` | ❌ No | — | No genera diseño nuevo |
+| `sdd-tasks` | ⚠️ Opcional | Claude Sonnet 4.6 | Útil para estructurar los 20 items del checklist como tasks verificables si el agente lo necesita |
+| `sdd-apply` | ❌ Solo si hay fixes | Gemini 3.5 Flash | Solo si la revisión encuentra problemas. En ese caso: volver al módulo correspondiente, no parchear en la revisión |
+| `sdd-verify` | ✅ Sí — **es la fase central** | Claude Opus 4.8 | Esto es exactamente lo que hace la revisión: validar el sistema completo contra el spec. Usar Thinking activado |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre formal de Fase 1. Gate antes de Fase 1.5 |
+
+**Flujo:** `init` → `explore` → `verify` → `archive`
 
 ```
 Checklist de Fase 1:
@@ -666,6 +329,25 @@ Si algo falla: arreglar antes de avanzar a Fase 1.5.
 ## FASE 1.5 — ESTABILIZACIÓN
 
 No añadir features nuevas. Esta fase existe para evitar construir expansión sobre una base que apenas fue probada en condiciones reales.
+
+### Fases SDD para Fase 1.5
+
+> Esta fase es observación y calibración, no implementación. No hay código nuevo salvo fixes puntuales detectados en uso real. El flujo SDD es mínimo.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Una vez al inicio de la fase |
+| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Leer logs reales, datos de latencia, episodios persistidos, fallbacks ocurridos. Es la base de la calibración |
+| `sdd-propose` | ⚠️ Solo si aparece un problema | Claude Opus 4.8 | Si `explore` detecta un problema de fondo (ej: scoring threshold incorrecto, retrieval degradado), entonces sí. Si todo está bien, no |
+| `sdd-spec` | ⚠️ Solo si hay fix | Claude Sonnet 4.6 | Solo para documentar cambios que surjan de problemas detectados |
+| `sdd-design` | ❌ No | — | Sin features nuevas, no hay diseño |
+| `sdd-tasks` | ❌ No | — | Sin features nuevas |
+| `sdd-apply` | ⚠️ Solo si hay fix | Gemini 3.5 Flash | Fixes puntuales. No features |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Al final de la fase: validar que los criterios de entrada a Fase 2 se cumplen |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Documentar estado real del sistema antes de entrar a Fase 2 |
+
+**Flujo normal:** `init` → `explore` → `verify` → `archive`
+**Flujo con fix:** `init` → `explore` → `propose` → `spec` → `apply` → `verify` → `archive`
 
 ### Tareas
 
@@ -731,49 +413,147 @@ La estabilidad rara vez se siente épica. Solo evita incendios.
 
 No empezar hasta que Fase 1 y Fase 1.5 estén 100% done y usándose en el workflow diario real.
 
-**Orden de construcción:**
+> **Regla de esta fase:** cada item es un flujo SDD independiente. No mezclar items en la misma sesión. No usar modelos GPT desactualizados que aparecen en el bloque de orden original — los modelos aquí son la fuente de verdad.
 
-```
-1. Detector de intención mejorado  [CRÍTICO — Diseño SDD]
-   Más señales, más intenciones, mejor precisión.
-   Modelo: GPT 5.5
+---
 
-2. Iniciativa contextual (opt-in)  [CRÍTICO — Diseño SDD]
-   Apagada por defecto en config.toml.
-   Solo señales objetivas, nunca silencio como señal.
-   Regla: no interrumpir dos veces por la misma razón.
-   Modelo: GPT 5.5 / Opus para revisión
+### ITEM 1 — Detector de intención mejorado
+**Clasificación:** CRÍTICO — Diseño SDD
+**Depende de:** Fase 1 completa + datos reales de contexto
 
-3. Automatización de entorno Linux  [CRÍTICO — Diseño SDD]
-   Integración con KDE Plasma via D-Bus / KWin:
-     qdbus org.kde.KWin ...
-     dbus-send --session --dest=org.kde.KWin ...
-   wmctrl disponible pero con soporte parcial bajo Wayland — evaluar
-   en condiciones reales antes de depender de él.
-   NO usar hyprctl — es exclusivo de Hyprland.
-   PermissionGate en cada acción que toca el entorno.
-   Modelo: GPT 5.5
+Más señales, más intenciones, mejor precisión. Extiende el detector simple de Módulo 7.
 
-4. Replay system  [CRÍTICO — Diseño SDD]
-   Reconstrucción de sesiones de debugging.
-   Requiere memoria episódica sólida y probada.
-   Modelo: GPT 5.5 / Opus para revisión
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto del proyecto |
+| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Leer el detector actual (Módulo 7), analizar qué intenciones reales aparecen en los episodios acumulados |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Qué señales nuevas agregar, cómo extender sin romper el contrato actual |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Especificar las intenciones nuevas, thresholds, y cómo interactúan con la memoria |
+| `sdd-design` | ⚠️ Opcional | Claude Opus 4.8 | Solo si el diseño de extensión no es obvio desde el spec |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomponer por señal nueva |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que las intenciones nuevas no generan falsos positivos sobre datos reales |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
 
-5. Sistema de voz  [MECÁNICO — Integración de terceros]
-   whisper.cpp para STT, Piper para TTS.
-   Modelo: GPT 5.4 / Deepseek para integración
+---
 
-6. Desktop app  [MECÁNICO — Interfaz gráfica]
-   Tauri + SvelteKit.
-   Muestra: modelo activo, tier, contexto, memoria, salud del scoring.
-   Modelo: GPT 5.5 para lógica / Deepseek para UI
+### ITEM 2 — Iniciativa contextual (opt-in)
+**Clasificación:** CRÍTICO — Diseño SDD
+**Depende de:** Detector de intención mejorado + datos reales de episodios
 
-7. Optimización de latencia cloud  [MECÁNICO — Rendimiento]
-   Configurar acoplamiento a daemon mode de los CLIs externos.
-   Comunicación via HTTP/Sockets locales para eliminar el boot tax
-   de subprocess (~2 segundos por invocación).
-   Modelo: GPT 5.4 / Deepseek
-```
+Apagada por defecto en `config.toml`. Solo señales objetivas, nunca silencio como señal. Regla: no interrumpir dos veces por la misma razón.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | Leer episodios reales acumulados para entender cuándo Jules hubiera querido interrumpir. Sin datos reales la propuesta es ficción |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Qué señales activan iniciativa, cómo se evita la doble interrupción, cómo es el opt-in en config |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Contrato exacto: qué activa, qué bloquea, cómo se loggea |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del mecanismo de "ya interrumpí por esto" — no trivial |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Tareas atómicas por tipo de señal |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que apagada por defecto funciona, que no interrumpe dos veces |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 3 — Automatización de entorno Linux
+**Clasificación:** CRÍTICO — Diseño SDD
+**Depende de:** Módulo 9 (permisos) completado
+
+Integración con KDE Plasma via D-Bus/KWin. NO usar `hyprctl` (exclusivo de Hyprland). `wmctrl` con soporte parcial bajo Wayland — evaluar antes de depender. `PermissionGate` en cada acción.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Explorar qué APIs de D-Bus/KWin están disponibles en el entorno real. No asumir |
+| `sdd-propose` | ✅ Sí — **obligatoria** | Claude Opus 4.8 | Decisión arquitectónica real: D-Bus vs wmctrl vs alternativas bajo Wayland. Sin esto se codea a ciegas |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Qué acciones se exponen, cómo se integra con PermissionGate, qué falla gracefully |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del adaptador Linux — abstracto para no acoplar al DE específico |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Por acción de entorno |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que cada acción pasa por PermissionGate y falla gracefully si el entorno no responde |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 4 — Replay system
+**Clasificación:** CRÍTICO — Diseño SDD
+**Depende de:** Motor de memoria con `model_used` bien poblado (mínimo 3 meses de datos)
+
+Reconstrucción de sesiones de debugging. Prerequisito duro: `model_used` y `provider_used` poblados en todos los episodios.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Verificar que `model_used` está bien poblado en episodios reales. Si no está, no empezar |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Cómo se reconstruye una sesión, qué datos son necesarios, qué se puede perder |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Contrato del replay: formato, filtros, cómo se invoca |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del engine de replay — no es trivial con episodios fragmentados |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomposición atómica |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar contra sesiones reales grabadas |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 5 — Sistema de voz
+**Clasificación:** MECÁNICO — Integración de terceros
+**Depende de:** CLI principal (Módulo 11) completado
+
+whisper.cpp para STT, Piper para TTS. Integración de librerías, no arquitectura nueva.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Verificar compatibilidad de whisper.cpp y Piper con el entorno real (Wayland, PipeWire) |
+| `sdd-propose` | ❌ No | — | Integración mecánica. No hay decisiones arquitectónicas — el diseño es usar las APIs documentadas |
+| `sdd-spec` | ❌ No | — | No hay spec nuevo — el contrato es el de las librerías |
+| `sdd-design` | ❌ No | — | Mecánico |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | STT + TTS + integración con CLI + tests de audio |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar latencia de STT, calidad de TTS, y que no bloquea el event loop |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 6 — Desktop app (Tauri + SvelteKit)
+**Clasificación:** MECÁNICO — Interfaz gráfica
+**Depende de:** CLI principal (Módulo 11) completado
+
+Muestra: modelo activo, tier, contexto, memoria, salud del scoring. UI encima del CLI, no en paralelo.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ❌ No | — | El spec de qué muestra la UI está definido. No hay ambigüedad que explorar |
+| `sdd-propose` | ❌ No | — | UI mecánica encima de datos ya existentes |
+| `sdd-spec` | ❌ No | — | Idem |
+| `sdd-design` | ❌ No | — | Idem |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Componentes Svelte, comunicación Tauri ↔ backend, actualizaciones en tiempo real |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que la UI no bloquea el CLI, actualizaciones en tiempo real funcionan |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 7 — Optimización de latencia cloud
+**Clasificación:** MECÁNICO — Rendimiento
+**Depende de:** CLI principal + datos reales de latencia medidos en Fase 1.5
+
+Eliminar boot tax de subprocess (~2s/invocación). Daemon mode o HTTP/Sockets locales para CLIs externos.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Leer métricas reales de latencia de Fase 1.5 + explorar si Antigravity y OpenCode tienen daemon mode |
+| `sdd-propose` | ❌ No | — | El problema está identificado (subprocess boot tax). La solución depende de lo que explore muestra |
+| `sdd-spec` | ❌ No | — | Mecánico |
+| `sdd-design` | ❌ No | — | Mecánico |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Por provider (Antigravity daemon, OpenCode daemon, fallback si no soporta) |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Medir latencia real antes y después. La mejora debe ser medible |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
 
 ---
 
@@ -781,27 +561,87 @@ No empezar hasta que Fase 1 y Fase 1.5 estén 100% done y usándose en el workfl
 
 No empezar hasta tener ≥3 meses de uso real con memoria acumulada.
 
-```
-1. Perfilador cognitivo  [CRÍTICO — Algoritmia avanzada SDD]
-   Análisis de patrones reales: horarios, tipos de tareas, errores recurrentes.
-   Modelo: GPT 5.5 / Opus para algoritmos de análisis
+> **Regla de esta fase:** `sdd-explore` DEBE leer memoria real acumulada antes de cualquier propuesta. Sin datos reales, la propuesta es ficción. El flujo SDD completo es obligatorio para todos los items.
 
-2. Diff cognitivo  [CRÍTICO — Diseño SDD]
-   "¿Cómo resolvía esto hace 6 meses vs ahora?"
-   Requiere episodios con model_used bien poblado.
-   Modelo: GPT 5.5
+---
 
-3. Eventos cognitivos calibrados  [CRÍTICO — Diseño SDD]
-   frustration_detected, burnout_signal, productivity_anomaly.
-   Calibrar con datos reales antes de activar.
-   Implementar antes → falsos positivos permanentes.
-   Modelo: GPT 5.5 / Opus para validación
+### ITEM 1 — Perfilador cognitivo
+**Clasificación:** CRÍTICO — Algoritmia avanzada SDD
+**Depende de:** ≥3 meses de episodios reales con campos bien poblados
 
-4. Mentoría técnica avanzada  [CRÍTICO — Diseño SDD]
-   Sugerencias basadas en historial propio.
-   "Para este tipo de bug resolvés mejor con Gemini Pro."
-   Modelo: GPT 5.5
-```
+Análisis de patrones reales: horarios, tipos de tareas, errores recurrentes.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | Leer patrones reales en episodios. Sin esto el algoritmo de análisis es especulativo |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Qué patrones analizar, cómo agregar, cómo evitar over-fitting a una sola persona |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Definición precisa de "patrón" y cómo se expone al resto del sistema |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del motor de análisis — complejidad algorítmica real |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Por tipo de patrón (horario, tarea, error) |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar contra datos reales que los patrones detectados tienen sentido |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 2 — Diff cognitivo
+**Clasificación:** CRÍTICO — Diseño SDD
+**Depende de:** Perfilador cognitivo + `model_used` bien poblado en ≥6 meses de episodios
+
+"¿Cómo resolvía esto hace 6 meses vs ahora?" Prerequisito duro: si los datos no están, no empezar.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | Verificar que `model_used` está bien poblado en ≥6 meses. Si no está: no empezar |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Cómo comparar episodios de distintas épocas, qué es una diferencia significativa |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Formato del diff cognitivo, cómo se invoca, qué muestra |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del algoritmo de comparación temporal |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomposición atómica |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar con episodios reales de distintas fechas |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 3 — Eventos cognitivos calibrados
+**Clasificación:** CRÍTICO — Diseño SDD
+**Depende de:** Perfilador cognitivo completado + datos reales calibrados
+
+`frustration_detected`, `burnout_signal`, `productivity_anomaly`. Implementar sin calibración real = falsos positivos permanentes y muy difíciles de revertir.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | Leer episodios reales para entender cuándo el usuario estaba frustrado vs fluido. Sin esto los umbrales son inventados |
+| `sdd-propose` | ✅ Sí — **crítica** | Claude Opus 4.8 | Definir umbrales basados en datos reales. Esta propuesta es la más importante del item |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Definir los 3 eventos, sus umbrales, cómo se activan y cómo se desactivan |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del detector — no trivial con datos ruidosos |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Por evento cognitivo |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí — **crítica** | Claude Opus 4.8 | Verificar contra episodios reales que los umbrales no generan falsos positivos. Esta es la fase más importante del item |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 4 — Mentoría técnica avanzada
+**Clasificación:** CRÍTICO — Diseño SDD
+**Depende de:** Perfilador cognitivo completado
+
+Sugerencias basadas en historial propio. Ej: "Para este tipo de bug resolvés mejor con Gemini Pro."
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | Leer el historial real para entender qué patrones existen antes de diseñar sugerencias |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Qué patrones activan una sugerencia, cómo se evita ser invasivo |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | El spec debe incluir exactamente qué patrones del historial activan qué sugerencia |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del motor de sugerencias |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomposición atómica |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que las sugerencias son relevantes y no repetitivas en uso real |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
 
 ---
 
@@ -809,38 +649,15 @@ No empezar hasta tener ≥3 meses de uso real con memoria acumulada.
 
 Construir solo si las tres fases anteriores funcionan bien en uso real.
 
-```
-1. Asistencia predictiva      [CRÍTICO]
-2. Adaptación profunda        [CRÍTICO]
-3. Personalización autónoma   [CRÍTICO]
-```
+### Fases SDD para Fase 4
+
+> Fase 4 está intencionalmente sin especificar en detalle. Definir flujos SDD ahora sería ficción — la arquitectura dependerá de lo que se aprendió en Fases 1–3.
+> **Regla:** cuando llegue el momento, empezar siempre con `sdd-init` + `sdd-explore` profundo antes de cualquier propuesta. Lo que se construya aquí debe emerger de los datos reales acumulados, no de spec previo.
+
+**Items:** Asistencia predictiva → Adaptación profunda → Personalización autónoma.
 
 ---
 
-## ORDEN FINAL DE CONSTRUCCIÓN — FASE 1
-
-```
-[x] 0.  Estructura base + virtualenv    → Deepseek             (Completado)
-[x] 1.  Sanitizador                     → GPT 5.5 + Opus       (Completado)
-[x] 2.  Modelos de datos                → GPT 5.4              (Completado)
-[x] 3.  Provider Ollama                 → GPT 5.4              (Completado)
-[x] 4.  Providers externos              → GPT 5.5 + Sonnet     (Completado)
-[x] 5.  Router quota-aware              → GPT 5.5 + Opus       (Completado)
-[x] 6.  Motor de memoria                → GPT 5.5 + Opus       (Completado)
-[x] 7.  Detector de contexto            → GPT 5.4              (Completado)
-[x] 8.  Sistema de eventos              → GPT 5.4              (Completado)
-[ ] 9.  Sistema de permisos             → GPT 5.4              (Pendiente)
-[ ] 10. jules doctor                    → GPT 5.4              (Pendiente)
-[ ] 11. CLI principal                   → GPT 5.4 + Deepseek   (Pendiente)
-[ ]     Revisión final Fase 1           → Opus 4.6 Thinking    (Pendiente)
-
-Nota: personality/coherence.py es Fase 2.
-En Fase 1 la consistencia de identidad se garantiza con
-master.md + presets por provider + tests de integración.
-
-Nota: jules_chat.py es solo un prototipo de chat.
-El CLI principal (Módulo 11) lo reemplaza completamente.
-```
-
-Cada número es un módulo completo y testeado antes de avanzar al siguiente.
-Sin excepciones.
+> `personality/coherence.py` es Fase 2. En Fase 1 la consistencia de identidad se garantiza con `master.md` + presets por provider + tests de integración.
+>
+> `jules_chat.py` es solo un prototipo. El CLI principal (Módulo 11) lo reemplaza completamente.
