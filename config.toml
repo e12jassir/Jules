@@ -29,3 +29,11 @@ timeout_seconds = 60
 
 [providers.opencode]
 timeout_seconds = 60
+
+[permissions]
+require_confirmation_packages = true
+require_confirmation_config_writes = true
+prohibited_patterns = []
+required_patterns = []
+safe_patterns = []
+notify_timeout_seconds = 120.0

@@ -45,10 +45,21 @@ class DoctorConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PermissionsConfig:
+    require_confirmation_packages: bool = True
+    require_confirmation_config_writes: bool = True
+    prohibited_patterns: tuple[str, ...] = ()
+    required_patterns: tuple[str, ...] = ()
+    safe_patterns: tuple[str, ...] = ()
+    notify_timeout_seconds: float = 120.0
+
+
+@dataclass(frozen=True, slots=True)
 class JulesConfig:
     routing: RoutingConfig
     providers: ProviderConfig
     doctor: DoctorConfig
+    permissions: PermissionsConfig
 
 
 def default_config_paths() -> tuple[Path, ...]:
@@ -83,6 +94,7 @@ def _parse_config(raw: dict[str, object], config_path: Path) -> JulesConfig:
     fallback_raw = _optional_table(routing_raw, "fallback")
     providers_raw = _optional_table(raw, "providers")
     doctor_raw = _optional_table(raw, "doctor")
+    permissions_raw = _optional_table(raw, "permissions")
 
     tiers = {
         name: _parse_tier(name, value, config_path)
@@ -105,6 +117,18 @@ def _parse_config(raw: dict[str, object], config_path: Path) -> JulesConfig:
         ),
         providers=_parse_providers(providers_raw),
         doctor=_parse_doctor(doctor_raw, config_path),
+        permissions=_parse_permissions(permissions_raw, config_path),
+    )
+
+
+def _parse_permissions(raw: dict[str, object], config_path: Path) -> PermissionsConfig:
+    return PermissionsConfig(
+        require_confirmation_packages=bool(raw.get("require_confirmation_packages", True)),
+        require_confirmation_config_writes=bool(raw.get("require_confirmation_config_writes", True)),
+        prohibited_patterns=_str_tuple(raw.get("prohibited_patterns", []), config_path, "permissions.prohibited_patterns"),
+        required_patterns=_str_tuple(raw.get("required_patterns", []), config_path, "permissions.required_patterns"),
+        safe_patterns=_str_tuple(raw.get("safe_patterns", []), config_path, "permissions.safe_patterns"),
+        notify_timeout_seconds=_optional_float(raw.get("notify_timeout_seconds"), 120.0, config_path, "permissions.notify_timeout_seconds"),
     )
 
 

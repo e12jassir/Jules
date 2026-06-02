@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import asyncio
 import inspect
 import logging
 import os
-from typing import Callable
+from collections.abc import Awaitable, Callable
 
 from jules.core.session import SessionContext
+from jules.core.permissions import IS_BACKGROUND_TASK, PermissionDeniedError
 
 
 class EventType(str, Enum):
@@ -19,7 +21,7 @@ class EventType(str, Enum):
     SESSION_ENDED = "session_ended"
 
 
-EventHandler = Callable[[dict], None]
+EventHandler = Callable[[dict], None | Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -58,11 +60,25 @@ class EventBus:
             p = payload.copy()
             
             async def _run_handler(h=handler, p=p, e_type=event_type):
+                IS_BACKGROUND_TASK.set(True)
                 try:
                     if inspect.iscoroutinefunction(h):
                         await h(p)
                     else:
                         await asyncio.to_thread(h, p)
+                except PermissionDeniedError as denial:
+                    logging.getLogger(__name__).warning(
+                        "permission_denied",
+                        extra={
+                            "event": str(e_type),
+                            "denial": {
+                                "action": denial.action.value,
+                                "target": denial.target,
+                                "classification": denial.classification.value,
+                                "reason": denial.reason,
+                            }
+                        }
+                    )
                 except Exception:
                     logging.getLogger(__name__).exception("Error in handler for %s", e_type)
 
@@ -76,14 +92,9 @@ class EventBus:
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
             else:
-                # Fallback para tests síncronos
-                try:
-                    if inspect.iscoroutinefunction(handler):
-                        asyncio.run(handler(p))
-                    else:
-                        handler(p)
-                except Exception:
-                    logging.getLogger(__name__).exception("Error in handler for %s", event_type)
+                # Synchronous fallback keeps the same background context and
+                # structured PermissionDeniedError handling as the task path.
+                asyncio.run(_run_handler())
 
     def _on_session_started(self, payload: dict) -> None:
         del payload
