@@ -6,6 +6,9 @@ Módulos integrados:
   - Módulo 1:  Sanitizador en la frontera de entrada
   - Módulo 5:  CognitiveRouter quota-aware con fallback en cascada
   - Módulo 6:  MemoryEngine (persist_async fire-and-forget + retrieve_async)
+  - Módulo 7:  Context intent detector
+  - Módulo 8:  Event system + shell hooks
+  - Módulo 9:  PermissionGate (Safe, Required, Prohibited)
 
 Comandos disponibles en el chat:
   /mode auto        — Cognitive Router decide el proveedor según el tipo de tarea
@@ -111,7 +114,7 @@ def print_banner() -> None:
     """
     if HAS_RICH:
         console.print(Panel(
-            "[bold white]J U L E S[/bold white]\n[dim]Cognitive Local-First AI • Módulos 1-8[/dim]",
+            "[bold white]J U L E S[/bold white]\n[dim]Cognitive Local-First AI • Módulos 1-9[/dim]",
             style="cyan",
             border_style="dim",
             padding=(1, 4)
@@ -135,6 +138,7 @@ def print_help() -> None:
             ("/history",          "Historial de la sesión en RAM"),
             ("/clear",            "Limpia el historial de la sesión"),
             ("/context [set|reset]", "Muestra o simula el contexto de la terminal detectado"),
+            ("/run <comando>",    "Ejecuta un comando en la shell bajo el gate de permisos"),
             ("/exit",             "Cierra Jules"),
         ]
         for cmd, desc in rows:
@@ -149,6 +153,7 @@ def print_help() -> None:
         print("  /history          — historial de sesión")
         print("  /clear            — limpia historial")
         print("  /context          — muestra/simula contexto del terminal")
+        print("  /run <comando>    — ejecuta comando en la shell bajo control de permisos")
         print("  /exit             — salir")
     print()
 
@@ -628,6 +633,8 @@ async def main() -> None:
     try:
         config = load_config()
         router = CognitiveRouter(config=config)
+        from jules.core.permissions import PermissionGate, Action, PermissionDeniedError
+        gate = PermissionGate(config.permissions)
     except Exception as exc:
         console.print(f"[red]❌ Error inicializando Jules: {exc}[/red]")
         return
@@ -747,6 +754,36 @@ async def main() -> None:
                 parts = cmd.split()
                 limit = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
                 await show_memory(memory_engine, limit=limit)
+                continue
+
+            if cmd.startswith("/run "):
+                target_cmd = user_input[5:].strip()
+                if not target_cmd:
+                    console.print("[red]❌ Especificá un comando para ejecutar.[/red]")
+                    continue
+
+                try:
+                    action = Action.PACKAGE_OP if any(pkg in target_cmd for pkg in ("pacman", "yay")) else Action.SHELL_COMMAND
+                    await gate.check(action, target_cmd)
+                    
+                    console.print(f"[bold green]▶ Ejecutando:[/bold green] {target_cmd}")
+                    proc = await asyncio.create_subprocess_shell(
+                        target_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    
+                    if stdout:
+                        console.print(stdout.decode(errors='replace'))
+                    if stderr:
+                        console.print(f"[red]{stderr.decode(errors='replace')}[/red]")
+                        
+                    console.print(f"[dim]Código de salida: {proc.returncode}[/dim]")
+                except PermissionDeniedError as e:
+                    console.print(f"[bold red]🔒 ACCIÓN DENEGADA POR PERMISOS:[/bold red]\n[yellow]{e}[/yellow]")
+                except Exception as e:
+                    console.print(f"[red]❌ Error al ejecutar el comando: {e}[/red]")
                 continue
 
             if cmd.startswith("/mode "):

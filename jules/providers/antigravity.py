@@ -92,12 +92,15 @@ class AntigravityProvider:
         config_home = self._profile_path(model) if model else self.profile_root
         env = {**os.environ, "XDG_CONFIG_HOME": str(config_home)}
 
+        cwd = str(config_home) if config_home.is_dir() else None
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                cwd=cwd,
             )
         except OSError as exc:
             raise ProviderUnavailableError(
