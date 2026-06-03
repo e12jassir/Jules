@@ -33,7 +33,7 @@ Jules es una **capa cognitiva persistente** para Linux. No un chatbot. No un wra
 - [x] Router quota-aware con tiers (free / low_cost / high_cost)
 - [x] Importance scoring via Llama local (nunca modelo externo)
 - [x] Sistema de eventos + watcher + shell hooks
-- [ ] Sistema de permisos con PermissionGate
+- [x] Sistema de permisos con PermissionGate
 - [x] Migraciones con Alembic
 - [x] Fallback a Ollama cuando providers externos fallan
 

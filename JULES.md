@@ -649,7 +649,7 @@ Verifica y reporta:
 | Antigravity CLI | Disponible en PATH, responde a `--help` |
 | OpenCode CLI | Disponible en PATH, responde a `--help` |
 | LanceDB | Directorio de vectores accesible, no corrupto |
-| SQLite | `jules.db` accesible, migraciones Alembic al día |
+| SQLite | `~/.jules/memory.sqlite3` accesible, migraciones Alembic al día |
 | inotify | Límite de watches verificado contra threshold |
 | Virtualenv | Jules corre dentro de su entorno aislado |
 | Permisos `~/.jules/` | Escritura disponible en todos los subdirectorios |
@@ -780,7 +780,7 @@ Jules vive en la terminal. Sin overhead visual.
 │   ├── antigravity.md     # ajustes para Antigravity CLI
 │   └── opencode.md        # ajustes para OpenCode CLI
 ├── memory/
-│   ├── jules.db           # SQLite — memoria persistente
+│   ├── memory.sqlite3     # SQLite — memoria persistente
 │   └── vectors/           # LanceDB — memoria semántica
 ├── logs/
 │   ├── sessions/          # episodios por sesión
@@ -857,7 +857,7 @@ jules/                     # repositorio del proyecto
 
 - **Alembic desde el día uno** — ningún cambio de esquema sin migración versionada
 - **Exportación de memoria** — JSON + Markdown legible; el usuario siempre puede portar sus datos
-- **Backup automático** — snapshot diario de `jules.db` y vectores
+- **Backup automático** — snapshot diario de `memory.sqlite3` y vectores
 - **Versionado de personalidad** — `master.md` tiene versión semántica; Jules detecta cambios y alerta
 - **Resiliencia de CLIs externos** — si Antigravity u OpenCode cambian interfaz, solo se toca `providers/nombre.py`
 - **Test de coherencia por provider** — cada provider nuevo pasa test de personalidad antes de activarse

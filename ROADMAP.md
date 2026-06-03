@@ -88,9 +88,8 @@ El objetivo de Fase 1 es simple: Jules responde en terminal, recuerda entre sesi
 
 ---
 
-### MÓDULO 9 — Sistema de permisos
-**Clasificación:** CRÍTICO — Requiere Diseño SDD
-**Modelo:** GPT 5.4
+### [x] MÓDULO 9 — Sistema de permisos
+**Clasificación:** CRÍTICO | **Modelo:** GPT 5.4 | **Estado:** ✅ Completado
 **Tiempo estimado:** 1 sesión
 **Depende de:** Módulo 0
 
@@ -134,9 +133,8 @@ Tareas:
 
 ---
 
-### MÓDULO 10 — `jules doctor`
-**Clasificación:** MECÁNICO
-**Modelo:** GPT 5.4
+### [x] MÓDULO 10 — `jules doctor`
+**Clasificación:** MECÁNICO | **Modelo:** GPT 5.4 | **Estado:** ✅ Completado
 **Tiempo estimado:** 1 sesión
 **Depende de:** Módulos 3, 6, 8, 9
 
@@ -168,7 +166,7 @@ Tareas:
   - Antigravity CLI: disponible en PATH + responde a --help
   - OpenCode CLI: disponible en PATH + responde a --help
   - LanceDB: directorio de vectores accesible + no corrupto
-  - SQLite: jules.db accesible + migraciones Alembic al día
+  - SQLite: `~/.jules/memory.sqlite3` accesible + migraciones Alembic al día
   - inotify: leer /proc/sys/fs/inotify/max_user_watches vs threshold de config.toml
   - Virtualenv: verificar que sys.prefix != sys.base_prefix
   - Permisos ~/.jules/: escritura disponible en todos los subdirectorios
