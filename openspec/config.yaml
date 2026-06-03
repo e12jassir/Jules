@@ -8,8 +8,8 @@ context: |
   Style: Typed Python (Mypy strict)
 testing:
   runner: pytest
-  layers: unit
-  coverage: true
+  layers: [unit, integration]
+  coverage: false
   type_checker: mypy
 rules:
   proposal:

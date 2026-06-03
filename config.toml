@@ -7,7 +7,7 @@ models = ["llama3.2:1b"]
 
 [routing.tiers.low_cost]
 antigravity = ["gemini-3.5-flash-low"]
-opencode = ["opencode/deepseek-v4-flash-free"]
+opencode = ["opencode/minimax-m3-free", "opencode/deepseek-v4-flash-free"]
 
 [routing.tiers.high_cost]
 antigravity = ["gemini-3.5-pro"]
@@ -19,6 +19,7 @@ chain = ["primary", "ollama"]
 [doctor]
 scoring_variance_threshold = 0.01
 scoring_window_size = 10
+inotify_min_watches = 65536
 
 [providers.ollama]
 base_url = "http://localhost:11434"

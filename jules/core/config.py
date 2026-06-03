@@ -42,6 +42,7 @@ class ProviderConfig:
 class DoctorConfig:
     scoring_variance_threshold: float
     scoring_window_size: int
+    inotify_min_watches: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,11 +159,20 @@ def _parse_doctor(raw: dict[str, object], config_path: Path) -> DoctorConfig:
     )
     if scoring_variance_threshold < 0:
         raise ValueError(f"{config_path}: doctor.scoring_variance_threshold must be >= 0")
+    inotify_min_watches = _optional_int(
+        raw.get("inotify_min_watches"),
+        65536,
+        config_path,
+        "doctor.inotify_min_watches",
+    )
     if scoring_window_size < 3:
         raise ValueError(f"{config_path}: doctor.scoring_window_size must be >= 3")
+    if inotify_min_watches < 1:
+        raise ValueError(f"{config_path}: doctor.inotify_min_watches must be >= 1")
     return DoctorConfig(
         scoring_variance_threshold=scoring_variance_threshold,
         scoring_window_size=scoring_window_size,
+        inotify_min_watches=inotify_min_watches,
     )
 
 

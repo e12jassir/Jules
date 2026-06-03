@@ -84,6 +84,7 @@ def test_config_uses_default_doctor_values_when_section_is_missing(config_path: 
 
     assert config.doctor.scoring_variance_threshold == 0.01
     assert config.doctor.scoring_window_size == 10
+    assert config.doctor.inotify_min_watches == 65536
 
 
 def test_config_parses_doctor_values(tmp_path: Path) -> None:
@@ -94,6 +95,7 @@ def test_config_parses_doctor_values(tmp_path: Path) -> None:
 [doctor]
 scoring_variance_threshold = 0.02
 scoring_window_size = 12
+inotify_min_watches = 131072
 """
     )
 
@@ -101,6 +103,7 @@ scoring_window_size = 12
 
     assert config.doctor.scoring_variance_threshold == 0.02
     assert config.doctor.scoring_window_size == 12
+    assert config.doctor.inotify_min_watches == 131072
 
 
 @pytest.mark.parametrize(
@@ -108,6 +111,7 @@ scoring_window_size = 12
     [
         ("scoring_variance_threshold = -0.01\nscoring_window_size = 10\n", "must be >= 0"),
         ("scoring_variance_threshold = 0.01\nscoring_window_size = 2\n", "must be >= 3"),
+        ("scoring_variance_threshold = 0.01\nscoring_window_size = 10\ninotify_min_watches = 0\n", "must be >= 1"),
     ],
 )
 def test_config_rejects_invalid_doctor_values(tmp_path: Path, doctor_text: str, error: str) -> None:
