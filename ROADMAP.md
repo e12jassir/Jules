@@ -555,6 +555,24 @@ Eliminar boot tax de subprocess (~2s/invocación). Daemon mode o HTTP/Sockets lo
 
 ---
 
+## FASE 2 — EXPERIENCIA Y CONECTIVIDAD AVANZADA (PLANIFICADA)
+
+### MÓDULO 12 — Refactor del Auth de OpenAI (WebSockets)
+**Clasificación:** CRÍTICO | **Modelo:** GPT 5.5 | **Estado:** ✅ Completado
+**Resumen:** Se migró el proveedor `openai_oauth.py` de peticiones HTTP planas a WebSockets (`wss://chatgpt.com/backend-api/codex/responses`) usando el protocolo asíncrono (`response.create`). 
+**Descubrimiento Crítico:** La ruta Codex bloquea explícitamente modelos antiguos como `o3`, `gpt-4o`, `o1`. Requiere obligatoriamente usar la familia `gpt-5.4` o `gpt-5.5`. Si el token no tiene cuota, devuelve `The usage limit has been reached`, pero acepta la arquitectura.
+
+### MÓDULO 13 — Jerarquía Interactiva de Providers en TUI
+**Clasificación:** UX/ARQUITECTURA | **Modelo:** Pendiente | **Estado:** 🚧 Planeado
+**Resumen:** Refactorizar el comando monolítico `/model` en un árbol interactivo en el TUI.
+**Diseño UX:**
+1. Comando unificado `/provider <categoría>` (`cli`, `oauth`, `api`, `local`).
+2. Al presionar Enter, se despliega un Modal (OptionList) en Textual para elegir el proveedor específico.
+3. El comando `/model` dependerá del proveedor activo y autocompletará dinámicamente sus modelos (ej: `gpt-5.5` para OpenAI OAuth, `llama3` para local).
+**Implementación esperada:** Modificar `jules/cli/screens/chat.py` (método `on_input_changed`) y crear modales en `jules/cli/widgets/`.
+
+---
+
 ## FASE 3 — INTELIGENCIA ADAPTATIVA
 
 No empezar hasta tener ≥3 meses de uso real con memoria acumulada.

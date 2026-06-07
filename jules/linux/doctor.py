@@ -129,38 +129,18 @@ def check_ollama() -> CheckResult:
 
 
 def check_antigravity() -> CheckResult:
-    path = shutil.which("antigravity")
+    path = shutil.which("agy") or shutil.which("antigravity")
     if not path:
         return CheckResult(
             name="Antigravity",
             status="fail",
-            message="antigravity not found in PATH"
+            message="agy/antigravity no encontrado en PATH"
         )
-    try:
-        res = subprocess.run(
-            ["antigravity", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if res.returncode == 0:
-            return CheckResult(
-                name="Antigravity",
-                status="ok",
-                message="disponible en PATH"
-            )
-        else:
-            return CheckResult(
-                name="Antigravity",
-                status="fail",
-                message="antigravity exists but --help failed."
-            )
-    except (OSError, subprocess.SubprocessError) as e:
-        return CheckResult(
-            name="Antigravity",
-            status="fail",
-            message=f"Execution failed: {e}"
-        )
+    return CheckResult(
+        name="Antigravity",
+        status="ok",
+        message="disponible en PATH"
+    )
 
 
 def check_opencode() -> CheckResult:

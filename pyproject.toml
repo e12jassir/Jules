@@ -16,6 +16,8 @@ dependencies = [
   "lancedb",
   "aiohttp",
   "aiosqlite",
+  "textual>=0.70.0",
+  "httpx",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +28,9 @@ jules = "jules.cli.main:cli"
 
 [tool.setuptools.packages.find]
 include = ["jules*"]
+
+[tool.setuptools.package-data]
+"jules.cli" = ["theme.tcss", "theme_terminal.tcss"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -4,7 +4,7 @@ import asyncio
 import json
 from typing import AsyncIterator
 
-import aiohttp
+import aiohttp  # type: ignore[import-not-found]
 
 from jules.memory.models import SessionContext
 from jules.providers.base import (
@@ -47,9 +47,10 @@ class OllamaProvider:
         options: dict[str, object] | None = None,
     ) -> str:
         # Usar num_thread=4 por defecto para optimizar la arquitectura híbrida (P-cores) de Intel Alder Lake
-        options_payload = {"num_thread": 4}
+        options_payload: dict[str, object] = {"num_thread": 4}
         if options:
-            options_payload.update(options)
+            for key, value in options.items():
+                options_payload[key] = value
 
         payload = {"model": model, "prompt": prompt, "stream": False, "options": options_payload}
             
@@ -71,9 +72,10 @@ class OllamaProvider:
         timeout = aiohttp.ClientTimeout(total=None, sock_read=self.timeout_seconds, connect=5.0)
 
         # Usar num_thread=4 por defecto para optimizar la arquitectura híbrida (P-cores) de Intel Alder Lake
-        options_payload = {"num_thread": 4}
+        options_payload: dict[str, object] = {"num_thread": 4}
         if options:
-            options_payload.update(options)
+            for key, value in options.items():
+                options_payload[key] = value
 
         try:
             session = self._get_session()

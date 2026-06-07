@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -23,6 +24,7 @@ config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
 # add your model's MetaData object here
 # for 'autogenerate' support
 from jules.memory.models import Base
+import jules.models.chat_history  # noqa: F401  # type: ignore[import-not-found]
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

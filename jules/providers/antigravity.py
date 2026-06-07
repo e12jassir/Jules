@@ -27,14 +27,20 @@ class AntigravityProvider:
         self.source_config = Path.home() / ".config" / "antigravity"
         self._prepared_models: set[str] = set()
         self._profile_lock = threading.Lock()
-        self.prepare_profiles(models)
+        self._pending_models = models  # prepared lazily on first ask()
 
     def prepare_profiles(self, models: tuple[str, ...]) -> None:
         for model in models:
             self._ensure_profile(model)
 
+    def _ensure_pending_profiles(self) -> None:
+        if self._pending_models:
+            self.prepare_profiles(self._pending_models)
+            self._pending_models = ()
+
     async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
         del context
+        await asyncio.to_thread(self._ensure_pending_profiles)
         if model not in self._prepared_models:
             raise ProviderError(f"Antigravity profile for model {model!r} was not prepared")
         return await self._run_cli(

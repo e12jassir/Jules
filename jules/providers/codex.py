@@ -1,4 +1,6 @@
 import asyncio
+import importlib
+import os
 import shutil
 from typing import AsyncIterator
 
@@ -33,7 +35,7 @@ class CodexProvider:
         context: SessionContext,
         model: str,
     ) -> AsyncIterator[str]:
-        del context, model  # codex exec uses config-baked model; -m is not supported
+        del context  # codex exec uses config-baked model; -m is not supported
 
         if prompt.startswith("-"):
             raise ProviderError(
@@ -46,6 +48,7 @@ class CodexProvider:
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=await self._build_env(model),
             )
         except FileNotFoundError as exc:
             raise ProviderUnavailableError(
@@ -54,11 +57,18 @@ class CodexProvider:
 
         try:
             assert proc.stdout is not None
+            assert proc.stderr is not None
             # stdout is the clean response only — no header, no metadata.
             async for raw_line in proc.stdout:
                 text = raw_line.decode(errors="replace")
                 if text:
                     yield text
+            stderr_text = (await proc.stderr.read()).decode(errors="replace").strip()
+            returncode = await proc.wait()
+            if returncode != 0:
+                raise ProviderError(
+                    f"Codex CLI exited {returncode}: stderr={stderr_text!r}"
+                )
         finally:
             if proc.returncode is None:
                 try:
@@ -75,3 +85,11 @@ class CodexProvider:
 
     async def close(self) -> None:
         pass
+
+    async def _build_env(self, model: str) -> dict[str, str]:
+        auth_pkce = importlib.import_module("jules.core.auth_pkce")
+        cli_environment_for_runtime = auth_pkce.cli_environment_for_runtime
+
+        env = dict(os.environ)
+        env.update(await cli_environment_for_runtime(self.name, model))
+        return env

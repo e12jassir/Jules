@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Protocol
+from dataclasses import dataclass, field
+from typing import AsyncIterator, Literal, Protocol, Union
 
 from jules.memory.models import SessionContext
 
@@ -15,6 +16,36 @@ class ProviderUnavailableError(ProviderError):
 
 class ProviderTimeoutError(ProviderError):
     """Raised when the provider does not respond before the timeout."""
+
+
+# ---------------------------------------------------------------------------
+# Stream event types — emitted by providers that support native streaming
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ThoughtEvent:
+    """Internal reasoning token (dim/italic in UI)."""
+    content: str
+    type: Literal["thought"] = field(default="thought", init=False)
+
+
+@dataclass
+class ContentEvent:
+    """Final response token visible to the user."""
+    content: str
+    type: Literal["content"] = field(default="content", init=False)
+
+
+@dataclass
+class ToolStatusEvent:
+    """Tool call start or completion."""
+    tool: str
+    args: dict
+    status: Literal["start", "done"]
+    type: Literal["tool_status"] = field(default="tool_status", init=False)
+
+
+StreamEvent = Union[ThoughtEvent, ContentEvent, ToolStatusEvent]
 
 
 class Provider(Protocol):

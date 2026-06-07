@@ -50,7 +50,7 @@ def _build_prompt(episode: Episode) -> str:
 async def evaluate_importance(episode: Episode, provider: TextGenerationProvider) -> float:
     try:
         response = await provider.generate_text(_build_prompt(episode))
-        matches = re.findall(SCORE_PATTERN, response, re.IGNORECASE)
+        matches: list[str] = re.findall(SCORE_PATTERN, response, re.IGNORECASE)
         if matches:
             return float(matches[-1])
         logging.warning("Scoring fallback: could not parse score from provider response")

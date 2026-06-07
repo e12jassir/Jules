@@ -1,17 +1,24 @@
 [routing]
-default_tier = "low_cost"
+default_tier = "free"
 
 [routing.tiers.free]
 provider = "ollama"
 models = ["llama3.2:1b"]
 
 [routing.tiers.low_cost]
-antigravity = ["gemini-3.5-flash-low"]
+antigravity = []
 opencode = ["opencode/minimax-m3-free", "opencode/deepseek-v4-flash-free"]
+codex = []
+google = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-3-flash-preview", "gemini-3.1-flash-lite"]
+openrouter = ["meta-llama/llama-3.3-70b-instruct:free", "qwen/qwen3-coder:free", "moonshotai/kimi-k2.6:free", "openai/gpt-oss-120b:free", "openai/gpt-oss-20b:free", "nvidia/nemotron-3-ultra-550b-a55b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free", "liquid/lfm-2.5-1.2b-thinking:free", "nousresearch/hermes-3-llama-3.1-405b:free"]
+openai_oauth = ["gpt-5.4-mini", "gpt-5.4-nano"]
 
 [routing.tiers.high_cost]
-antigravity = ["gemini-3.5-pro"]
+antigravity = []
 opencode = ["opencode/deepseek-r1-heavy"]
+google = ["gemini-2.5-pro", "gemini-3-pro-preview", "gemini-3.1-pro-preview", "gemini-3.5-flash"]
+openrouter = ["qwen/qwen3-next-80b-a3b-instruct:free", "nvidia/nemotron-3-ultra-550b-a55b:free"]
+openai_oauth = ["gpt-5.5-pro", "gpt-5.5", "gpt-5.4", "gpt-5.4-pro"]
 
 [routing.fallback]
 chain = ["primary", "ollama"]
@@ -31,6 +38,15 @@ timeout_seconds = 60
 [providers.opencode]
 timeout_seconds = 60
 
+[providers.google]
+timeout_seconds = 60
+
+[providers.openrouter]
+timeout_seconds = 60
+
+[providers.openai_oauth]
+timeout_seconds = 60
+
 [permissions]
 require_confirmation_packages = true
 require_confirmation_config_writes = true
@@ -38,3 +54,7 @@ prohibited_patterns = []
 required_patterns = []
 safe_patterns = []
 notify_timeout_seconds = 120.0
+
+[cli]
+# Theme: "jules" (custom colors) or "terminal" (respects your terminal colorscheme)
+theme = "terminal"

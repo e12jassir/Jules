@@ -9,6 +9,10 @@ import tomllib
 class RoutingTier:
     antigravity: tuple[str, ...] = ()
     opencode: tuple[str, ...] = ()
+    codex: tuple[str, ...] = ()
+    google: tuple[str, ...] = ()
+    openrouter: tuple[str, ...] = ()
+    openai_oauth: tuple[str, ...] = ()
     provider: str | None = None
     models: tuple[str, ...] = ()
 
@@ -36,6 +40,9 @@ class ProviderConfig:
     ollama: OllamaConfig
     antigravity: CliProviderConfig
     opencode: CliProviderConfig
+    google: CliProviderConfig
+    openrouter: CliProviderConfig
+    openai_oauth: CliProviderConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +71,9 @@ class JulesConfig:
 
 
 def default_config_paths() -> tuple[Path, ...]:
-    return (Path.cwd() / "config.toml", Path.home() / ".jules" / "config.toml")
+    # Package root: jules/core/config.py → ../../.. → project root
+    package_config = Path(__file__).parent.parent.parent / "config.toml"
+    return (Path.cwd() / "config.toml", Path.home() / ".jules" / "config.toml", package_config)
 
 
 def load_config(path: Path | str | None = None) -> JulesConfig:
@@ -139,6 +148,10 @@ def _parse_tier(name: str, raw: object, config_path: Path) -> RoutingTier:
     return RoutingTier(
         antigravity=_str_tuple(raw.get("antigravity", []), config_path, f"routing.tiers.{name}.antigravity"),
         opencode=_str_tuple(raw.get("opencode", []), config_path, f"routing.tiers.{name}.opencode"),
+        codex=_str_tuple(raw.get("codex", []), config_path, f"routing.tiers.{name}.codex"),
+        google=_str_tuple(raw.get("google", []), config_path, f"routing.tiers.{name}.google"),
+        openrouter=_str_tuple(raw.get("openrouter", []), config_path, f"routing.tiers.{name}.openrouter"),
+        openai_oauth=_str_tuple(raw.get("openai_oauth", []), config_path, f"routing.tiers.{name}.openai_oauth"),
         provider=_optional_str(raw.get("provider"), config_path, f"routing.tiers.{name}.provider"),
         models=_str_tuple(raw.get("models", []), config_path, f"routing.tiers.{name}.models"),
     )
@@ -180,6 +193,9 @@ def _parse_providers(raw: dict[str, object]) -> ProviderConfig:
     ollama_raw = _optional_table(raw, "ollama")
     antigravity_raw = _optional_table(raw, "antigravity")
     opencode_raw = _optional_table(raw, "opencode")
+    google_raw = _optional_table(raw, "google")
+    openrouter_raw = _optional_table(raw, "openrouter")
+    openai_oauth_raw = _optional_table(raw, "openai_oauth")
     return ProviderConfig(
         ollama=OllamaConfig(
             base_url=_optional_provider_url(ollama_raw.get("base_url")),
@@ -190,6 +206,15 @@ def _parse_providers(raw: dict[str, object]) -> ProviderConfig:
         ),
         opencode=CliProviderConfig(
             timeout_seconds=_optional_float(opencode_raw.get("timeout_seconds"), 60.0),
+        ),
+        google=CliProviderConfig(
+            timeout_seconds=_optional_float(google_raw.get("timeout_seconds"), 60.0),
+        ),
+        openrouter=CliProviderConfig(
+            timeout_seconds=_optional_float(openrouter_raw.get("timeout_seconds"), 60.0),
+        ),
+        openai_oauth=CliProviderConfig(
+            timeout_seconds=_optional_float(openai_oauth_raw.get("timeout_seconds"), 60.0),
         ),
     )
 

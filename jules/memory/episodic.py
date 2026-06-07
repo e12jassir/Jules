@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import cast
 
-import lancedb
+import lancedb  # type: ignore[import-not-found]
 import pyarrow as pa
 
 from jules.memory.models import Episode
@@ -52,7 +52,9 @@ class EpisodicMemory:
         with self._table_lock:
             if self._table is None:
                 self._table = self._open_or_create_table()
-        self._table.add([{"id": episode_id, "vector": vector, "timestamp_ts": timestamp}])
+            table = self._table
+        assert table is not None
+        table.add([{"id": episode_id, "vector": vector, "timestamp_ts": timestamp}])
 
     async def store_async(self, episode: Episode, vector: list[float]) -> None:
         await asyncio.to_thread(self._store, episode.id, vector, episode.timestamp.timestamp())
@@ -65,9 +67,11 @@ class EpisodicMemory:
         with self._table_lock:
             if self._table is None:
                 self._table = self._open_or_create_table()
+            table = self._table
+        assert table is not None
 
         now = time.time()
-        results = self._table.search(query_vector).limit(limit * 2).to_list()
+        results = table.search(query_vector).limit(limit * 2).to_list()
         ranked = sorted(
             results,
             key=lambda result: result["_distance"] + (now - result["timestamp_ts"]) * TIME_DECAY_FACTOR,

@@ -24,10 +24,14 @@ models = ["local-test-model", "llama3.2:1b"]
 [routing.tiers.low_cost]
 antigravity = ["ag-low", "ag-low-secondary"]
 opencode = ["oc-low", "oc-low-secondary"]
+codex = ["openai/gpt-5.4-mini"]
+openai_oauth = ["gpt-5-mini"]
 
 [routing.tiers.high_cost]
 antigravity = ["ag-high"]
 opencode = ["oc-high"]
+codex = ["openai/gpt-5.4"]
+openai_oauth = ["gpt-5"]
 
 [routing.fallback]
 chain = ["primary", "ollama"]
@@ -40,6 +44,9 @@ timeout_seconds = 30
 timeout_seconds = 60
 
 [providers.opencode]
+timeout_seconds = 60
+
+[providers.openai_oauth]
 timeout_seconds = 60
 """
 
@@ -144,6 +151,8 @@ def make_router(config_path: Path, **provider_overrides: FakeProvider) -> Cognit
         "ollama": FakeProvider("ollama", response="local answer"),
         "antigravity": FakeProvider("antigravity", response="agy answer"),
         "opencode": FakeProvider("opencode", response="code answer"),
+        "codex": FakeProvider("codex", response="codex answer"),
+        "openai_oauth": FakeProvider("openai_oauth", response="oauth answer"),
     }
     providers.update(provider_overrides)
     return CognitiveRouter(config=load_config(config_path), providers=providers)
@@ -208,6 +217,13 @@ def test_user_override_configured_ollama_model_with_colon_resolves_provider(conf
     assert model == "llama3.2:1b"
 
 
+def test_user_override_can_target_openai_oauth_provider(config_path: Path) -> None:
+    provider, model = make_router(config_path).route(TaskType.QUICK, user_override="openai_oauth:gpt-5")
+
+    assert provider.name == "openai_oauth"
+    assert model == "gpt-5"
+
+
 async def test_ask_with_fallback_returns_primary_metadata(config_path: Path, context: SessionContext) -> None:
     router = make_router(config_path)
 
@@ -266,14 +282,41 @@ async def test_local_only_fallback_never_leaks_to_cloud_provider(
     assert opencode.calls == []
 
 
-async def test_route_value_error_can_fallback_to_ollama(
+async def test_coding_route_falls_back_to_openai_oauth_when_opencode_has_no_models(
+    tmp_path: Path,
+) -> None:
+    config_path = write_config(tmp_path)
+    router = make_router(config_path)
+    low_cost_tier = router.config.routing.tiers["low_cost"]
+    router.config.routing.tiers["low_cost"] = replace(low_cost_tier, opencode=())
+
+    provider, model = router.route(TaskType.CODING)
+
+    assert provider.name == "openai_oauth"
+    assert model == "gpt-5-mini"
+
+
+def test_coding_route_keeps_openai_oauth_ahead_of_codex_when_both_are_available(
+    config_path: Path,
+) -> None:
+    router = make_router(config_path)
+    low_cost_tier = router.config.routing.tiers["low_cost"]
+    router.config.routing.tiers["low_cost"] = replace(low_cost_tier, opencode=())
+
+    provider, model = router.route(TaskType.CODING)
+
+    assert provider.name == "openai_oauth"
+    assert model == "gpt-5-mini"
+
+
+async def test_route_value_error_can_still_fallback_to_ollama_when_no_coding_providers_remain(
     tmp_path: Path,
     context: SessionContext,
 ) -> None:
     config_path = write_config(tmp_path, fallback_chain='["primary", "ollama"]')
     router = make_router(config_path)
     low_cost_tier = router.config.routing.tiers["low_cost"]
-    router.config.routing.tiers["low_cost"] = replace(low_cost_tier, opencode=())
+    router.config.routing.tiers["low_cost"] = replace(low_cost_tier, opencode=(), openai_oauth=(), codex=())
 
     response, model, provider = await router.ask_with_fallback("hello", context, TaskType.CODING)
 
@@ -468,3 +511,23 @@ def test_antigravity_profile_symlink_safety(tmp_path: Path) -> None:
     # The user's real config must remain completely untouched!
     assert user_real_config.read_text(encoding="utf-8") == "model = 'original'\nenabled = true"
 
+
+
+def test_available_models_includes_configured(config_path: Path) -> None:
+    router = make_router(config_path)
+    models = router.available_models()
+
+    assert isinstance(models, tuple)
+    configured = router._configured_models()
+    for entry in configured:
+        assert entry in models
+
+
+def test_current_model_returns_tuple(config_path: Path) -> None:
+    router = make_router(config_path)
+    result = router.current_model()
+
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    assert isinstance(result[0], str)
+    assert isinstance(result[1], str)

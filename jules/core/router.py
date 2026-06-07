@@ -4,15 +4,18 @@ import asyncio
 from enum import Enum
 import logging
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 from jules.core.config import JulesConfig, RoutingTier, load_config
 from jules.memory.models import SessionContext
 from jules.providers.antigravity import AntigravityProvider
 from jules.providers.base import Provider, ProviderError
+from jules.providers.codex import CodexProvider
+from jules.providers.google import GoogleAIProvider
 from jules.providers.ollama import OllamaProvider
 from jules.providers.opencode import OpenCodeProvider
-from jules.providers.codex import CodexProvider
+from jules.providers.openai_oauth import OpenAIOAuthProvider
+from jules.providers.openrouter import OpenRouterProvider
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,14 @@ class TaskType(str, Enum):
 
 LOCAL_ONLY_TASKS = {TaskType.IDENTITY, TaskType.MEMORY_SCORING, TaskType.OFFLINE}
 
+TASK_PROVIDER_CANDIDATES: dict[TaskType, tuple[str, ...]] = {
+    TaskType.QUICK: ("antigravity", "openai_oauth", "openrouter", "google", "codex"),
+    TaskType.REASONING: ("antigravity", "openai_oauth", "openrouter", "google", "codex"),
+    TaskType.ANALYSIS: ("antigravity", "openai_oauth", "openrouter", "google", "codex"),
+    TaskType.CODING: ("opencode", "openai_oauth", "codex"),
+    TaskType.CODING_HEAVY: ("opencode", "openai_oauth", "codex"),
+}
+
 _router_instance: CognitiveRouter | None = None
 
 class CognitiveRouter:
@@ -39,8 +50,13 @@ class CognitiveRouter:
         providers: Mapping[str, Provider] | None = None,
         config_path: Path | str | None = None,
     ) -> None:
+        import importlib
+
         self.config = config or load_config(config_path)
         self.providers = dict(providers) if providers is not None else self._build_providers()
+        provider_registry = importlib.import_module("jules.core.provider_registry")
+        registry_cls = getattr(provider_registry, "ProviderRegistry")
+        self.registry: Any = registry_cls(self.config, self.providers)
 
     def _get_tier(self, name: str) -> RoutingTier:
         try:
@@ -64,16 +80,16 @@ class CognitiveRouter:
         if task in LOCAL_ONLY_TASKS:
             return self._ollama_route()
 
-        if task == TaskType.CODING:
-            return self._provider_route("opencode", self._get_tier("low_cost"))
+        tier = self._tier_for_task(task)
+        # If tier is the local/free tier (only ollama), route directly — no cloud candidates
+        if tier.provider == "ollama" or (
+            not tier.antigravity and not tier.opencode and not tier.codex
+            and not tier.google and not tier.openrouter and not tier.openai_oauth
+            and tier.models
+        ):
+            return self._ollama_route()
 
-        if task == TaskType.CODING_HEAVY:
-            return self._provider_route("opencode", self._get_tier("high_cost"))
-
-        if task == TaskType.ANALYSIS:
-            return self._provider_route("antigravity", self._get_tier("high_cost"))
-
-        return self._provider_route("antigravity", self._get_tier(self.config.routing.default_tier))
+        return self._route_via_candidates(task, tier)
 
     async def ask_with_fallback(
         self,
@@ -150,6 +166,15 @@ class CognitiveRouter:
         provider_config = self.config.providers
         ollama_default = self._ollama_model()
 
+        # Collect antigravity models directly from config tiers (registry not yet built)
+        seen: set[str] = set()
+        antigravity_models: list[str] = []
+        for tier in self.config.routing.tiers.values():
+            for m in tier.antigravity:
+                if m not in seen:
+                    seen.add(m)
+                    antigravity_models.append(m)
+
         return {
             "ollama": OllamaProvider(
                 base_url=provider_config.ollama.base_url,
@@ -158,7 +183,7 @@ class CognitiveRouter:
             ),
             "antigravity": AntigravityProvider(
                 timeout_seconds=provider_config.antigravity.timeout_seconds,
-                models=self._configured_models_for_provider("antigravity"),
+                models=tuple(antigravity_models),
             ),
             "opencode": OpenCodeProvider(
                 timeout_seconds=provider_config.opencode.timeout_seconds,
@@ -166,10 +191,19 @@ class CognitiveRouter:
             "codex": CodexProvider(
                 timeout_seconds=120.0,
             ),
+            "google": GoogleAIProvider(
+                timeout_seconds=provider_config.google.timeout_seconds,
+            ),
+            "openrouter": OpenRouterProvider(
+                timeout_seconds=provider_config.openrouter.timeout_seconds,
+            ),
+            "openai_oauth": OpenAIOAuthProvider(
+                timeout_seconds=provider_config.openai_oauth.timeout_seconds,
+            ),
         }
 
     def _resolve_user_override(self, override: str) -> tuple[Provider, str]:
-        matches = []
+        matches: list[tuple[Provider, str]] = []
         for provider_name, model in self._configured_models():
             if model == override and provider_name not in [m[0].name for m in matches]:
                 matches.append((self.providers[provider_name], model))
@@ -197,6 +231,18 @@ class CognitiveRouter:
             raise ValueError(f"No {provider_name} models configured for requested routing tier")
         return self._provider_by_name(provider_name), models[0]
 
+    def _route_via_candidates(self, task: TaskType, tier: RoutingTier) -> tuple[Provider, str]:
+        candidates = TASK_PROVIDER_CANDIDATES.get(task)
+        if not candidates:
+            raise ValueError(f"No provider candidates configured for task: {task.value}")
+        for provider_name in candidates:
+            models = self._models_for_provider(provider_name, tier)
+            if models:
+                return self._provider_by_name(provider_name), models[0]
+        raise ValueError(
+            f"No providers with configured models available for task {task.value} in tier"
+        )
+
     def _tier_for_task(self, task: TaskType) -> RoutingTier:
         if task == TaskType.CODING:
             return self._get_tier("low_cost")
@@ -220,12 +266,7 @@ class CognitiveRouter:
             raise ValueError(f"Unknown provider: {provider_name}") from exc
 
     def _configured_models(self) -> tuple[tuple[str, str], ...]:
-        entries: list[tuple[str, str]] = []
-        for tier in self.config.routing.tiers.values():
-            entries.extend(("ollama", model) for model in tier.models)
-            entries.extend(("antigravity", model) for model in tier.antigravity)
-            entries.extend(("opencode", model) for model in tier.opencode)
-        return tuple(entries)
+        return self.registry.available_models()
 
     def _configured_models_for_provider(self, provider_name: str) -> tuple[str, ...]:
         return tuple(
@@ -234,15 +275,20 @@ class CognitiveRouter:
             if configured_provider == provider_name
         )
 
-    @staticmethod
-    def _models_for_provider(provider_name: str, tier: RoutingTier) -> tuple[str, ...]:
-        if provider_name == "antigravity":
-            return tier.antigravity
-        if provider_name == "opencode":
-            return tier.opencode
-        if provider_name == "ollama":
-            return tier.models
-        raise ValueError(f"Unknown provider: {provider_name}")
+    def _models_for_provider(self, provider_name: str, tier: RoutingTier) -> tuple[str, ...]:
+        return self.registry.models_for_provider(provider_name, tier)
+
+    def available_models(self) -> tuple[tuple[str, str], ...]:
+        """Return de-duped (provider, model) tuples from the provider registry."""
+        return self.registry.available_models()
+
+    def current_model(self, task: TaskType = TaskType.QUICK) -> tuple[str, str]:
+        """Return (provider_name, model) for the default route of the given task."""
+        try:
+            provider, model = self.route(task)
+            return provider.name, model
+        except Exception:
+            return ("ollama", "local")
 
     @staticmethod
     def _validate_model(model: str, override: str) -> str:

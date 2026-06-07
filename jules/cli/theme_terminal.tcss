@@ -1,0 +1,224 @@
+/* Jules TUI — theme_terminal.tcss — ANSI native (adapts to any terminal theme) */
+
+Screen, JulesApp {
+    background: $background;
+    color: $text;
+    margin: 0;
+    padding: 0;
+    border: none;
+    layers: base;
+    overflow: hidden;
+}
+
+WelcomeScreen, ChatScreen {
+    background: $background;
+    margin: 0;
+    padding: 0;
+}
+
+/* ── WELCOME ── */
+.welcome-shell {
+    width: 100%;
+    height: 100%;
+    background: $background;
+    margin: 0;
+    padding: 0;
+}
+.welcome-header {
+    dock: top;
+    height: 1;
+    background: $background;
+    border-bottom: solid $accent;
+    color: $text-muted;
+}
+.welcome-title {
+    color: $text;
+    text-style: bold;
+}
+.welcome-title .accent { color: $accent; }
+.version { color: $text-muted; }
+
+.welcome-screen {
+    width: 100%;
+    height: 1fr;
+    align: center middle;
+    padding: 1 2;
+}
+.rose-art {
+    color: $accent;
+    text-align: center;
+    margin-top: 1;
+    margin-bottom: 0;
+}
+.logo {
+    color: $accent;
+    text-align: center;
+    text-style: bold;
+    margin-top: 0;
+}
+.tagline {
+    color: $text-muted;
+    text-align: center;
+    margin-bottom: 1;
+}
+.model-row {
+    color: $text-muted;
+    text-align: center;
+    margin-top: 0;
+}
+.bindings-row {
+    color: $text-muted;
+    text-align: center;
+    margin-top: 1;
+}
+.tip-row {
+    color: $success;
+    text-align: center;
+}
+.welcome-input {
+    width: 60;
+    border: tall $accent;
+    background: $surface;
+    margin: 1 0;
+    padding: 0 1;
+    color: $text;
+}
+
+/* ── CHAT SHELL ── */
+.chat-shell {
+    width: 100%;
+    height: 100%;
+}
+.chat-layout {
+    width: 100%;
+    height: 1fr;
+    border-bottom: solid $surface;
+}
+.chat-area {
+    width: 1fr;
+    height: 100%;
+}
+
+/* ── CHAT HEADER ── */
+.chat-header {
+    width: 100%;
+    height: 3;
+    background: $background;
+    border-bottom: solid $surface;
+    padding: 0 1;
+    align: left middle;
+}
+.chat-header-left {
+    width: 1fr;
+    height: 100%;
+    align: left middle;
+}
+.brand-logo {
+    color: $accent;
+    text-style: bold;
+    height: 100%;
+    width: auto;
+    content-align: left middle;
+    padding: 0 1 0 0;
+}
+.tab {
+    color: $text-muted;
+    height: 100%;
+    width: auto;
+    content-align: center middle;
+    padding: 0 1;
+}
+.tab-active {
+    color: $accent;
+    border-bottom: solid $accent;
+}
+.tab-add {
+    color: $text-muted;
+    height: 100%;
+    width: auto;
+    content-align: center middle;
+    padding: 0 1;
+}
+.chat-version {
+    color: $text-muted;
+    height: 100%;
+    content-align: right middle;
+    width: 8;
+}
+
+/* ── CHAT LOG ── */
+ChatLog {
+    width: 100%;
+    height: 1fr;
+}
+
+/* ── INPUT BAR ── */
+InputBar {
+    width: 100%;
+    height: 3;
+    border: tall $accent;
+    background: $surface;
+}
+InputBar Input {
+    border: none;
+    background: transparent;
+    color: $text;
+    padding: 0 1;
+}
+InputBar Input:disabled {
+    border: none;
+    background: transparent;
+    color: $text-muted;
+    opacity: 0.7;
+}
+
+/* ── SIDEBAR ── */
+Sidebar {
+    width: 30;
+    min-width: 28;
+    height: 100%;
+}
+.sidebar {
+    width: 100%;
+    height: 100%;
+    background: $surface;
+    border-left: tall $panel;
+}
+
+/* ── SIDEBAR PANELS ── */
+.panel-header {
+    width: 100%;
+    height: auto;
+    color: $accent;
+    text-style: bold;
+    padding: 1 1 0 1;
+}
+.panel-section {
+    width: 100%;
+    height: auto;
+    padding: 0 1 1 1;
+    border-bottom: solid $panel;
+    color: $text;
+}
+ContextPanel, ModelPanel, MemoryPanel, ToolsPanel, StatsPanel {
+    width: 100%;
+    height: auto;
+}
+
+/* ── STATUS BAR ── */
+StatusBar {
+    dock: bottom;
+    height: 1;
+    background: $background;
+    border-top: tall $panel;
+    color: $text-muted;
+}
+.status-left  { width: 1fr; color: $text-muted; }
+.status-center { width: 2fr; text-align: center; color: $text-muted; }
+.status-right  { width: 1fr; text-align: right; color: $accent; }
+
+/* ── UTILITIES ── */
+.status-accent { color: $accent; }
+.online  { color: $success; }
+.offline { color: $error; text-style: bold; }
+.warn    { color: $warning; }

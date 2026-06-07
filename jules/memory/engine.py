@@ -62,18 +62,21 @@ class MemoryEngine:
     def _should_persist_conservatively(self, episode: Episode) -> bool:
         return episode.friction_score > CONSERVATIVE_FRICTION_THRESHOLD or self._has_active_project_tag(episode)
 
-    async def _persist_if_allowed(self, episode: Episode, record_health: bool = True) -> None:
+    async def _persist_if_allowed(self, episode: Episode, record_health: bool = True) -> bool:
         score = episode.importance
         if record_health:
             self.scoring_health_monitor.record(score)
         if self.scoring_health_monitor.is_healthy():
             if score >= IMPORTANCE_PERSISTENCE_THRESHOLD:
                 await self._persist_episode(episode)
-            return
+                return True
+            return False
 
         logger.warning("Scoring degenerado, modo conservador activado", extra={"mode": "conservative"})
         if self._should_persist_conservatively(episode):
             await self._persist_episode(episode)
+            return True
+        return False
 
     async def _run_persistence_pipeline(self, episode: Episode) -> None:
         try:
@@ -118,6 +121,18 @@ class MemoryEngine:
         task = asyncio.create_task(self._run_persistence_pipeline(episode))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+
+    async def persist_and_wait_async(self, episode: Episode) -> bool:
+        """Run the scored persistence pipeline and return whether storage happened."""
+        episode.importance = await evaluate_importance(episode, self.provider)
+        self.scoring_health_monitor.record(episode.importance)
+        while self.is_query_active:
+            await asyncio.sleep(0.2)
+        if self.persistence_delay_seconds > 0:
+            await asyncio.sleep(self.persistence_delay_seconds)
+        while self.is_query_active:
+            await asyncio.sleep(0.2)
+        return await self._persist_if_allowed(episode, record_health=False)
 
     async def retrieve_async(self, query: str, limit: int = 5) -> list[Episode]:
         vector = await self._get_vector(query)
