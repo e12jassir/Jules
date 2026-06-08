@@ -6,10 +6,11 @@
 
 <br/>
 
-![Phase](https://img.shields.io/badge/Phase_1-In_Progress-6366f1?style=flat-square&labelColor=1e1e2e)
+![Phase](https://img.shields.io/badge/Phase_1.5-In_Progress-a78bfa?style=flat-square&labelColor=1e1e2e)
 ![Tests](https://img.shields.io/badge/Tests-120_passing-22c55e?style=flat-square&labelColor=1e1e2e)
 ![Platform](https://img.shields.io/badge/EndeavourOS-KDE_Plasma_6-f97316?style=flat-square&labelColor=1e1e2e)
 ![Python](https://img.shields.io/badge/Python-3.11+-eab308?style=flat-square&labelColor=1e1e2e)
+![Rust](https://img.shields.io/badge/Rust-TUI-f74c00?style=flat-square&labelColor=1e1e2e)
 ![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square&labelColor=1e1e2e)
 
 <br/>
@@ -164,8 +165,9 @@ Post-Processing
 
 | Layer | Technology | Why |
 |---|---|---|
-| Language | Python 3.11+ | Native async, ML ecosystem |
-| CLI | Click + asyncio | Phase 1: pure terminal, no HTTP server |
+| Language (backend) | Python 3.11+ | Native async, ML ecosystem |
+| IPC server | asyncio + stdin/stdout | Newline-delimited JSON pipes — no runtime, no socket |
+| TUI (Phase 1.5) | Rust + Ratatui + Tokio + Crossterm | Immediate mode — native transparency, sub-10ms startup, single binary |
 | Vector DB | LanceDB | Episodic embeddings, semantic retrieval |
 | Relational DB | SQLite → PostgreSQL | Local-first; migrate only when scale demands |
 | Migrations | Alembic | Versioned schema from day one |
@@ -179,7 +181,7 @@ Post-Processing
 ## Build Status
 
 ```
-Phase 1 — Core
+Phase 1 — Core  ✅ Complete
   [x] Module 0   — Project structure + virtualenv
   [x] Module 1   — Sanitizer
   [x] Module 2   — Data models
@@ -191,12 +193,19 @@ Phase 1 — Core
   [x] Module 8   — Event system + shell hooks
   [x] Module 9   — Permission system
   [x] Module 10  — jules doctor
-  [ ] Module 11  — Main CLI         ← in progress
+  [x] Module 11  — Main CLI
+  [x] Module 12  — OpenAI auth via WebSockets
 
-Phase 1.5  — Stabilization    (upcoming)
-Phase 2    — Expansion        (upcoming)
+Phase 1.5 — TUI Migration (Rust + Ratatui)  🔜 In progress
+  [ ] jules/server/   — Python IPC server (stdin/stdout, newline-delimited JSON)
+  [ ] jules-tui/      — Rust TUI (Ratatui + Tokio): transparent, native binary
+  Protocol: Python backend ↔ pipes ↔ Rust frontend
+  Goal: native compositor transparency + sub-10ms startup
+  Fallback: `jules --legacy` keeps Textual TUI running
+
+Phase 2    — Expansion              (upcoming)
 Phase 3    — Adaptive Intelligence  (upcoming)
-Phase 4    — Autonomy         (upcoming)
+Phase 4    — Autonomy               (upcoming)
 ```
 
 **120 tests passing** across all completed modules. Every module is tested before the next one starts. No red test goes to commit.

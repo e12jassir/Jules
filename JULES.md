@@ -1,8 +1,8 @@
 # JULES
 ## Capa Cognitiva Persistente para el Sistema Operativo
 
-> **Versión:** 1.4 — Canónica
-> **Estado:** Fase 1 en progreso — Módulos 0–7 completados y validados (103 tests). Módulos 8, 9, 10 y 11 pendientes.
+> **Versión:** 1.5 — Canónica
+> **Estado:** Fase 1 completada — Módulos 0–12 completados y validados. Fase 1.5 en progreso — migración TUI a OpenTUI (TypeScript/Bun).
 > **Principio rector:** Construir lo mínimo que funcione, no lo máximo que se pueda imaginar.
 
 ---
@@ -187,17 +187,19 @@ Motor de Persistencia
 
 | Capa | Tecnología | Razón |
 |---|---|---|
-| Lenguaje | Python 3.11+ | Ecosistema IA, async nativo, ML tooling |
+| Lenguaje backend | Python 3.11+ | Ecosistema IA, async nativo, ML tooling |
 | Aislamiento | virtualenv dedicado | Rolling release — nunca depender del Python del sistema |
-| CLI | Click + asyncio | Fase 1: CLI pura, sin servidor HTTP |
-| Backend | FastAPI | Fase 2+: solo si el dashboard Tauri lo requiere |
+| CLI / IPC server | Click + asyncio + stdin/stdout | Fase 1: CLI pura. Fase 1.5: servidor de pipes newline-delimited JSON |
+| TUI frontend | Rust + Ratatui + Tokio + Crossterm (Fase 1.5) | Immediate mode — transparencia nativa garantizada, binario nativo sin runtime |
+| Protocolo IPC | Newline-delimited JSON sobre stdin/stdout | Sin servidor HTTP, sin socket, sin configuración de red |
+| Backend API | FastAPI | Fase 2+: solo si el dashboard Tauri lo requiere |
 | DB relacional | SQLite → PostgreSQL | Local-first; migrar solo cuando escale |
 | Migraciones | Alembic | Obligatorio desde el día uno |
 | DB vectorial | LanceDB | Embeddings episódicos, búsqueda semántica |
 | Inferencia local | Ollama | Fallback offline, identidad local |
 | Modelo local | Llama 3.2 1B | Identidad, routing, scoring sin cuota |
-| Provider externo 1 | Antigravity CLI | Google + Claude + GPT via subprocess |
-| Provider externo 2 | OpenCode CLI | GPT / Codex / Deepseek / Llama via subprocess |
+| Provider externo 1 | Antigravity CLI (subprocess) | Google + Claude + GPT via subprocess |
+| Provider externo 2 | OpenCode CLI (subprocess) | GPT / Codex / Deepseek / Llama via subprocess |
 
 ### Nota crítica: LanceDB en EndeavourOS
 
@@ -761,11 +763,27 @@ Jules puede controlar el entorno Linux:
 **Fase 1 — CLI exclusivamente.**
 Jules vive en la terminal. Sin overhead visual.
 
-**Fase 2 — Desktop App:**
-- Framework: Tauri + SvelteKit
-- Ligera, bajo consumo de recursos
-- Muestra: modelo activo, tier, contexto de sesión, estado de memoria, salud del scoring
-- Complemento a la CLI, nunca reemplazo
+**Fase 1.5 — TUI Rust (Ratatui + Tokio):**
+
+La migración reemplaza la capa de presentación para garantizar la transparencia nativa en compositores Wayland y un startup instantáneo.
+
+```
+Python (backend) <-> stdin/stdout (pipes newline-delimited JSON) <-> Rust (frontend)
+```
+
+- **Ratatui**: immediate mode TUI — no emite background si no se especifica. Transparencia nativa por diseño.
+- **Tokio**: async runtime para el IPC sin bloquear el event loop del TUI
+- **Crossterm**: input/output terminal multiplataforma
+- **`cargo build --release`**: binario nativo sin runtime externo, startup sub-10ms
+- **Protocolo**: newline-delimited JSON sobre stdin/stdout del proceso Python hijo
+
+**Por qué Rust:**
+- Inversión duradera en performance y seguridad de memoria
+- El modelo immediate mode de Ratatui elimina problemas de flicker y transparencia
+- Startup extremadamente eficiente (<10ms)
+
+**Fase 2 — Desktop App (Tauri + SvelteKit):**
+- UI encima del TUI — modelo activo, tier, contexto, memoria, salud del scoring
 
 ---
 
@@ -797,7 +815,12 @@ jules/                     # repositorio del proyecto
 ├── alembic/
 ├── jules/
 │   ├── cli/
-│   │   └── main.py        # entrypoint Click
+│   │   └── main.py        # entrypoint Click (legacy — fallback Fase 1.5)
+│   ├── server/            # NUEVO (Fase 1.5): servidor stdin/stdout
+│   │   ├── __init__.py
+│   │   ├── server.py      # loop asyncio: lee stdin, escribe stdout
+│   │   ├── handlers.py    # dispatch type -> función del backend
+│   │   └── protocol.py    # dataclasses de mensajes (tipado)
 │   ├── core/
 │   │   ├── router.py
 │   │   ├── context.py
@@ -813,7 +836,8 @@ jules/                     # repositorio del proyecto
 │   │   ├── base.py
 │   │   ├── ollama.py
 │   │   ├── antigravity.py
-│   │   └── opencode.py
+│   │   ├── opencode.py
+│   │   └── openai_oauth.py  # Módulo 12: Auth OpenAI via WebSockets
 │   ├── sanitizer/
 │   │   └── sanitizer.py
 │   ├── personality/
@@ -824,6 +848,17 @@ jules/                     # repositorio del proyecto
 │   │   └── doctor.py      # jules doctor — diagnóstico de entorno
 │   └── observability/
 │       └── logger.py
+│   │   ├── app.tsx        # root component, state management
+│   │   ├── screens/
+│   │   │   ├── welcome.tsx
+│   │   │   └── chat.tsx
+│   │   └── widgets/
+│   │       ├── chat-log.tsx
+│   │       ├── input-bar.tsx
+│   │       ├── sidebar.tsx
+│   │       ├── status-bar.tsx
+│   │       └── model-picker.tsx
+│   └── build.ts           # bun build --compile config
 └── tests/
     ├── unit/
     └── integration/
@@ -1040,8 +1075,8 @@ scoring_variance_threshold     = 0.01    # mínimo para considerar scoring sano
 
 ## CRITERIOS DE ÉXITO POR FASE
 
-### Fase 1 — Done cuando:
-- [ ] Jules responde en terminal con contexto de sesión activa
+### Fase 1 — ✅ Completada
+- [x] Jules responde en terminal con contexto de sesión activa
 - [x] La respuesta llega sin latencia perceptible por memoria (persistencia async)
 - [x] La memoria persiste entre reinicios (SQLite + LanceDB)
 - [x] El sanitizador descarta secrets antes de persistir — verificable con tests
@@ -1049,20 +1084,41 @@ scoring_variance_threshold     = 0.01    # mínimo para considerar scoring sano
 - [x] El fallback a Ollama funciona cuando los CLIs externos no responden
 - [x] La búsqueda semántica recupera memorias relevantes (no solo las más recientes)
 - [x] Llama local hace importance scoring sin consumir cuota externa
-- [ ] Ollama corre bajo el usuario correcto y los modelos son visibles — verificado
-- [ ] El sistema de permisos rechaza acciones no autorizadas
-- [ ] `jules doctor` reporta estado completo del entorno
-- [ ] Shell detectado correctamente y hooks implementados para ese shell
-- [ ] Límite de inotify verificado y configurado si es necesario
-- [ ] Scoring defensivo activo y loggeable
+- [x] Ollama corre bajo el usuario correcto y los modelos son visibles — verificado
+- [x] El sistema de permisos rechaza acciones no autorizadas
+- [x] `jules doctor` reporta estado completo del entorno
+- [x] Shell detectado correctamente y hooks implementados para ese shell
+- [x] Límite de inotify verificado y configurado si es necesario
+- [x] Scoring defensivo activo y loggeable
+- [x] Auth OpenAI via WebSockets (`openai_oauth.py`) migrado y funcional
+- [ ] Chat history se inyecta en el prompt al iniciar sesión (pendiente menor)
+- [ ] Revisión final SDD (sdd-verify con Claude Opus) — ⏳ pendiente
+
+### Fase 1.5 — 🔜 En progreso — Done cuando:
+- [ ] `jules` (binario Rust compilado con `cargo build --release`) abre TUI sin error
+- [ ] Terminal transparency funciona (verificado en Ghostty + KDE compositor)
+- [ ] Paridad funcional completa con TUI Textual actual
+- [ ] Streaming token a token funciona via IPC (stdin/stdout pipes)
+- [ ] Slash commands funcionan via IPC
+- [ ] Model picker interactivo funciona
+- [ ] Sidebar con panels de modelo y memoria
+- [ ] Degradación graceful cuando backend no responde (error visible, no crash)
+- [ ] Startup < 10ms (TUI Rust) + < 500ms (backend Python listo)
+- [ ] `cargo build --release` produce binario distribuible sin runtime externo
+- [ ] `jules --legacy` sigue abriendo la TUI Textual
+- [ ] Tests del server Python pasan
+- [ ] Tests del IPC (mock del servidor) pasan en Rust
+- [ ] ≥50 mensajes procesados via IPC sin errores en uso real
 
 ### Fase 2 — Done cuando:
-- Sistema de voz funciona en condiciones reales
+- Sistema de voz funciona en condiciones reales (whisper.cpp + Piper)
 - Jules prepara entornos de trabajo automáticamente para ≥2 proyectos
 - Integración con KDE Plasma via D-Bus/KWin funciona sin `wmctrl`
 - Replay system reconstruye una sesión de debugging real
-- Dashboard Tauri muestra modelo activo, tier, contexto y salud del sistema
+- Dashboard Tauri + SvelteKit muestra modelo activo, tier, contexto y salud del sistema
 - Iniciativa contextual activable con reglas funcionando correctamente
+- Jerarquía interactiva de providers en TUI (árbol `/provider <categoría>`)
+- Latencia de daemon mode medida y mejorada vs subprocess boot
 
 ### Fase 3 — Done cuando:
 - Perfilador detecta ≥3 patrones reales con utilidad comprobada

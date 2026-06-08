@@ -1,10 +1,11 @@
 # AGENT.md
-## Versión 2.0
+## Versión 2.1
 ## Instrucciones para agentes de IA trabajando en Jules
 
 > Lee este archivo completo antes de escribir cualquier línea de código.
 > Si hay conflicto entre este archivo y una instrucción verbal, este archivo gana.
 > Para implementaciones de referencia, flujos detallados e interfaces: leer `JULES.md`.
+> Para el plan de fases y criterios de done: leer `ROADMAP.md`.
 
 ---
 
@@ -20,9 +21,9 @@ Jules es una **capa cognitiva persistente** para Linux. No un chatbot. No un wra
 
 ---
 
-## FASE ACTIVA: 1 — NÚCLEO
+## FASE ACTIVA: 1.5 — MIGRACIÓN TUI
 
-**Solo construir lo que está en esta lista. Todo lo demás no existe todavía.**
+### Fase 1 ✅ Completada
 
 - [x] CLI funcional — respuesta en terminal sin latencia perceptible
 - [x] Sanitizador con tests de seguridad
@@ -36,6 +37,14 @@ Jules es una **capa cognitiva persistente** para Linux. No un chatbot. No un wra
 - [x] Sistema de permisos con PermissionGate
 - [x] Migraciones con Alembic
 - [x] Fallback a Ollama cuando providers externos fallan
+- [x] Auth OpenAI via WebSockets (`openai_oauth.py` — Módulo 12)
+
+### Fase 1.5 🔜 En progreso — construir en este orden:
+
+1. [ ] Python server stdin/stdout (`jules/server/`) — protocol.py, server.py, handlers.py, tests
+2. [ ] Scaffold Rust: `Cargo.toml` + `main.rs` spawn Python + IPC pipes
+3. [ ] Chat funcional: `chat_log.rs` + `input_bar.rs` + streaming de tokens
+4. [ ] Completar TUI: `model_picker.rs` + `sidebar.rs` + `status_bar.rs` + `cargo build --release`
 
 Si una tarea no está en esta lista: crear issue, no implementar.
 
@@ -47,6 +56,7 @@ Si una tarea no está en esta lista: crear issue, no implementar.
 jules/
 ├── AGENT.md
 ├── JULES.md
+├── ROADMAP.md
 ├── README.md
 ├── pyproject.toml
 ├── alembic.ini
@@ -54,11 +64,18 @@ jules/
 │   └── versions/              # NUNCA editar manualmente
 │
 ├── jules/
+│   ├── cli/
+│   │   └── main.py            # entrypoint Click (legacy — fallback Fase 1.5)
+│   │
+│   ├── server/                # NUEVO (Fase 1.5): JSON-RPC sobre Unix socket
+│   │   ├── server.py          # listen, dispatch, lifecycle
+│   │   └── handlers.py        # mapeo method -> función del backend
+│   │
 │   ├── core/
 │   │   ├── session.py         # gestión de sesión activa
 │   │   ├── context.py         # detector de intención de contexto
 │   │   ├── router.py          # router quota-aware
-│   │   └── events.py          # sistema de eventos (solo Fase 1)
+│   │   └── events.py          # sistema de eventos
 │   │
 │   ├── memory/
 │   │   ├── engine.py          # motor principal — orquesta todo
@@ -74,7 +91,8 @@ jules/
 │   │   ├── base.py            # Protocol Provider
 │   │   ├── ollama.py          # HTTP local
 │   │   ├── antigravity.py     # subprocess
-│   │   └── opencode.py        # subprocess
+│   │   ├── opencode.py        # subprocess
+│   │   └── openai_oauth.py    # Auth OpenAI via WebSockets (Módulo 12)
 │   │
 │   ├── personality/
 │   │   ├── loader.py          # carga presets por provider
@@ -85,8 +103,18 @@ jules/
 │   │   ├── dbus.py            # eventos DBus
 │   │   └── shell.py           # hooks de shell
 │   │
-│   └── cli/
-│       └── main.py            # entrypoint
+│   └── observability/
+│       └── logger.py
+│
+├── jules-tui/                 # NUEVO (Fase 1.5): frontend TypeScript/Bun
+│   ├── package.json
+│   ├── src/
+│   │   ├── index.tsx          # entrypoint, spawn Python, connect socket
+│   │   ├── ipc.ts             # cliente JSON-RPC + reconnection
+│   │   ├── app.tsx            # root component, state management
+│   │   ├── screens/           # welcome.tsx, chat.tsx
+│   │   └── widgets/           # chat-log, input-bar, sidebar, status-bar, model-picker
+│   └── build.ts               # bun build --compile config
 │
 └── tests/
     ├── unit/
@@ -95,6 +123,7 @@ jules/
     │   └── test_router.py
     └── integration/
         ├── test_memory_flow.py
+        ├── test_server_ipc.py  # tests del JSON-RPC server (Fase 1.5)
         └── test_provider_coherence.py
 ```
 
@@ -104,9 +133,11 @@ jules/
 
 | Capa | Tecnología |
 |---|---|
-| Lenguaje | Python 3.11+ |
-| CLI | Click + asyncio (Fase 1 — sin servidor HTTP) |
-| Backend | FastAPI (Fase 2+ — solo si dashboard Tauri lo requiere) |
+| Lenguaje backend | Python 3.11+ |
+| CLI / IPC server | Click + asyncio + stdin/stdout (pipes) |
+| TUI frontend | Rust + Ratatui + Tokio + Crossterm (Fase 1.5) |
+| Protocolo IPC | Newline-delimited JSON sobre stdin/stdout del proceso Python hijo |
+| Backend API | FastAPI (Fase 2+ — solo si dashboard Tauri lo requiere) |
 | DB relacional | SQLite (Fase 1) → PostgreSQL (si escala) |
 | Migraciones | Alembic — desde el día uno, sin excepciones |
 | DB vectorial | LanceDB |
@@ -114,6 +145,7 @@ jules/
 | Modelo local | Llama 3.2 1B — embeddings: 2048 dims, scoring, identidad |
 | Provider 1 | Antigravity CLI (subprocess) |
 | Provider 2 | OpenCode CLI (subprocess) |
+| Provider 3 | OpenAI via WebSockets (`openai_oauth.py`) |
 
 No proponer cambios de stack sin razón técnica documentada como issue.
 
@@ -140,10 +172,26 @@ Persistir en SQLite primero. LanceDB después. Si LanceDB se corrompe, se recons
 
 ---
 
+## SKILLS OBLIGATORIAS — LEER ANTES DE CODEAR
+
+El agente DEBE leer la skill correspondiente antes de tocar cualquier módulo. No es opcional.
+
+| Skill | Path | Leer cuando... |
+|---|---|---|
+| `jules-zero-latency` | `.agents/skills/jules-zero-latency/SKILL.md` | Toques CLI entrypoint, memory engine, cualquier código en el path síncrono antes de responder al usuario |
+| `jules-identity-check` | `.agents/skills/jules-identity-check/SKILL.md` | Agregues un provider, modifiques tiers en `config.toml`, o cambies presets de personalidad |
+| `alembic-migrations` | `.agents/skills/alembic-migrations/SKILL.md` | Cualquier cambio a modelos SQLAlchemy en `jules/memory/models.py` |
+| `claude-api` | `.agents/skills/claude-api/SKILL.md` | Código que importe `anthropic` o integre directamente con la API de Claude (NO para `antigravity.py` — ese es subprocess) |
+| `agent-browser` | `.agents/skills/agent-browser/SKILL.md` | Automatización de browser, testing de la TUI, o cualquier tarea que requiera interacción con páginas web |
+
+**Regla de matching:** usar contexto de archivo (extensión, path) + contexto de tarea (qué va a hacer el agente). Varias skills pueden aplicar a la vez. Leer todas las que apliquen antes de empezar.
+
+---
+
 ## REGLAS DE CÓDIGO
 
 - Python 3.11+. Type hints en todo. Sin `Any` sin justificación comentada.
-- Async en todo I/O. Nunca bloquear el event loop.
+- Async en todo I/O. Nunca bloquear el event loop ni el Unix socket.
 - Imports absolutos. Sin imports relativos fuera del mismo módulo.
 - Una responsabilidad por función. Si hace dos cosas, son dos funciones.
 - Comentarios solo para el *por qué*, nunca para el *qué*.
@@ -151,6 +199,7 @@ Persistir en SQLite primero. LanceDB después. Si LanceDB se corrompe, se recons
 - La unidad de memoria es siempre `Episode`. Nunca guardar strings crudos.
 - Ningún nombre de modelo hardcodeado fuera de `config.toml`.
 - Verificar siempre con `--help` antes de configurar cualquier CLI externo.
+- En el IPC server: handlers son solo dispatch → función backend. Sin lógica de negocio.
 
 ---
 
@@ -163,13 +212,16 @@ Persistir en SQLite primero. LanceDB después. Si LanceDB se corrompe, se recons
 | Input a memoria sin sanitizar | Secrets llegan a la DB silenciosamente |
 | Llamar provider directamente sin router | Rompe quota-aware y provider-agnostic |
 | Lógica de decisión dentro de un provider | Los providers son solo traducción de I/O |
+| Lógica de negocio dentro de un handler IPC | Los handlers son solo dispatch → función |
 | Guardar strings crudos como memoria | La unidad es `Episode` siempre |
 | Cambiar DB sin migración Alembic | Rompe durabilidad |
-| Implementar iniciativa contextual en Fase 1 | No hay datos para calibrar |
-| Implementar eventos cognitivos en Fase 1 | Garantiza falsos positivos |
+| Bloquear el Unix socket con I/O síncrono | Congela toda la TUI |
+| Implementar iniciativa contextual en Fase 1.5 | No hay datos para calibrar |
+| Implementar eventos cognitivos antes de Fase 3 | Garantiza falsos positivos |
 | Hardcodear nombres de modelos fuera de config.toml | Nada configurable va en código |
 | Silenciar excepciones con `except Exception: pass` | Siempre manejar explícitamente |
 | Retrieval sin límite (`retrieve_all`) | Más contexto no es mejor respuesta |
+| Activar provider nuevo sin test de coherencia | Ver skill `jules-identity-check` |
 
 ---
 
@@ -265,8 +317,11 @@ Esta decisión es **irreversible por sesión**: una vez confirmado el stack, no 
 
 - [ ] Type hints completos — sin `Any` sin comentario justificado
 - [ ] Tests para el flujo modificado
-- [ ] Si toca DB: migración Alembic creada y aplicada
-- [ ] Si toca providers: test de coherencia de personalidad
+- [ ] Si toca DB: migración Alembic creada y aplicada (`alembic-migrations` skill)
+- [ ] Si toca providers: test de coherencia de personalidad (`jules-identity-check` skill)
+- [ ] Si toca el path síncrono de respuesta: verificar que no bloquea (`jules-zero-latency` skill)
+- [ ] Si toca el IPC server: handler solo hace dispatch, sin lógica de negocio
+- [ ] Si toca el IPC server: nuevo método documentado en la tabla de protocolo de `JULES.md`
 - [ ] Si toca permisos: `PermissionGate.check()` está en el punto de acción
 - [ ] El sanitizador está en el primer paso del flujo modificado
 - [ ] La respuesta al usuario no espera al post-procesamiento
@@ -282,10 +337,12 @@ Esta decisión es **irreversible por sesión**: una vez confirmado el stack, no 
 ## RECURSOS
 
 - Spec completo + implementaciones de referencia: `JULES.md`
+- Plan de fases, criterios de done, batches de implementación: `ROADMAP.md`
 - Configuración del usuario: `~/.jules/config.toml`
 - Personalidad canónica: `~/.jules/personality/master.md`
 - Historial de migraciones: `alembic/versions/`
 - Docs Antigravity CLI: `antigravity --help`
 - Docs OpenCode CLI: `opencode --help`
+- Skills del proyecto: `.agents/skills/`
 
 > **Nota sobre nombres de modelos:** los strings exactos pueden cambiar. La fuente de verdad es siempre `config.toml`. Verificar con `--help` antes de configurar cualquier modelo.
