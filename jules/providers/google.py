@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any, AsyncIterator, cast
 
-from jules.memory.models import SessionContext
+
 from jules.providers.base import (
     ContentEvent,
     ProviderError,
@@ -16,15 +17,19 @@ from jules.providers.base import (
 )
 
 
-def _load_api_key() -> str:
+def _read_api_key_from_file() -> str | None:
+    env_file = Path.home() / ".jules" / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("GOOGLE_AI_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+async def _load_api_key() -> str:
     key = os.environ.get("GOOGLE_AI_API_KEY")
     if not key:
-        env_file = Path.home() / ".jules" / ".env"
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.startswith("GOOGLE_AI_API_KEY="):
-                    key = line.split("=", 1)[1].strip()
-                    break
+        key = await asyncio.to_thread(_read_api_key_from_file)
     if not key:
         raise ProviderUnavailableError(
             "GOOGLE_AI_API_KEY not found. Set it in ~/.jules/.env or as an env var."
@@ -38,7 +43,7 @@ class GoogleAIProvider:
     def __init__(self, timeout_seconds: float = 60.0) -> None:
         self.timeout_seconds = timeout_seconds
 
-    async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
+    async def ask(self, prompt: str, context: list[dict], model: str) -> str:
         chunks: list[str] = []
         async for event in self.stream_events(prompt, context, model):
             if isinstance(event, ContentEvent):
@@ -48,7 +53,7 @@ class GoogleAIProvider:
     async def stream(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
     ) -> AsyncIterator[str]:
         async for event in self.stream_events(prompt, context, model):
@@ -58,7 +63,7 @@ class GoogleAIProvider:
     async def stream_events(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
     ) -> AsyncIterator[StreamEvent]:
         """Stream ThoughtEvent + ContentEvent from Google AI Gemini (google.genai SDK)."""
@@ -70,7 +75,7 @@ class GoogleAIProvider:
                 "google-genai not installed. Run: pip install google-genai"
             ) from exc
 
-        api_key = _load_api_key()
+        api_key = await _load_api_key()
         client = genai.Client(api_key=api_key)
 
         config = types.GenerateContentConfig(
@@ -78,12 +83,12 @@ class GoogleAIProvider:
         )
 
         try:
-            response = client.models.generate_content_stream(
+            response = await client.aio.models.generate_content_stream(
                 model=model,
                 contents=prompt,
                 config=config,
             )
-            for chunk in response:
+            async for chunk in response:
                 chunk_any = cast(Any, chunk)
                 candidates = cast(list[Any], getattr(chunk_any, "candidates", []) or [])
                 if not candidates:
@@ -105,7 +110,7 @@ class GoogleAIProvider:
 
     async def health_check(self) -> bool:
         try:
-            _load_api_key()
+            await _load_api_key()
             from google import genai  # type: ignore[import-not-found]  # noqa: F401
             return True
         except Exception:

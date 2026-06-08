@@ -33,7 +33,14 @@ class MemoryEngine:
         self.scoring_health_monitor = scoring_health_monitor or ScoringHealthMonitor()
         self._background_tasks: set[asyncio.Task] = set()
         self.persistence_delay_seconds: float = 5.0
-        self.is_query_active: bool = False
+        self._query_idle_event: asyncio.Event | None = None
+
+    @property
+    def query_idle_event(self) -> asyncio.Event:
+        if self._query_idle_event is None:
+            self._query_idle_event = asyncio.Event()
+            self._query_idle_event.set()
+        return self._query_idle_event
 
     def _dummy_vector(self) -> list[float]:
         # Fallback cuando embedding_provider no está disponible.
@@ -86,23 +93,29 @@ class MemoryEngine:
             self.scoring_health_monitor.record(episode.importance)
 
             # Esperamos mientras haya una consulta activa del usuario
-            while self.is_query_active:
-                await asyncio.sleep(0.2)
+            await self.query_idle_event.wait()
 
             if self.persistence_delay_seconds > 0:
                 await asyncio.sleep(self.persistence_delay_seconds)
 
-            while self.is_query_active:
-                await asyncio.sleep(0.2)
+            await self.query_idle_event.wait()
 
             await self._persist_if_allowed(episode, record_health=False)
         except asyncio.CancelledError:
             # Score ya calculado arriba. Persistimos con el score real.
             async def quick_save():
                 try:
-                    await self._persist_if_allowed(episode, record_health=False)
-                except Exception as e:
-                    logging.error("Failed to save cancelled episode: %s", e)
+                    await self.query_idle_event.wait()
+                    try:
+                        await asyncio.shield(self._persist_if_allowed(episode, record_health=False))
+                    except Exception as e:
+                        logging.error("Failed to save cancelled episode: %s", e)
+                except asyncio.CancelledError:
+                    try:
+                        await self.query_idle_event.wait()
+                        await asyncio.shield(self._persist_if_allowed(episode, record_health=False))
+                    except Exception as e:
+                        logging.error("Failed to save cancelled episode: %s", e)
             task = asyncio.create_task(quick_save())
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
@@ -111,11 +124,14 @@ class MemoryEngine:
             logging.error("Memory persistence pipeline failed: %s", error)
 
     def start_active_query(self) -> None:
-        self.is_query_active = True
+        self.query_idle_event.clear()
         # Cancelamos cualquier pipeline en background activo para liberar al LLM local inmediatamente
         for task in list(self._background_tasks):
             if not task.done():
                 task.cancel()
+
+    def end_active_query(self) -> None:
+        self.query_idle_event.set()
 
     async def persist_async(self, episode: Episode) -> None:
         task = asyncio.create_task(self._run_persistence_pipeline(episode))
@@ -126,12 +142,10 @@ class MemoryEngine:
         """Run the scored persistence pipeline and return whether storage happened."""
         episode.importance = await evaluate_importance(episode, self.provider)
         self.scoring_health_monitor.record(episode.importance)
-        while self.is_query_active:
-            await asyncio.sleep(0.2)
+        await self.query_idle_event.wait()
         if self.persistence_delay_seconds > 0:
             await asyncio.sleep(self.persistence_delay_seconds)
-        while self.is_query_active:
-            await asyncio.sleep(0.2)
+        await self.query_idle_event.wait()
         return await self._persist_if_allowed(episode, record_health=False)
 
     async def retrieve_async(self, query: str, limit: int = 5) -> list[Episode]:

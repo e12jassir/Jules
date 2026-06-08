@@ -56,10 +56,14 @@ class EventBus:
 
     def emit(self, event_type: EventType, payload: dict) -> None:
         import asyncio
-        for handler in self._handlers.get(event_type, []):
-            p = payload.copy()
-            
-            async def _run_handler(h=handler, p=p, e_type=event_type):
+        import threading
+        
+        handlers = self._handlers.get(event_type, [])
+        if not handlers:
+            return
+
+        def _get_handler_coro(h, p, e_type):
+            async def _run_handler():
                 IS_BACKGROUND_TASK.set(True)
                 try:
                     if inspect.iscoroutinefunction(h):
@@ -81,20 +85,30 @@ class EventBus:
                     )
                 except Exception:
                     logging.getLogger(__name__).exception("Error in handler for %s", e_type)
+            return _run_handler()
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
-            if loop is not None and loop.is_running():
-                task = loop.create_task(_run_handler())
+        if loop is not None and loop.is_running():
+            for handler in handlers:
+                task = loop.create_task(_get_handler_coro(handler, payload.copy(), event_type))
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
-            else:
-                # Synchronous fallback keeps the same background context and
-                # structured PermissionDeniedError handling as the task path.
-                asyncio.run(_run_handler())
+        else:
+            # Synchronous fallback keeps the same background context and
+            # structured PermissionDeniedError handling as the task path.
+            # Runs in a background thread to prevent blocking.
+            def _run_all_sync(handlers_list, e_type, p_dict):
+                async def _run_all_async():
+                    tasks = [asyncio.create_task(_get_handler_coro(h, p_dict.copy(), e_type)) for h in handlers_list]
+                    if tasks:
+                        await asyncio.gather(*tasks)
+                asyncio.run(_run_all_async())
+
+            threading.Thread(target=_run_all_sync, args=(handlers, event_type, payload), daemon=True).start()
 
     def _on_session_started(self, payload: dict) -> None:
         del payload

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Literal, Protocol, Union
 
-from jules.memory.models import SessionContext
+
 
 
 class ProviderError(Exception):
@@ -51,13 +51,13 @@ StreamEvent = Union[ThoughtEvent, ContentEvent, ToolStatusEvent]
 class Provider(Protocol):
     name: str
 
-    async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
+    async def ask(self, prompt: str, context: list[dict], model: str) -> str:
         ...
 
     def stream(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
     ) -> AsyncIterator[str]:
         ...

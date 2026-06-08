@@ -89,7 +89,7 @@ class ProviderRegistry:
             )
         return tuple(result)
 
-    def available_models(self) -> tuple[tuple[str, str], ...]:
+    async def available_models(self) -> tuple[tuple[str, str], ...]:
         seen: set[tuple[str, str]] = set()
         result: list[tuple[str, str]] = []
 
@@ -102,7 +102,7 @@ class ProviderRegistry:
                     seen.add(pair)
                     result.append(pair)
 
-        for model in self._discover_ollama_models():
+        for model in await self._discover_ollama_models():
             pair = ("ollama", model)
             if pair not in seen:
                 seen.add(pair)
@@ -124,31 +124,35 @@ class ProviderRegistry:
         return tuple(models)
 
     @staticmethod
-    def _discover_ollama_models() -> tuple[str, ...]:
+    async def _discover_ollama_models() -> tuple[str, ...]:
         import os
+        import asyncio
 
-        manifests_roots = [
-            Path.home() / ".ollama" / "models" / "manifests",
-            Path("/usr/share/ollama/.ollama/models/manifests"),
-            Path("/var/lib/ollama/.ollama/models/manifests"),
-        ]
-        env_models = os.environ.get("OLLAMA_MODELS")
-        if env_models:
-            manifests_roots.insert(0, Path(env_models) / "manifests")
+        def _discover() -> tuple[str, ...]:
+            manifests_roots = [
+                Path.home() / ".ollama" / "models" / "manifests",
+                Path("/usr/share/ollama/.ollama/models/manifests"),
+                Path("/var/lib/ollama/.ollama/models/manifests"),
+            ]
+            env_models = os.environ.get("OLLAMA_MODELS")
+            if env_models:
+                manifests_roots.insert(0, Path(env_models) / "manifests")
 
-        seen: set[str] = set()
-        result: list[str] = []
-        for manifests_root in manifests_roots:
-            if not manifests_root.exists():
-                continue
-            for tag_file in manifests_root.rglob("*"):
-                if not tag_file.is_file():
+            seen: set[str] = set()
+            result: list[str] = []
+            for manifests_root in manifests_roots:
+                if not manifests_root.exists():
                     continue
-                parts = tag_file.parts[len(manifests_root.parts):]
-                if len(parts) < 2:
-                    continue
-                model_str = f"{parts[-2]}:{parts[-1]}"
-                if model_str not in seen:
-                    seen.add(model_str)
-                    result.append(model_str)
-        return tuple(result)
+                for tag_file in manifests_root.rglob("*"):
+                    if not tag_file.is_file():
+                        continue
+                    parts = tag_file.parts[len(manifests_root.parts):]
+                    if len(parts) < 2:
+                        continue
+                    model_str = f"{parts[-2]}:{parts[-1]}"
+                    if model_str not in seen:
+                        seen.add(model_str)
+                        result.append(model_str)
+            return tuple(result)
+
+        return await asyncio.to_thread(_discover)

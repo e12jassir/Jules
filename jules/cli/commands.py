@@ -113,10 +113,10 @@ async def handle_status() -> str:
     import asyncio
 
     try:
-        from jules.core.router import CognitiveRouter
+        from jules.core.router import _get_router
         from jules.providers.base import Provider
 
-        router = await asyncio.to_thread(CognitiveRouter)
+        router = await _get_router()
         lines: list[str] = ["Estado de providers:\n"]
 
         async def _check(name: str, provider: Provider) -> str:
@@ -162,14 +162,14 @@ async def handle_model(args: tuple[str, ...]) -> str | tuple[str, str, str]:
     """
     import asyncio
 
-    from jules.core.router import CognitiveRouter
+    from jules.core.router import _get_router
 
     _OAUTH_PROVIDERS = {"codex"}
 
-    router = await asyncio.to_thread(CognitiveRouter)
+    router = await _get_router()
 
     if not args:
-        models = router.available_models()
+        models = await router.available_models()
         grouped: dict[str, list[str]] = {}
         for provider, model in models:
             if provider in _OAUTH_PROVIDERS:
@@ -184,7 +184,8 @@ async def handle_model(args: tuple[str, ...]) -> str | tuple[str, str, str]:
 
     name = " ".join(args)
     # Resolve to (provider, model) — try exact match first, then prefix match
-    all_models = [(p, m) for p, m in router.available_models() if p not in _OAUTH_PROVIDERS]
+    available_models = await router.available_models()
+    all_models = [(p, m) for p, m in available_models if p not in _OAUTH_PROVIDERS]
     # exact match on model name
     for provider, model in all_models:
         if model == name or f"{provider}:{model}" == name:

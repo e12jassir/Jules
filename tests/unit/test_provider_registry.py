@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 from jules.core.config import load_config
 
 _provider_registry = importlib.import_module("jules.core.provider_registry")
@@ -72,9 +74,10 @@ def test_provider_registry_catalog_exposes_kind_auth_and_models(tmp_path: Path) 
     assert catalog["openai_oauth"].enabled is True
 
 
-def test_provider_registry_available_models_includes_all_enabled_configured_models(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_provider_registry_available_models_includes_all_enabled_configured_models(tmp_path: Path) -> None:
     registry = ProviderRegistry(load_config(_config_path(tmp_path)))
-    models = registry.available_models()
+    models = await registry.available_models()
 
     assert ("antigravity", "ag-low") in models
     assert ("opencode", "oc-low") in models

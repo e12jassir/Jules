@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import os
 from pathlib import Path
 from typing import AsyncIterator
 
-from jules.memory.models import SessionContext
+
 from jules.providers.base import (
     ContentEvent,
     ProviderError,
@@ -19,15 +20,19 @@ from jules.providers.base import (
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
-def _load_api_key() -> str:
+def _read_api_key_from_file() -> str | None:
+    env_file = Path.home() / ".jules" / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("OPENROUTER_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+async def _load_api_key() -> str:
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
-        env_file = Path.home() / ".jules" / ".env"
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.startswith("OPENROUTER_API_KEY="):
-                    key = line.split("=", 1)[1].strip()
-                    break
+        key = await asyncio.to_thread(_read_api_key_from_file)
     if not key:
         raise ProviderUnavailableError(
             "OPENROUTER_API_KEY not found. Set it in ~/.jules/.env or as an env var."
@@ -41,7 +46,7 @@ class OpenRouterProvider:
     def __init__(self, timeout_seconds: float = 60.0) -> None:
         self.timeout_seconds = timeout_seconds
 
-    async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
+    async def ask(self, prompt: str, context: list[dict], model: str) -> str:
         chunks: list[str] = []
         async for event in self.stream_events(prompt, context, model):
             if isinstance(event, ContentEvent):
@@ -51,7 +56,7 @@ class OpenRouterProvider:
     async def stream(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
     ) -> AsyncIterator[str]:
         async for event in self.stream_events(prompt, context, model):
@@ -61,7 +66,7 @@ class OpenRouterProvider:
     async def stream_events(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
     ) -> AsyncIterator[StreamEvent]:
         """Stream ThoughtEvent + ContentEvent via OpenRouter SSE."""
@@ -72,7 +77,7 @@ class OpenRouterProvider:
                 "httpx not installed. Run: pip install httpx"
             ) from exc
 
-        api_key = _load_api_key()
+        api_key = await _load_api_key()
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -132,7 +137,7 @@ class OpenRouterProvider:
 
     async def health_check(self) -> bool:
         try:
-            _load_api_key()
+            await _load_api_key()
             import httpx  # type: ignore[import-not-found]  # noqa: F401
             return True
         except Exception:

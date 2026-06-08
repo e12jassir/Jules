@@ -48,9 +48,31 @@ class PersistentMemory:
 
     async def save_async(self, episode: Episode) -> None:
         async with self.session() as session:
+            result = await session.execute(select(EpisodeORM).where(EpisodeORM.id == episode.id))
+            existing_orm = result.scalar_one_or_none()
+            
             orm_episode = EpisodeORM.from_dataclass(episode)
+            if existing_orm and getattr(existing_orm, "session_context", None) and getattr(orm_episode, "session_context", None):
+                orm_episode.session_context.id = existing_orm.session_context.id
+                
             await session.merge(orm_episode)
             await session.commit()
+
+    async def save_chat_history(self, session_id: str, message: str, response: str) -> None:
+        from datetime import datetime, timezone
+        from jules.models.chat_history import ChatHistoryEntry, ChatHistoryORM
+        async with self.session() as session:
+            async with session.begin():
+                session.add(ChatHistoryORM.from_entry(ChatHistoryEntry(
+                    id=None, session_id=session_id,
+                    role="user", content=message,
+                    created_at=datetime.now(timezone.utc)
+                )))
+                session.add(ChatHistoryORM.from_entry(ChatHistoryEntry(
+                    id=None, session_id=session_id,
+                    role="assistant", content=response,
+                    created_at=datetime.now(timezone.utc)
+                )))
 
     async def get_async(self, episode_id: str) -> Episode | None:
         async with self.session() as session:

@@ -116,21 +116,26 @@ class LinuxWatcher:
         if not directory.exists() or not directory.is_dir():
             return {}
 
-        snapshot: dict[Path, int] = {}
+        all_paths: list[Path] = []
         for root, dirs, files in os.walk(directory):
             dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRECTORIES]
             root_path = Path(root)
             for f in files:
-                if len(snapshot) >= self.max_snapshot_files:
-                    logger.warning(
-                        "Polling snapshot for %s reached max_snapshot_files=%s; remaining files skipped",
-                        directory,
-                        self.max_snapshot_files,
-                    )
-                    return snapshot
-                path = root_path / f
-                try:
-                    snapshot[path] = path.stat().st_mtime_ns
-                except OSError:
-                    logger.warning("Could not stat watched file %s", path)
+                all_paths.append(root_path / f)
+                
+        all_paths.sort()
+        if len(all_paths) > self.max_snapshot_files:
+            logger.warning(
+                "Polling snapshot for %s reached max_snapshot_files=%s; remaining files skipped",
+                directory,
+                self.max_snapshot_files,
+            )
+            all_paths = all_paths[:self.max_snapshot_files]
+
+        snapshot: dict[Path, int] = {}
+        for path in all_paths:
+            try:
+                snapshot[path] = path.stat().st_mtime_ns
+            except OSError:
+                logger.warning("Could not stat watched file %s", path)
         return snapshot

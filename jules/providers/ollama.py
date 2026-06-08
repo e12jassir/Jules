@@ -6,7 +6,6 @@ from typing import AsyncIterator
 
 import aiohttp  # type: ignore[import-not-found]
 
-from jules.memory.models import SessionContext
 from jules.providers.base import (
     ProviderError,
     ProviderTimeoutError,
@@ -42,7 +41,7 @@ class OllamaProvider:
     async def ask(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
         options: dict[str, object] | None = None,
     ) -> str:
@@ -64,7 +63,7 @@ class OllamaProvider:
     async def stream(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
         options: dict[str, object] | None = None,
     ) -> AsyncIterator[str]:

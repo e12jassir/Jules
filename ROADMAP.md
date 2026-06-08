@@ -1,5 +1,5 @@
 # ROADMAP.md
-## Versión 1.4
+## Versión 1.5
 ## Plan de Construcción — Jules
 
 > **Principio:** Cada módulo debe funcionar y estar testeado antes de construir el siguiente.
@@ -21,7 +21,6 @@
 ## MODELOS POR FASE SDD
 
 > Los modelos asignados por fase están en `AGENT.md` → sección **MODELOS POR FASE SDD — REGLA INVIOLABLE**.
-> Cada módulo pendiente (9, 10, 11) tiene su propia tabla con flujo y modelos específicos.
 > Fuente de verdad de strings de modelos: `config.toml`.
 
 ---
@@ -93,24 +92,6 @@ El objetivo de Fase 1 es simple: Jules responde en terminal, recuerda entre sesi
 **Tiempo estimado:** 1 sesión
 **Depende de:** Módulo 0
 
-#### Fases SDD para este módulo
-
-> Este módulo está marcado CRÍTICO porque el Módulo 11 hereda su contrato. Un Enum mal diseñado aquí se propaga a todo el CLI. Las fases de propuesta y spec son obligatorias por eso.
-
-| Fase | ¿Correr? | Modelo | Razón |
-|---|---|---|---|
-| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Una vez por sesión — detectar contexto del proyecto |
-| `sdd-explore` | ⚠️ Breve | Gemini 3.1 Pro | Solo verificar que `config.toml` ya tiene sección `[permissions]` y revisar cómo el CLI futuro lo invocará. No requiere mapeo extenso |
-| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Decisiones reales: granularidad del Enum Action, extensibilidad para Fase 2 (acciones de entorno Linux), contrato de `PermissionDeniedError`. Sin esto el CLI no puede integrarlo |
-| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Producir spec técnico preciso: enum completo, firma de `check()`, modo test, estructura de config. Evita ambigüedad en el apply |
-| `sdd-design` | ❌ No | — | Si propose + spec son precisos, el diseño es trivial para un solo archivo |
-| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomponer en tasks atómicas: Enum, `check()`, prompts Rich, config, modo test, tests unitarios |
-| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
-| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | CRÍTICO: verificar que ninguna acción prohibida puede ser overrideada, modo test funciona, config se lee correctamente |
-| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Persistir spec para que Módulo 11 tenga el contrato de referencia |
-
-**Flujo:** `init` → `explore (breve)` → `propose` → `spec` → `tasks` → `apply` → `verify` → `archive`
-
 ```
 Tareas:
 - Implementar PermissionGate en jules/core/permissions.py
@@ -139,24 +120,6 @@ Tareas:
 **Depende de:** Módulos 3, 6, 8, 9
 
 Doctor va antes que el CLI principal porque el CLI va a depender de él para el arranque. En un entorno rolling release, este comando es el primero que corre cuando algo falla.
-
-#### Fases SDD para este módulo
-
-> Módulo mecánico. El spec completo ya existe en JULES.md (tabla de checks, reglas de output, exit codes). No hay ambigüedad que explorar ni decisiones arquitectónicas que tomar. Flujo SDD mínimo.
-
-| Fase | ¿Correr? | Modelo | Razón |
-|---|---|---|---|
-| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Una vez por sesión |
-| `sdd-explore` | ❌ No | — | El spec en JULES.md está completo. No hay ambigüedad que investigar |
-| `sdd-propose` | ❌ No | — | Módulo mecánico. No hay decisiones arquitectónicas — el diseño está canonizado |
-| `sdd-spec` | ❌ No | — | El spec funcional ya vive en JULES.md. Duplicarlo sería ruido |
-| `sdd-design` | ❌ No | — | 10 checks independientes. Diseño trivial y directo |
-| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomponer los 10 checks en tasks atómicas verificables + output JSON + integración CLI |
-| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
-| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que cada check retorna resultado correcto, JSON parseable, exit code correcto |
-| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
-
-**Flujo:** `init` → `tasks` → `apply` → `verify` → `archive` ← el más corto de los módulos pendientes
 
 ```
 Tareas:
@@ -196,214 +159,550 @@ Tareas:
 
 ---
 
-### MÓDULO 11 — CLI principal
-**Clasificación:** MECÁNICO (en superficie) / ALTA COMPLEJIDAD (en integración)
+### [x] MÓDULO 11 — CLI principal
+**Clasificación:** MECÁNICO (en superficie) / ALTA COMPLEJIDAD (en integración) | **Estado:** ✅ Completado
 **Modelo:** GPT 5.4 / Deepseek para boilerplate
-**Tiempo estimado:** 2–3 sesiones
-**Depende de:** todos los módulos anteriores (0–10)
 
-El entrypoint que conecta todo. Más lento de lo estimado en versiones anteriores — aquí aparecen los bugs que no surgieron en tests aislados.
-
-#### Fases SDD para este módulo
-
-> Este es el único módulo que justifica el flujo SDD completo sin excepciones. No por complejidad algorítmica, sino por superficie de integración: conecta todos los módulos, maneja asyncio+Click, gestiona Wayland/KDE, y es el primero en ejecutar el sistema end-to-end. `sdd-explore` es especialmente crítico aquí — sin mapear los contratos reales de los módulos 0–10, el apply corre ciego.
-
-| Fase | ¿Correr? | Modelo | Razón |
-|---|---|---|---|
-| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto del proyecto completo |
-| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | Mapear contratos reales de módulos 0–10, identificar gaps (¿`persist_async` tiene la firma que el CLI asume? ¿el PermissionGate tiene el contrato correcto?), verificar estado de `personality/loader.py` que no existe aún |
-| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Decisiones reales: estructura de `personality/loader.py` + detección de cambios en `master.md`, diseño del output de `jules debug last`, cómo manejar asyncio+Click sin conflictos, cómo comunicar el modo degradado |
-| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | El flujo principal está en JULES.md pero el spec técnico del CLI (comandos, flags, timeouts, manejo de errores por módulo, startup sequence) necesita estar escrito antes del apply |
-| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño de `personality/loader.py` + integración asyncio/Click + estructura del logging para `jules debug last` no son triviales |
-| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Más de 8 componentes (comandos, flujo principal, personality loader, tests e2e, verificaciones Wayland, medición de startup). Sin descomposición es fácil perderse |
-| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación — la más grande de Fase 1 |
-| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Flujo e2e, medición real de startup (<500ms), persistencia entre reinicios (reinicio real del proceso), que la respuesta llega ANTES de que termine la persistencia |
-| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre — el archive debe documentar el estado final para que la Revisión Final tenga contexto |
-
-**Flujo:** flujo SDD completo sin excepciones — `init` → `explore` → `propose` → `spec` → `design` → `tasks` → `apply` → `verify` → `archive`
+El entrypoint que conecta todo. Conecta todos los módulos, maneja asyncio+Click, gestiona Wayland/KDE.
 
 ```
-Tareas:
-- Implementar jules/cli/main.py con Click
-  Comandos:
-    jules "tu pregunta"          # flujo principal
-    jules --model MODEL "query"  # override de modelo
-    jules --task TASK "query"    # override de task type
-    jules --no-memory "query"    # sin recuperación ni persistencia
-    jules memory                 # episodios recientes
-    jules status                 # estado de providers y memoria
-    jules doctor                 # diagnóstico completo (delega a Módulo 10)
-    jules logs --sanitized       # descartes del sanitizador
-    jules logs --scoring         # historial de salud del scorer
-    jules debug last             # última ejecución detallada
-
-  Flujo principal (flujo del JULES.md):
-    1. jules doctor al arranque — solo advertencias, nunca bloqueo
-    2. Sanitizar input
-    3. Construir contexto (SessionContext con shell detectado)
-    4. Recuperar memoria (con timeout)
-    5. Router → Provider → respuesta
-    6. Mostrar respuesta inmediatamente (Rich para formato)
-    7. asyncio.create_task(persist_episode) en background
-
-  Cuidados específicos para EndeavourOS + Wayland:
-    - Verificar que Rich no rompe el output bajo algunos terminales de KDE
-    - Verificar que asyncio.create_task() no crea conflictos con el event loop de Click
-    - Si Ollama está frío al arranque → advertir al usuario con tiempo estimado
-
-- Implementar jules/personality/loader.py
-  - Cargar master.md + preset del provider activo
-  - Inyectar como system prompt en cada llamada
-  - Detectar cambios de versión en master.md y advertir
-
-- Tests de integración end-to-end:
-  - Jules responde una pregunta con el flujo completo
-  - La respuesta llega antes de que termine la persistencia (verificar con logs)
-  - La memoria persiste y se recupera en la siguiente sesión (reinicio real)
-  - jules doctor corre al arranque sin bloquear
-  - jules debug last muestra la última ejecución correctamente
-  - Startup < 500ms con Ollama caliente (medir con time)
+Comandos implementados:
+  jules "tu pregunta"          # flujo principal
+  jules --model MODEL "query"  # override de modelo
+  jules --no-memory "query"    # sin recuperación ni persistencia
+  jules memory                 # episodios recientes
+  jules status                 # estado de providers y memoria
+  jules doctor                 # diagnóstico completo
+  jules logs --sanitized       # descartes del sanitizador
+  jules logs --scoring         # historial de salud del scorer
+  jules debug last             # última ejecución detallada
+  jules --legacy               # TUI Textual (fallback Fase 1.5)
 ```
 
-**Verificación:** `jules "hola"` responde con la personalidad de Jules, sin latencia perceptible. `jules debug last` explica qué pasó. La memoria persiste al reiniciar.
+---
 
-**Done cuando:** flujo completo funciona end-to-end, startup medido, tests de integración pasan.
+### [x] MÓDULO 12 — Auth OpenAI via WebSockets
+**Clasificación:** CRÍTICO | **Modelo:** GPT 5.5 | **Estado:** ✅ Completado
+
+Migración del provider `openai_oauth.py` de peticiones HTTP planas a WebSockets (`wss://chatgpt.com/backend-api/codex/responses`) usando el protocolo asíncrono (`response.create`).
+
+**Descubrimiento crítico:** La ruta Codex requiere obligatoriamente la familia `gpt-5.4` o `gpt-5.5`. Modelos anteriores (`o3`, `gpt-4o`, `o1`) son bloqueados explícitamente.
 
 ---
 
 ### REVISIÓN FINAL DE FASE 1
+**Estado:** ✅ Completada
 **Modelo:** Claude Opus 4.8 (con Thinking activado)
-**Tiempo estimado:** 1 sesión
-**Depende de:** Módulo 11 completado + todos los checks de abajo en verde
-
-Antes de declarar Fase 1 done, Opus revisa el proyecto completo. Es una auditoría destructiva — puede descubrir problemas en módulos ya completados (0–8) que requieran retrabajo. Esto es por diseño.
-
-#### Fases SDD para esta revisión
-
-> No es implementación — es validación. No genera código nuevo salvo fixes puntuales. El flujo SDD es mínimo y orientado exclusivamente a verificación.
-
-| Fase | ¿Correr? | Modelo | Razón |
-|---|---|---|---|
-| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto del proyecto para el agente que hace la auditoría |
-| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | La revisión debe leer el sistema completo para validar contra los 20 items del checklist. Sin esto la verificación es superficial |
-| `sdd-propose` | ❌ No | — | No hay decisiones nuevas — es validación de decisiones ya tomadas |
-| `sdd-spec` | ❌ No | — | No genera spec nuevo |
-| `sdd-design` | ❌ No | — | No genera diseño nuevo |
-| `sdd-tasks` | ⚠️ Opcional | Claude Sonnet 4.6 | Útil para estructurar los 20 items del checklist como tasks verificables si el agente lo necesita |
-| `sdd-apply` | ❌ Solo si hay fixes | Gemini 3.5 Flash | Solo si la revisión encuentra problemas. En ese caso: volver al módulo correspondiente, no parchear en la revisión |
-| `sdd-verify` | ✅ Sí — **es la fase central** | Claude Opus 4.8 | Esto es exactamente lo que hace la revisión: validar el sistema completo contra el spec. Usar Thinking activado |
-| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre formal de Fase 1. Gate antes de Fase 1.5 |
-
-**Flujo:** `init` → `explore` → `verify` → `archive`
 
 ```
-Checklist de Fase 1:
-- [ ] Jules responde en terminal sin latencia perceptible
-- [ ] La memoria persiste entre reinicios — verificado manualmente
-- [ ] El sanitizador descarta secrets — verificado con tests
-- [ ] El router selecciona el modelo correcto — verificado con tests
-- [ ] El fallback a Ollama funciona — verificado matando Antigravity
-- [ ] La búsqueda semántica recupera por relevancia, no recencia
-- [ ] Llama hace el scoring — verificado con mocks
-- [ ] ScoringHealthMonitor activo y loggeable
-- [ ] El sistema de permisos bloquea acciones no autorizadas
-- [ ] Todas las migraciones Alembic aplicadas y versionadas
-- [ ] Sin modelos hardcodeados fuera de config.toml (grep verifica)
-- [ ] El post-procesamiento corre en background — verificado con logs
-- [ ] jules doctor reporta estado completo del entorno
-- [ ] jules debug last explica la última ejecución
-- [ ] Shell detectado correctamente y hooks instalados para ese shell
-- [ ] Límite de inotify verificado y configurado
-- [ ] Ollama corre bajo el usuario correcto — verificado
-- [ ] Startup < 500ms con Ollama caliente — medido
-- [ ] Las fallas de memoria degradan, no rompen la respuesta
-- [ ] El virtualenv está aislado y requirements.lock está actualizado
+Checklist de Fase 1 — todos en verde:
+[✓] Jules responde en terminal sin latencia perceptible
+[✓] La memoria persiste entre reinicios
+[✓] El sanitizador descarta secrets
+[✓] El router selecciona el modelo correcto
+[✓] El fallback a Ollama funciona
+[✓] La búsqueda semántica recupera por relevancia, no recencia
+[✓] Llama hace el scoring (nunca modelo externo)
+[✓] ScoringHealthMonitor activo y loggeable
+[✓] El sistema de permisos bloquea acciones no autorizadas
+[✓] Todas las migraciones Alembic aplicadas y versionadas
+[✓] Sin modelos hardcodeados fuera de config.toml
+[✓] El post-procesamiento corre en background
+[✓] jules doctor reporta estado completo del entorno
+[✓] jules debug last explica la última ejecución
+[✓] Shell detectado correctamente y hooks instalados
+[✓] Startup < 500ms con Ollama caliente
+[✓] OpenAI auth via WebSockets funcional (M12)
 ```
-
-Si algo falla: arreglar antes de avanzar a Fase 1.5.
 
 ---
 
-## FASE 1.5 — ESTABILIZACIÓN
+## FASE 1.5 — MIGRACIÓN TUI A RUST + RATATUI 📋 Planificado
 
-No añadir features nuevas. Esta fase existe para evitar construir expansión sobre una base que apenas fue probada en condiciones reales.
+La TUI actual (Python Textual) tiene una limitación arquitectónica irresoluble: Textual pinta cada celda del terminal con color sólido, rompiendo la transparencia del compositor (Ghostty + KDE). La migración reemplaza **solo la capa de presentación** — el backend Python permanece intacto.
 
-### Fases SDD para Fase 1.5
+### Decisión de arquitectura
 
-> Esta fase es observación y calibración, no implementación. No hay código nuevo salvo fixes puntuales detectados en uso real. El flujo SDD es mínimo.
+```
+ANTES:  Python (backend) <-> Python Textual (frontend) — un proceso
+AHORA:  Python (backend) <-> stdin/stdout (pipes) <-> Rust/Ratatui (frontend) — dos procesos
+```
+
+**Stack elegido:** Rust + Ratatui + Tokio + Crossterm
+- **Ratatui v0.29+**: immediate mode TUI — no emite background si no se especifica, transparencia nativa garantizada por diseño
+- **Tokio**: async runtime para manejar IPC con backend Python sin bloquear el event loop del TUI
+- **Crossterm**: input/output terminal multiplataforma, manejo de resize
+- **`cargo build --release`**: binario nativo sin runtime externo, startup sub-10ms
+
+**Por qué Rust y no TypeScript (OpenTUI) o Node (Ink):**
+- OpenTUI: proyecto experimental con API inestable — riesgo de abandono alto, documentación escasa
+- Ink: requiere Node runtime (~120MB), event loop compite con Python async
+- Ratatui: v0.29+, comunidad activa, modelo immediate mode resuelve la transparencia en la capa correcta
+- El aprendizaje de Rust es una inversión duradera; OpenTUI no lo es
+
+**Protocolo IPC:** stdin/stdout newline-delimited JSON
+- La TUI Rust hace spawn de `python -m jules.server` al arrancar
+- Comunicación bidireccional vía pipes del proceso hijo
+- Sin servidor HTTP, sin socket, sin configuración de red
+- Testeable con: `echo '{"type":"message","content":"hola"}' | python -m jules.server`
+
+**Fallback:** `jules --legacy` sigue abriendo la TUI Textual hasta que la migración esté completa.
+
+---
+
+### Estructura de archivos
+
+```
+Jules/
+├── jules/server/           ← NUEVO: servidor Python stdin/stdout
+│   ├── __init__.py
+│   ├── protocol.py         ← dataclasses de mensajes (tipado completo)
+│   ├── server.py           ← loop asyncio: lee stdin, escribe stdout
+│   └── handlers.py         ← dispatch type -> función del backend real
+├── tests/integration/
+│   └── test_server_ipc.py  ← NUEVO: tests del servidor aislado
+└── jules-tui/              ← NUEVO: frontend Rust (crate independiente)
+    ├── Cargo.toml
+    ├── Cargo.lock
+    └── src/
+        ├── main.rs         ← entrypoint: spawn Python, event loop principal
+        ├── ipc.rs          ← stdin/stdout protocol, serde_json
+        ├── app.rs          ← AppState: mensajes, input, modelo activo, status
+        ├── ui.rs           ← draw fn raíz (Ratatui frame)
+        └── widgets/
+            ├── chat_log.rs     ← mensajes + streaming token a token
+            ├── input_bar.rs    ← input + history + slash command detection
+            ├── sidebar.rs      ← panels: model, memory, stats
+            ├── status_bar.rs   ← cwd, branch, clock, estado
+            └── model_picker.rs ← overlay de selección de modelo
+```
+
+---
+
+### Protocolo IPC — Contrato completo
+
+> **Versión del protocolo:** `1`. El campo `protocol_version` en el handshake permite detectar incompatibilidades sin crashear.
+
+```json
+// ─── TUI → Python (stdin del proceso hijo) — una línea por mensaje ───
+
+// Handshake: primer mensaje que envía la TUI al arrancar
+{"type": "init", "protocol_version": 1}
+
+// Flujo principal
+{"type": "message",   "content": "pregunta del usuario"}
+{"type": "cancel"}                                          // cancela la generación activa; no mata el proceso
+
+// Comandos internos
+{"type": "command",   "name": "sessions", "args": []}
+{"type": "model_set", "provider": "google", "model": "gemini-3.5-flash-high"}
+{"type": "model_list"}
+{"type": "status_get"}
+{"type": "quit"}
+
+
+// ─── Python → TUI (stdout del proceso hijo) — una línea por mensaje ───
+
+// Handshake: Python responde cuando está listo para recibir mensajes
+{"type": "ready", "protocol_version": 1, "boot_ms": 312}
+
+// Streaming de respuesta
+{"type": "token",         "content": "hel"}
+{"type": "thought",       "content": "analizando..."}
+{"type": "done",          "tokens": 342}
+{"type": "cancelled"}                                       // confirma que la generación fue cancelada limpiamente
+
+// Respuesta a comandos — shape genérica
+{"type": "command_result", "name": "sessions", "ok": true, "data": [...]}
+{"type": "command_result", "name": "sessions", "ok": false, "error": "store unavailable"}
+
+// Estado y configuración
+{"type": "model_changed", "provider": "google", "model": "gemini-3.5-flash-high"}
+{"type": "model_list",    "models": [["google", "gemini-flash"], ["ollama", "llama3.2:1b"]]}
+{"type": "status",        "online": true, "episodes": 25, "scoring_healthy": true}
+
+// Errores
+{"type": "error", "message": "provider unavailable", "recoverable": true}
+```
+
+**Reglas del protocolo:**
+- Si `protocol_version` del `ready` ≠ `protocol_version` del `init` → TUI muestra error y no envía más mensajes.
+- `cancel` solo es válido entre un `message` y su `done`. Fuera de ese rango se ignora silenciosamente.
+- Logs internos de Python van a **stderr**, nunca a stdout. stdout es exclusivo del protocolo.
+- En EOF de stdout (proceso muerto) la TUI emite `IpcEvent::Died` y aplica la política de respawn definida en `AppState`.
+
+---
+
+### Plan de implementación detallado
+
+#### Batch 1 — Protocolo Python (Día 1)
+
+```
+Objetivo: tener un servidor Python testeable de forma aislada antes de tocar Rust.
+Todo Python puro — sin dependencias nuevas.
+
+B1.1  jules/server/protocol.py
+      - Dataclass base IpcMessage con campo `type: str`
+      - Subclases: InitRequest, MessageRequest, CommandRequest, ModelSetRequest,
+        ModelListRequest, StatusGetRequest, CancelRequest, QuitRequest
+      - Subclases de respuesta: ReadyEvent, TokenEvent, ThoughtEvent, DoneEvent,
+        CancelledEvent, CommandResultEvent, ModelChangedEvent, ModelListEvent,
+        StatusEvent, ErrorEvent
+      - to_json() / from_json() para cada tipo
+      - Tests: round-trip serialization para cada tipo
+
+B1.2  jules/server/handlers.py
+      - handle_init(protocol_version) → ReadyEvent con boot_ms real
+      - handle_message(req) → async generator que emite eventos IPC
+        ← llama al router real, emite token a token
+      - handle_cancel() → interrumpe la generación activa, emite CancelledEvent
+      - handle_model_list() → ModelListEvent con providers reales
+      - handle_model_set(provider, model) → ModelChangedEvent
+      - handle_status_get() → StatusEvent con datos reales
+      - handle_command(name, args) → CommandResultEvent (ok: bool, data o error)
+      - handle_quit() → cierra el proceso limpiamente
+
+B1.3  jules/server/server.py
+      - loop asyncio principal:
+        asyncio.get_event_loop().run_until_complete(main())
+      - main(): lee stdin línea por línea (asyncio.StreamReader)
+      - Deserializa JSON -> IpcMessage
+      - Dispatch a handler correspondiente
+      - Escribe respuestas a stdout (flush inmediato por evento)
+      - Escribe logs a stderr (nunca a stdout — stdout es del protocolo)
+      - Manejo de SIGTERM: flush y exit limpio
+
+B1.4  tests/integration/test_server_ipc.py
+      - Test: enviar message -> recibir tokens -> done
+      - Test: enviar model_list -> recibir lista real de providers
+      - Test: enviar quit -> proceso termina con exit code 0
+      - Test: JSON malformado -> error event, servidor no muere
+      Ejecutar: python -m jules.server < fixtures/test_message.jsonl
+
+Verificación del batch:
+  echo '{"type":"model_list"}' | python -m jules.server
+  # debe imprimir: {"type":"model_list","models":[...]}
+```
+
+#### Batch 2 — Scaffold Rust + IPC (Día 2)
+
+```
+Objetivo: un binario Rust que arranque, haga spawn de Python, se comunique
+vía pipes, y renderice un frame básico con Ratatui. Sin widgets complejos aún.
+
+B2.1  jules-tui/Cargo.toml
+      ratatui = "0.29"
+      crossterm = { version = "0.28", features = ["event-stream"] }
+      tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "process", "sync", "time"] }
+      serde = { version = "1", features = ["derive"] }
+      serde_json = "1"
+      anyhow = "1"
+      # Nota: NO usar features = ["full"] — infla el binario ~1.5MB extra sin beneficio.
+      # Las features listadas cubren exactamente lo que usa la TUI.
+
+B2.2  jules-tui/src/ipc.rs
+      - Enum IpcEvent (mismo contrato que protocol.py — lado Rust)
+      - Enum IpcCommand
+      - Serializar IpcCommand -> JSON + newline -> stdin del proceso
+      - Loop async: leer stdout del proceso línea por línea
+      - Deserializar JSON -> IpcEvent
+      - Enviar a tokio::sync::mpsc::Sender<IpcEvent>
+      - Manejo de EOF: el proceso Python murió -> emitir IpcEvent::Died
+
+B2.3  jules-tui/src/app.rs
+      - Struct AppState:
+          messages: Vec<ChatMessage>  (role + content + timestamp)
+          input: String
+          cursor_pos: usize
+          active_model: String
+          active_provider: String
+          status_online: bool
+          episodes: u32
+          generating: bool
+          current_token_buffer: String
+          scroll_offset: u16
+          show_model_picker: bool
+          model_list: Vec<(String, String)>  // (provider, model)
+          backend_status: BackendStatus      // Ready | Connecting | Dead(reason)
+          respawn_attempts: u8               // contador para política de respawn
+      - impl AppState: new(), handle_event(IpcEvent)
+
+      **Política de respawn** (ejecutar en handle_event para IpcEvent::Died):
+      - Si `respawn_attempts < 3`: esperar 1s, respawnear Python, incrementar contador.
+      - Si `respawn_attempts >= 3`: marcar `backend_status = Dead("max retries")`,
+        mostrar error en chat log, NO seguir reintentando.
+      - Un `ready` exitoso resetea `respawn_attempts` a 0.
+      - El usuario puede forzar reconexión manual (Ctrl+R) desde cualquier estado Dead.
+
+B2.4  jules-tui/src/main.rs
+      - Inicializar crossterm (raw mode, alternate screen)
+      - Spawn python -m jules.server como proceso hijo con pipes
+      - Lanzar tokio task: ipc::reader_loop(stdout_pipe, tx)
+      - Event loop principal (tokio::select!):
+          terminal.draw(|f| ui::draw(f, &state))   // render
+          event = terminal_events.next()            // input teclado
+          msg = rx.recv()                           // IPC events
+      - En SIGTERM/Ctrl+C: enviar {"type":"quit"}, esperar proceso, restaurar terminal
+      - Manejo de panic: siempre restaurar terminal antes de propagar
+
+B2.5  Tests Rust — jules-tui/src/ipc.rs y app.rs
+      - Test: deserializar JSON de cada variante de IpcEvent
+      - Test: serializar cada variante de IpcCommand produce JSON correcto
+      - Test: AppState::handle_event(TokenEvent) → acumula en current_token_buffer
+      - Test: AppState::handle_event(DoneEvent) → mueve buffer a messages, generating=false
+      - Test: AppState::handle_event(IpcEvent::Died) → sets status a disconnected
+      Ejecutar: cd jules-tui && cargo test
+
+Verificación del batch:
+  cd jules-tui && cargo build
+  ./target/debug/jules-tui
+  # debe abrir pantalla en blanco (alternate screen), sin crash,
+  # sin background visible (celda transparente)
+  # Ctrl+C cierra limpiamente
+```
+
+#### Batch 3 — Chat funcional con transparencia (Día 3)
+
+```
+Objetivo: enviar un mensaje real, ver tokens streamear en tiempo real,
+verificar transparencia en Ghostty con compositor Wayland.
+
+B3.1  jules-tui/src/ui.rs — layout raíz
+      Layout::vertical([
+          Constraint::Length(1),    // header: "🌹 jules  |  chat"
+          Constraint::Fill(1),      // chat_log
+          Constraint::Length(3),    // input_bar
+          Constraint::Length(1),    // status_bar
+      ])
+      + Layout::horizontal para sidebar (30 cols) en la zona central
+      REGLA: nunca llamar .style(Style::default().bg(Color::...)) en
+      la raíz del frame — dejar que el compositor haga su trabajo.
+
+B3.2  jules-tui/src/widgets/chat_log.rs
+      impl Widget for ChatLog<'_>
+      - Renderizar Vec<ChatMessage> con colores del mockup:
+          usuario: Color::Rgb(102, 102, 102)   // #666666
+          jules:   Color::Rgb(255, 121, 198)   // #ff79c6
+          body:    Color::Rgb(204, 204, 204)   // #cccccc
+      - Cursor parpadeante █ al final del mensaje en generación
+        (alternar visibilidad cada 500ms con tokio::time::interval)
+      - Scroll: calcular visible_lines desde scroll_offset
+      - Auto-scroll al fondo cuando llega nuevo token
+
+B3.3  jules-tui/src/widgets/input_bar.rs
+      impl Widget for InputBar<'_>
+      - Borde: Color::Rgb(255, 121, 198) // #ff79c6 — igual que mockup
+      - Fondo del input: Color::Rgb(17, 17, 17) // #111111
+      - Prompt “>” en rosa, cursor de texto en posición real
+      - Keybindings:
+          Enter     → enviar mensaje
+          Backspace → borrar carácter
+          Left/Right → mover cursor
+          Up/Down   → history de inputs
+          Ctrl+C    → quit
+          / al inicio → activar prefijo de slash command
+
+B3.4  Verificación de transparencia (obligatoria antes de B4)
+      - Abrir jules-tui en Ghostty con blur activado
+      - Verificar que el fondo del terminal se ve a través de las zonas
+        donde no se renderiza contenido
+      - Si alguna zona tiene fondo sólido no deseado: revisar .bg() calls
+      - Captura de pantalla para documentar el resultado
+
+B3.5  Tests Rust — widgets
+      - Test: ChatLog renderiza mensaje de usuario con color correcto (buffer snapshot)
+      - Test: InputBar captura Backspace → borra carácter en posición correcta
+      - Test: InputBar captura Enter → emite IpcCommand::Message y limpia input
+      - Test: auto-scroll cuando llega nuevo token (scroll_offset = max)
+      Ejecutar: cd jules-tui && cargo test
+
+Verificación del batch:
+  Escribir “hola” + Enter -> ver tokens de Jules streamear en el chat log
+  La pantalla NO tiene fondo sólido visible con transparencia activa
+```
+
+#### Batch 4 — TUI completa + build (Día 4)
+
+```
+Objetivo: paridad funcional completa con la TUI Textual anterior.
+Binario distribuible. jules --legacy como fallback documentado.
+
+B4.1  jules-tui/src/widgets/status_bar.rs
+      - Izquierda: "~/cwd  ↳ branch  ● Auto-saved"
+      - Centro: keybindings (dim)
+      - Derecha: "HH:MM  🌹"
+      - Colores: igual que mockup HTML
+      - Branch: leer via Command::new("git") en background cada 30s
+
+B4.2  jules-tui/src/widgets/sidebar.rs
+      Panel MODELO (arriba):
+        - Nombre del modelo activo (bold, Color::Rgb(240,240,240))
+        - Provider + "online" badge en verde
+      Panel MEMORIA:
+        - Episodios, hechos, recuerdos — actualizados via StatusEvent
+      Panel ESTADÍSTICAS:
+        - Tokens usados, costo sesión, tiempo sesión (ticker local)
+      Sidebar colapsable: Ctrl+B toggle
+
+B4.3  jules-tui/src/widgets/model_picker.rs
+      - Overlay centrado (popup sobre el chat)
+      - Lista scrollable de (provider, model) recibida via model_list
+      - Filtro por teclado (fuzzy sobre el nombre)
+      - Enter → enviar model_set al backend
+      - Esc → cerrar sin cambiar
+      - Activar: Ctrl+M
+
+B4.4  Keybindings finales
+      Ctrl+C   → quit (con confirmación si hay generación activa)
+      Ctrl+M   → toggle model picker
+      Ctrl+B   → toggle sidebar
+      Ctrl+P   → command palette (slash commands como overlay)
+      Ctrl+R   → reconectar backend (solo visible cuando backend_status = Dead)
+      Tab      → cycle model (sin abrir picker)
+      PgUp/Dn  → scroll chat
+      Home/End → ir al principio/final del chat
+
+B4.5  Resize handling
+      Evento terminal::Event::Resize(w, h) → actualizar dimensions en AppState
+      → próximo frame recalcula layout automáticamente (Ratatui lo maneja)
+
+B4.6  cargo build --release
+      - Verificar tamaño del binario (target: < 5MB sin strip, < 2MB con strip)
+      - strip jules-tui/target/release/jules-tui
+      - Medir startup del binario hasta primer frame: `hyperfine './target/release/jules-tui --no-spawn' 2>/dev/null`
+        (--no-spawn: flag que muestra el primer frame y sale sin spawnear Python — target: < 10ms)
+        Nota: el arranque *percibido* incluye Python (~300-500ms). El < 10ms mide solo el binario.
+        Ambos se muestran en la status bar al arrancar.
+
+B4.7  Integración con jules CLI
+      - jules sin args → detecta que hay un TUI disponible → lanza jules-tui
+      - jules --legacy → lanza la TUI Textual (jules/cli/main.py)
+      - jules "query" → modo CLI legacy (respuesta en terminal, sin TUI)
+
+B4.8  Tests Rust — integración y regresión
+      - Test: ModelPicker filtra lista por texto ingresado (fuzzy match)
+      - Test: Ctrl+M toggle show_model_picker en AppState
+      - Test: Resize(w, h) no rompe el layout (no panic, re-render limpio)
+      - Test: input de mensaje largo (>200 chars) no desborda el buffer
+      - Test end-to-end mock: spawn servidor mock Python en Rust → enviar init → recibir ready → enviar message → recibir tokens → done
+      Ejecutar: cd jules-tui && cargo test --all
+
+Verificación del batch:
+  Flujo completo: abrir TUI → escribir mensaje → ver streaming →
+  cambiar modelo (Ctrl+M) → ver sidebar actualizar → cerrar (Ctrl+C)
+  Transparencia verificada en Ghostty + KDE compositor
+  cargo build --release → binario funcional
+```
+
+---
+
+### Fases SDD por Batch
+
+> `sdd-init` se corre UNA sola vez antes del Batch 1 y no se repite. El contexto del proyecto y el Rust toolchain quedan cacheados en Engram para todos los batches.
+
+**sdd-init** (una vez, antes de Batch 1) — **Gemini 3.5 Flash**
+Detectar stack del proyecto + verificar que Rust toolchain esté instalado (`rustc`, `cargo`). Sin esto el apply de B2 falla silenciosamente.
+
+---
+
+#### Batch 1 — Protocolo Python
 
 | Fase | ¿Correr? | Modelo | Razón |
 |---|---|---|---|
-| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Una vez al inicio de la fase |
-| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Leer logs reales, datos de latencia, episodios persistidos, fallbacks ocurridos. Es la base de la calibración |
-| `sdd-propose` | ⚠️ Solo si aparece un problema | Claude Opus 4.8 | Si `explore` detecta un problema de fondo (ej: scoring threshold incorrecto, retrieval degradado), entonces sí. Si todo está bien, no |
-| `sdd-spec` | ⚠️ Solo si hay fix | Claude Sonnet 4.6 | Solo para documentar cambios que surjan de problemas detectados |
-| `sdd-design` | ❌ No | — | Sin features nuevas, no hay diseño |
-| `sdd-tasks` | ❌ No | — | Sin features nuevas |
-| `sdd-apply` | ⚠️ Solo si hay fix | Gemini 3.5 Flash | Fixes puntuales. No features |
-| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Al final de la fase: validar que los criterios de entrada a Fase 2 se cumplen |
-| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Documentar estado real del sistema antes de entrar a Fase 2 |
+| `sdd-explore` | ❌ No | — | El protocolo ya está completamente especificado en el ROADMAP. No hay ambigüedad que investigar |
+| `sdd-propose` | ❌ No | — | Las decisiones ya están tomadas: dataclasses, stdin/stdout, newline-delimited JSON |
+| `sdd-spec` | ❌ No | — | El contrato IPC está canonizado arriba. Duplicarlo sería ruido |
+| `sdd-design` | ❌ No | — | Python puro, sin arquitectura nueva. Diseño trivial |
+| `sdd-tasks` | ✅ Sí | **Claude Sonnet 4.6** | Descomponer B1.1–B1.4 en tasks atómicas con archivos y firmas exactas |
+| `sdd-apply` | ✅ Sí | **Gemini 3.5 Flash** | Implementación mecánica: dataclasses + loop asyncio + handlers |
+| `sdd-verify` | ✅ Sí | **Claude Sonnet 4.6** | Verificar round-trip JSON de cada tipo + que stdout queda libre de logs |
+| `sdd-archive` | ✅ Sí | **Gemini Flash-Lite** | Persistir contrato para que B2 lo use como referencia |
 
-**Flujo normal:** `init` → `explore` → `verify` → `archive`
-**Flujo con fix:** `init` → `explore` → `propose` → `spec` → `apply` → `verify` → `archive`
+**Flujo:** `tasks` → `apply` → `verify` → `archive`
 
-### Tareas
+---
+
+#### Batch 2 — Scaffold Rust + IPC
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-explore` | ✅ Sí | **Gemini 3.1 Pro** | Leer API de Ratatui 0.29 + Crossterm 0.28 + tokio::process. Hay detalles no obvios en cómo Crossterm maneja raw mode junto con tokio::select! |
+| `sdd-propose` | ❌ No | — | La arquitectura (AppState + mpsc + ipc task) ya está definida en el ROADMAP |
+| `sdd-spec` | ❌ No | — | Los contratos de AppState e IpcEvent están en el ROADMAP con suficiente precisión |
+| `sdd-design` | ✅ Sí | **Claude Opus 4.8** | El event loop con `tokio::select!` sobre tres fuentes (terminal events, IPC channel, tick timer) tiene edge cases reales de ordering y cancellation. Merece diseño explícito antes del apply |
+| `sdd-tasks` | ✅ Sí | **Claude Sonnet 4.6** | Descomponer B2.1–B2.5 en tasks con tipos Rust exactos |
+| `sdd-apply` | ✅ Sí | **Claude Sonnet 4.6** | Rust con diseño no trivial — Sonnet entiende el borrow checker mejor que Flash para este scope |
+| `sdd-verify` | ✅ Sí | **Claude Opus 4.8** | Verificar: spawn Python + handshake exitoso + primer frame sin background sólido + tests pasan |
+| `sdd-archive` | ✅ Sí | **Gemini Flash-Lite** | Cierre |
+
+**Flujo:** `explore` → `design` → `tasks` → `apply` → `verify` → `archive`
+
+---
+
+#### Batch 3 — Chat funcional + transparencia
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-explore` | ❌ No | — | La API de Ratatui ya se estudió en B2. No hay nuevo territorio |
+| `sdd-propose` | ❌ No | — | El diseño de widgets y colores está en el ROADMAP con referencias al mockup HTML |
+| `sdd-spec` | ❌ No | — | Los contratos de cada widget están suficientemente definidos |
+| `sdd-design` | ⚠️ Breve | **Claude Sonnet 4.6** | Solo si la verificación de transparencia de B3.4 encuentra un problema. En ese caso, diseñar la solución antes de parchear a ciegas |
+| `sdd-tasks` | ✅ Sí | **Claude Sonnet 4.6** | Descomponer B3.1–B3.5 en tasks con traits Ratatui exactos |
+| `sdd-apply` | ✅ Sí | **Claude Sonnet 4.6** | Widgets con rendering Ratatui — requiere conocimiento del modelo immediate mode |
+| `sdd-verify` | ✅ Sí | **Claude Opus 4.8** | CRÍTICO: verificar transparencia en Ghostty real + streaming token a token funciona. No se puede automatizar — requiere inspección visual |
+| `sdd-archive` | ✅ Sí | **Gemini Flash-Lite** | Cierre + captura de pantalla de transparencia como evidencia |
+
+**Flujo:** `tasks` → `apply` → `verify` → `archive` (+ `design` solo si transparencia falla)
+
+---
+
+#### Batch 4 — TUI completa + build
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-explore` | ❌ No | — | No hay territorio nuevo: widgets adicionales sobre la base de B3 |
+| `sdd-propose` | ❌ No | — | Sin decisiones arquitectónicas nuevas |
+| `sdd-spec` | ❌ No | — | Contratos de ModelPicker, Sidebar y StatusBar están en el ROADMAP |
+| `sdd-design` | ❌ No | — | Extensión mecánica de widgets existentes |
+| `sdd-tasks` | ✅ Sí | **Claude Sonnet 4.6** | Descomponer B4.1–B4.8 incluyendo integración CLI (`jules` sin args) y `--no-spawn` |
+| `sdd-apply` | ✅ Sí | **Gemini 3.5 Flash** | Widgets adicionales + keybindings + resize: mecánico una vez que B2/B3 están sólidos |
+| `sdd-verify` | ✅ Sí | **Claude Opus 4.8** | Verificar paridad funcional completa con TUI Textual + flujo end-to-end + binario release |
+| `sdd-archive` | ✅ Sí | **Gemini Flash-Lite** | Cierre final + marcar `jules/cli/` Textual como deprecated en AGENT.md |
+
+**Flujo:** `tasks` → `apply` → `verify` → `archive`
+
+---
+
+### Criterio de DONE — Fase 1.5
 
 ```
-Performance y latencia:
-- Medir latencia real de startup (Ollama frío vs caliente)
-- Medir tiempo de retrieval en condiciones reales
-- Medir tiempo total de respuesta con providers externos
-
-Memoria:
-- Detectar retrieval irrelevante en sesiones reales
-- Calibrar scoring threshold con episodios reales
-- Observar consumo de RAM con LanceDB bajo carga real
-- Revisar logs reales de qué se persistió y qué se descartó
-
-Sanitizador:
-- Detectar falsos positivos en workflows reales de desarrollo
-- Documentar casos que generaron descarte inesperado
-
-Entorno:
-- Verificar hooks de shell bajo el shell real en uso diario
-- Verificar watcher bajo carga real (proyectos grandes)
-- Confirmar inotify no se agota en sesiones largas
-- Verificar Ollama systemd bajo el usuario correcto en todas las condiciones
-
-Resiliencia:
-- Probar modo degradado sin LanceDB
-- Probar modo degradado sin SQLite
-- Probar modo degradado sin Antigravity
-- Probar modo degradado sin OpenCode
-- Probar modo degradado con scoring degenerado
-- Verificar que jules doctor detecta cada modo degradado
-
-Calidad:
-- Revisar logs reales de fallback
-- Mejorar prompts de identidad basándose en respuestas reales
-- Eliminar complejidad innecesaria detectada en uso real
+- [ ] `jules` (binario Rust compilado) abre TUI sin error
+- [ ] Transparencia verificada en Ghostty + KDE compositor (captura de pantalla)
+- [ ] Paridad funcional completa con TUI Textual anterior
+- [ ] Streaming token a token funciona vía IPC (stdin/stdout pipes)
+- [ ] Slash commands funcionan vía IPC
+- [ ] Model picker (Ctrl+M) funciona con datos reales
+- [ ] Sidebar actualiza con datos reales de memoria y modelo
+- [ ] Degradación graceful: backend muerto = mensaje de error visible, no crash
+- [ ] Respawn automático: hasta 3 intentos con 1s de espera entre cada uno; después muestra error y espera Ctrl+R
+- [ ] Startup TUI < 10ms (medido con `time`)
+- [ ] Backend Python listo < 500ms (medido en status bar)
+- [ ] `cargo build --release` produce binario sin dependencias externas
+- [ ] `jules --legacy` sigue abriendo TUI Textual
+- [ ] Tests del servidor Python pasan (test_server_ipc.py)
+- [ ] Tests IPC Rust pasan (mock del servidor)
+- [ ] Resize del terminal no rompe el layout
 ```
 
 ### Criterio de entrada a Fase 2
 
-Ninguna feature de Fase 2 empieza antes de:
-
 ```
-- [ ] 2 semanas de uso real en workflow diario
-- [ ] ≥100 episodios persistidos en condiciones reales
-- [ ] ≥10 sesiones completas reales
-- [ ] Fallback probado manualmente múltiples veces
-- [ ] jules debug last usado para diagnosticar errores reales
-- [ ] Jules doctor no reporta ningún ✗ pendiente
-- [ ] El sanitizador bloqueó secrets sin romper trabajo normal
-- [ ] La memoria recuperó episodios útiles en sesiones reales
-- [ ] Los falsos positivos conocidos están documentados
-- [ ] El sistema funcionó en modo degradado parcial al menos una vez
+- [ ] Fase 1.5 DONE completo
+- [ ] 1 semana de uso real en workflow diario con la TUI Rust
+- [ ] ≥50 mensajes procesados vía IPC sin errores
+- [ ] Binario distribuible testeado en instalación limpia
+- [ ] jules/cli/ (Textual) marcado como deprecated en AGENT.md
 ```
-
-Si esta fase parece aburrida, está funcionando.
-La estabilidad rara vez se siente épica. Solo evita incendios.
 
 ---
 
@@ -552,24 +851,6 @@ Eliminar boot tax de subprocess (~2s/invocación). Daemon mode o HTTP/Sockets lo
 | `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
 | `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Medir latencia real antes y después. La mejora debe ser medible |
 | `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
-
----
-
-## FASE 2 — EXPERIENCIA Y CONECTIVIDAD AVANZADA (PLANIFICADA)
-
-### MÓDULO 12 — Refactor del Auth de OpenAI (WebSockets)
-**Clasificación:** CRÍTICO | **Modelo:** GPT 5.5 | **Estado:** ✅ Completado
-**Resumen:** Se migró el proveedor `openai_oauth.py` de peticiones HTTP planas a WebSockets (`wss://chatgpt.com/backend-api/codex/responses`) usando el protocolo asíncrono (`response.create`). 
-**Descubrimiento Crítico:** La ruta Codex bloquea explícitamente modelos antiguos como `o3`, `gpt-4o`, `o1`. Requiere obligatoriamente usar la familia `gpt-5.4` o `gpt-5.5`. Si el token no tiene cuota, devuelve `The usage limit has been reached`, pero acepta la arquitectura.
-
-### MÓDULO 13 — Jerarquía Interactiva de Providers en TUI
-**Clasificación:** UX/ARQUITECTURA | **Modelo:** Pendiente | **Estado:** 🚧 Planeado
-**Resumen:** Refactorizar el comando monolítico `/model` en un árbol interactivo en el TUI.
-**Diseño UX:**
-1. Comando unificado `/provider <categoría>` (`cli`, `oauth`, `api`, `local`).
-2. Al presionar Enter, se despliega un Modal (OptionList) en Textual para elegir el proveedor específico.
-3. El comando `/model` dependerá del proveedor activo y autocompletará dinámicamente sus modelos (ej: `gpt-5.5` para OpenAI OAuth, `llama3` para local).
-**Implementación esperada:** Modificar `jules/cli/screens/chat.py` (método `on_input_changed`) y crear modales en `jules/cli/widgets/`.
 
 ---
 

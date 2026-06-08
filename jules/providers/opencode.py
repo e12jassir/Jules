@@ -5,7 +5,6 @@ import re
 import shutil
 from typing import AsyncIterator
 
-from jules.memory.models import SessionContext
 from jules.providers.base import (
     ProviderError,
     ProviderTimeoutError,
@@ -31,7 +30,7 @@ class OpenCodeProvider:
         self.executable = "opencode"
         self.timeout_seconds = timeout_seconds
 
-    async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
+    async def ask(self, prompt: str, context: list[dict], model: str) -> str:
         del context
         if prompt.startswith("-"):
             raise ProviderError("Invalid prompt: must not start with '-' to prevent argument injection.")
@@ -40,14 +39,15 @@ class OpenCodeProvider:
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )
         return await self._run_cli(
-            [self.executable, "--pure", "--variant", "minimal", "run", prompt, "-m", model],
+            [self.executable, "--pure", "--variant", "minimal", "run", "-m", model],
+            prompt=prompt,
             timeout=self.timeout_seconds,
         )
 
     async def stream(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
     ) -> AsyncIterator[str]:
         del context
@@ -58,13 +58,17 @@ class OpenCodeProvider:
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )
 
-        args = [self.executable, "--pure", "--variant", "minimal", "run", prompt, "-m", model]
+        args = [self.executable, "--pure", "--variant", "minimal", "run", "-m", model]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            if proc.stdin:
+                proc.stdin.write(prompt.encode())
+                proc.stdin.close()
         except FileNotFoundError as exc:
             raise ProviderUnavailableError(
                 f"OpenCode CLI executable not found: {self.executable}"
@@ -104,10 +108,11 @@ class OpenCodeProvider:
     async def close(self) -> None:
         pass
 
-    async def _run_cli(self, args: list[str], timeout: float) -> str:
+    async def _run_cli(self, args: list[str], prompt: str, timeout: float) -> str:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -117,7 +122,7 @@ class OpenCodeProvider:
             ) from exc
 
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(input=prompt.encode()), timeout=timeout)
         except asyncio.TimeoutError as exc:
             try:
                 proc.kill()

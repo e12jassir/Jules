@@ -108,13 +108,13 @@ class JulesApp(App[None]):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._background_tasks = set()
+        self._chat_history: list[tuple[str, str]] = []  # (role, content) — survives model switches
 
     def get_css_variables(self) -> dict[str, str]:
         variables = super().get_css_variables()
         if self.CSS_PATH == "theme_terminal.tcss":
-            palette = _read_terminal_palette()
-            if palette:
-                variables.update(palette)
+            if getattr(self, "_terminal_palette", None):
+                variables.update(self._terminal_palette)
         return variables
 
     _model_index: int = 0
@@ -138,23 +138,31 @@ class JulesApp(App[None]):
         self.push_screen(WelcomeScreen())
         self.run_worker(self._run_doctor())
         self.run_worker(self._populate_initial_model())
+        if self.CSS_PATH == "theme_terminal.tcss":
+            self.run_worker(self._load_terminal_palette())
+
+    async def _load_terminal_palette(self) -> None:
+        palette = await asyncio.to_thread(_read_terminal_palette)
+        if palette:
+            self._terminal_palette = palette
+            self.refresh_css()
 
     async def _populate_initial_model(self) -> None:
         """Set Ollama as default model on startup; fall back to router default."""
         try:
-            from jules.core.router import CognitiveRouter, TaskType
+            from jules.core.router import TaskType, _get_router
 
-            router = await asyncio.to_thread(CognitiveRouter)
+            router = await _get_router()
             # Always start with local Ollama — no external calls on launch
             try:
-                provider_obj, model = router.route(TaskType.OFFLINE)
+                provider_obj, model = await router.route(TaskType.OFFLINE)
                 provider = provider_obj.name
             except Exception:
-                provider, model = await asyncio.to_thread(lambda: CognitiveRouter().current_model())
+                provider, model = await router.current_model()
             self.active_provider = provider
             self.active_model = model
             self._user_model_override = f"{provider}:{model}"
-            self._cached_models = router.available_models()
+            self._cached_models = await router.available_models()
             self._update_model_panel(model, provider, True)
         except Exception:  # noqa: BLE001
             pass
@@ -187,7 +195,7 @@ class JulesApp(App[None]):
             return
         response_parts: list[str] = []
         try:
-            async for event in self._stream_response(message):
+            async for event in self._stream_response(message, list(self._chat_history)):
                 if isinstance(event, ThoughtEvent):
                     chat_log.append_thought(event.content)
                 elif isinstance(event, ContentEvent):
@@ -199,6 +207,8 @@ class JulesApp(App[None]):
                     chat_log.append_token(event)  # type: ignore[arg-type]
             response = "".join(response_parts)
             chat_log.finalize_message()
+            self._chat_history.append(("user", message))
+            self._chat_history.append(("jules", response))
             self._record_stats(message, response)
             self._fire_background(self._persist_episode(message, response))
             self._fire_background(self._persist_chat_history(message, response))
@@ -208,16 +218,16 @@ class JulesApp(App[None]):
         finally:
             status_bar.set_generating(False)
 
-    async def _stream_response(self, message: str) -> AsyncIterator[object]:
+    async def _stream_response(self, message: str, chat_history: list[tuple[str, str]] | None = None) -> AsyncIterator[object]:
         from jules.core.context import ContextEngine
-        from jules.core.router import TaskType, ask_with_fallback, route
+        from jules.core.router import TaskType, route, stream_with_fallback
         from jules.core.session import SessionContext as CoreSessionContext
         from jules.memory.models import SessionContext as MemorySessionContext
         from jules.personality.loader import MasterPersonalityMissingError, PersonalityLoader
         from jules.providers.base import ContentEvent, ProviderError, StreamEvent
 
         core_context = CoreSessionContext(cwd=str(Path.cwd()))
-        built = await asyncio.to_thread(ContextEngine.build, core_context, message)
+        built = await ContextEngine.build(core_context, message)
         memory_context = MemorySessionContext(
             project=Path(built.project_root).name if built.project_root else None,
             directory=core_context.cwd,
@@ -237,7 +247,7 @@ class JulesApp(App[None]):
         except MasterPersonalityMissingError:
             yield ContentEvent(content="Archivo de personalidad master (~/.jules/personality/master.md) no encontrado. Es obligatorio para operar.")
             return
-        prompt = _compose_prompt(personality, message, memory_refs)
+        prompt = _compose_prompt(personality, message, memory_refs, chat_history)
 
         try:
             # Prefer stream_events() for typed ThoughtEvent/ContentEvent
@@ -248,11 +258,12 @@ class JulesApp(App[None]):
                 async for token in provider.stream(prompt, memory_context, model):
                     yield token
         except (NotImplementedError, ProviderError):
-            response, fallback_model, fallback_provider = await ask_with_fallback(prompt, memory_context, TaskType.QUICK)
-            self.active_provider = fallback_provider
-            self.active_model = fallback_model
-            self._update_model_panel(fallback_model, fallback_provider, True)
-            yield response
+            async for event, fallback_model, fallback_provider in stream_with_fallback(prompt, memory_context, TaskType.QUICK, user_override=getattr(self, "_user_model_override", None)):
+                if fallback_model != self.active_model or fallback_provider != self.active_provider:
+                    self.active_provider = fallback_provider
+                    self.active_model = fallback_model
+                    self._update_model_panel(fallback_model, fallback_provider, True)
+                yield event
 
     def _update_model_panel(self, model: str, provider: str, online: bool) -> None:
         try:
@@ -280,24 +291,8 @@ class JulesApp(App[None]):
 
     async def _persist_chat_history(self, message: str, response: str) -> None:
         try:
-            from jules.memory.persistent import create_memory_engine, create_memory_sessionmaker
-            from jules.models.chat_history import ChatHistoryEntry, ChatHistoryORM
-
-            if not hasattr(self, "_chat_engine"):
-                self._chat_engine = create_memory_engine()
-                self._chat_session_factory = create_memory_sessionmaker(self._chat_engine)
-            async with self._chat_session_factory() as session:
-                async with session.begin():
-                    session.add(ChatHistoryORM.from_entry(ChatHistoryEntry(
-                        id=None, session_id=self._session_id,
-                        role="user", content=message,
-                        created_at=datetime.now(timezone.utc)
-                    )))
-                    session.add(ChatHistoryORM.from_entry(ChatHistoryEntry(
-                        id=None, session_id=self._session_id,
-                        role="assistant", content=response,
-                        created_at=datetime.now(timezone.utc)
-                    )))
+            persistent, _ = await _get_shared_memory()
+            await persistent.save_chat_history(self._session_id, message, response)
         except Exception:
             pass
 
@@ -310,10 +305,11 @@ class JulesApp(App[None]):
     async def action_open_model_picker(self) -> None:
         """Open the interactive model picker modal."""
         from jules.cli.screens.model_picker import ModelPickerScreen
-        from jules.core.router import CognitiveRouter
+        from jules.core.router import _get_router
 
         if not hasattr(self, "_cached_models") or not self._cached_models:
-            self._cached_models = await asyncio.to_thread(lambda: CognitiveRouter().available_models())
+            router = await _get_router()
+            self._cached_models = await router.available_models()
 
         current = getattr(self, "_user_model_override", "")
         # Build recents: current model first
@@ -340,13 +336,12 @@ class JulesApp(App[None]):
 
     async def action_cycle_model(self) -> None:
         """Cycle through available models for the CURRENT provider on TAB press."""
-        from jules.core.router import CognitiveRouter
+        from jules.core.router import _get_router
 
         try:
             if not hasattr(self, "_cached_models") or not self._cached_models:
-                self._cached_models = await asyncio.to_thread(
-                    lambda: CognitiveRouter().available_models()
-                )
+                router = await _get_router()
+                self._cached_models = await router.available_models()
             if not self._cached_models:
                 return
 
@@ -536,11 +531,21 @@ class _ScoringAdapter:
         return await self.provider.ask(prompt, self.context, self.model)
 
 
-def _compose_prompt(personality: str, message: str, memory_refs: list[str] | None = None) -> str:
+def _compose_prompt(
+    personality: str,
+    message: str,
+    memory_refs: list[str] | None = None,
+    chat_history: list[tuple[str, str]] | None = None,
+    history_limit: int = 20,
+) -> str:
     parts = []
     if personality:
         parts.append(personality)
     if memory_refs:
         parts.append("Relevant past context:\n- " + "\n- ".join(memory_refs))
+    if chat_history:
+        recent = chat_history[-history_limit:]
+        history_block = "\n".join(f"{role.capitalize()}: {content}" for role, content in recent)
+        parts.append(f"Conversation so far:\n{history_block}")
     parts.append(f"User: {message}")
     return "\n\n".join(parts)

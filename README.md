@@ -6,7 +6,8 @@
 
 <br/>
 
-![Phase](https://img.shields.io/badge/Phase_1-In_Progress-6366f1?style=flat-square&labelColor=1e1e2e)
+![Phase](https://img.shields.io/badge/Phase_1-Complete-22c55e?style=flat-square&labelColor=1e1e2e)
+![Phase](https://img.shields.io/badge/Phase_1.5-Planned-6366f1?style=flat-square&labelColor=1e1e2e)
 ![Tests](https://img.shields.io/badge/Tests-120_passing-22c55e?style=flat-square&labelColor=1e1e2e)
 ![Platform](https://img.shields.io/badge/EndeavourOS-KDE_Plasma_6-f97316?style=flat-square&labelColor=1e1e2e)
 ![Python](https://img.shields.io/badge/Python-3.11+-eab308?style=flat-square&labelColor=1e1e2e)
@@ -191,12 +192,13 @@ Phase 1 — Core
   [x] Module 8   — Event system + shell hooks
   [x] Module 9   — Permission system
   [x] Module 10  — jules doctor
-  [ ] Module 11  — Main CLI         ← in progress
+  [x] Module 11  — Main CLI
+  [x] Module 12  — OpenAI auth via WebSockets
 
-Phase 1.5  — Stabilization    (upcoming)
-Phase 2    — Expansion        (upcoming)
-Phase 3    — Adaptive Intelligence  (upcoming)
-Phase 4    — Autonomy         (upcoming)
+Phase 1.5  — Rust/Ratatui TUI migration   (planned)
+Phase 2    — Expansion                    (planned)
+Phase 3    — Adaptive Intelligence        (planned)
+Phase 4    — Autonomy                     (planned)
 ```
 
 **120 tests passing** across all completed modules. Every module is tested before the next one starts. No red test goes to commit.

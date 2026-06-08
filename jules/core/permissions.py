@@ -83,7 +83,7 @@ def _has_display() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
-def _normalize_shell_operand(path: str) -> str:
+def _normalize_shell_operand(path: str, cwd: str = "/") -> str:
     """Normalizes shell/file operands before protected path checks.
 
     Fail-closed policy: expand known user/env prefixes and collapse repeated
@@ -91,21 +91,22 @@ def _normalize_shell_operand(path: str) -> str:
     """
     stripped = path.rstrip(";&|")
     expanded = os.path.expandvars(os.path.expanduser(stripped))
+    expanded = os.path.abspath(os.path.join(cwd, expanded))
     if expanded.startswith("/"):
         expanded = re.sub(r"^/+", "/", expanded)
         return os.path.normpath(expanded)
     return expanded
 
 
-def _is_core_os_path(path: str) -> bool:
+def _is_core_os_path(path: str, cwd: str = "/") -> bool:
     """Returns True for direct core OS paths that must not be mutated."""
-    normalized = _normalize_shell_operand(path)
+    normalized = _normalize_shell_operand(path, cwd)
     return any(normalized == root or normalized.startswith(f"{root}/") for root in _CORE_OS_ROOTS)
 
 
-def _is_root_wide_path(path: str) -> bool:
+def _is_root_wide_path(path: str, cwd: str = "/") -> bool:
     """Returns True for root itself or root-level globs/hidden entries, not scoped paths like /tmp."""
-    normalized = _normalize_shell_operand(path)
+    normalized = _normalize_shell_operand(path, cwd)
     return normalized == "/" or (normalized.startswith("/") and len(normalized) > 1 and normalized[1] in "*?[.{")
 
 
@@ -129,7 +130,7 @@ def _effective_command_tokens(tokens: list[str]) -> list[str]:
             index += 1
             continue
 
-        if command == "sudo":
+        if command in {"sudo", "doas", "pkexec", "su", "busybox"}:
             index += 1
             while index < len(tokens):
                 token = tokens[index]
@@ -160,6 +161,8 @@ def _effective_command_tokens(tokens: list[str]) -> list[str]:
                     continue
                 if token in {"-S", "--split-string"}:
                     return _effective_command_tokens(["env", *shlex.split(tokens[index + 1])]) if index + 1 < len(tokens) else []
+                if token.startswith("-S") and len(token) > 2:
+                    return _effective_command_tokens(["env", *shlex.split(token[2:])])
                 if token.startswith("--split-string="):
                     return _effective_command_tokens(["env", *shlex.split(token.split("=", 1)[1])])
                 if token.startswith(("--unset=", "--chdir=")):
@@ -200,7 +203,7 @@ def _shell_segments(target: str) -> list[list[str]]:
     return segments
 
 
-def _is_prohibited_rm_tokens(tokens: list[str], depth: int) -> bool:
+def _is_prohibited_rm_tokens(tokens: list[str], depth: int, cwd: str = "/") -> bool:
     tokens = _effective_command_tokens(tokens)
     if not tokens:
         return False
@@ -211,12 +214,12 @@ def _is_prohibited_rm_tokens(tokens: list[str], depth: int) -> bool:
 
     command = os.path.basename(raw_command)
 
-    if command in {"sh", "bash"}:
+    if command in {"sh", "bash", "zsh", "fish", "sudo", "doas", "pkexec", "su", "busybox"}:
         for offset, token in enumerate(tokens[1:], start=1):
             if token == "-c" or (token.startswith("-") and not token.startswith("--") and "c" in token[1:]):
                 command_index = offset + 1
                 if command_index < len(tokens):
-                    return _is_prohibited_rm_command(tokens[command_index], depth + 1)
+                    return _is_prohibited_rm_command(tokens[command_index], depth + 1, cwd)
                 return False
 
     if command != "rm":
@@ -244,30 +247,30 @@ def _is_prohibited_rm_tokens(tokens: list[str], depth: int) -> bool:
         return True
 
     return any(
-        _is_root_wide_path(path)
-        or _is_core_os_path(path)
+        _is_root_wide_path(path, cwd)
+        or _is_core_os_path(path, cwd)
         or (is_recursive and "$" in path)
         for path in operands
     )
 
 
-def _is_prohibited_rm_command(target: str, depth: int = 0) -> bool:
+def _is_prohibited_rm_command(target: str, depth: int = 0, cwd: str = "/") -> bool:
     """Detects forced recursive rm against root/core OS paths with shell-token awareness."""
     if depth > 3:
         return False
     substitutions = [*re.findall(r"\$\(([^()]*)\)", target), *re.findall(r"`([^`]*)`", target)]
-    if any(_is_prohibited_rm_command(payload, depth + 1) for payload in substitutions):
+    if any(_is_prohibited_rm_command(payload, depth + 1, cwd) for payload in substitutions):
         return True
-    return any(_is_prohibited_rm_tokens(segment, depth) for segment in _shell_segments(target))
+    return any(_is_prohibited_rm_tokens(segment, depth, cwd) for segment in _shell_segments(target))
 
 
-def _is_prohibited_dd_command(target: str, depth: int = 0) -> bool:
+def _is_prohibited_dd_command(target: str, depth: int = 0, cwd: str = "/") -> bool:
     """Detects direct dd writes to block devices after shell quote removal."""
     if depth > 3:
         return False
     if "$" in target and "dd" in target and "of=" in target:
         return True
-    if any(_is_core_os_path(match) for match in re.findall(r"\bdd\b[^;&|]*(?:^|\s)of=(?:['\"])?([^'\"\s;&|]+)", target)):
+    if any(_is_core_os_path(match, cwd) for match in re.findall(r"\bdd\b[^;&|]*(?:^|\s)of=(?:['\"])?([^'\"\s;&|]+)", target)):
         return True
     for segment in _shell_segments(target):
         tokens = _effective_command_tokens(segment)
@@ -278,15 +281,15 @@ def _is_prohibited_dd_command(target: str, depth: int = 0) -> bool:
             return True
 
         command = os.path.basename(raw_command)
-        if command in {"sh", "bash"}:
+        if command in {"sh", "bash", "zsh", "fish", "sudo", "doas", "pkexec", "su", "busybox"}:
             for offset, token in enumerate(tokens[1:], start=1):
                 if token == "-c" or (token.startswith("-") and not token.startswith("--") and "c" in token[1:]):
                     command_index = offset + 1
-                    if command_index < len(tokens) and _is_prohibited_dd_command(tokens[command_index], depth + 1):
+                    if command_index < len(tokens) and _is_prohibited_dd_command(tokens[command_index], depth + 1, cwd):
                         return True
         if command == "dd":
             for token in tokens[1:]:
-                if token.startswith("of=") and ("$" in token[3:] or _is_core_os_path(token[3:])):
+                if token.startswith("of=") and ("$" in token[3:] or _is_core_os_path(token[3:], cwd)):
                     return True
     return False
 
@@ -338,14 +341,14 @@ class PermissionGate:
         
         self._safe: tuple[re.Pattern[str], ...] = _compile(tuple(config.safe_patterns))
 
-    def classify(self, action: Action, target: str) -> PermissionClassification:
+    def classify(self, action: Action, target: str, cwd: str = "/") -> PermissionClassification:
         """Pure, side-effect-free action classification. Precedence: Prohibited > Required > Safe."""
         if action is Action.SHELL_COMMAND and (
-            _is_prohibited_rm_command(target) or _is_prohibited_dd_command(target)
+            _is_prohibited_rm_command(target, cwd=cwd) or _is_prohibited_dd_command(target, cwd=cwd)
         ):
             return PermissionClassification.PROHIBITED
 
-        if action is Action.FILE_WRITE and _is_core_os_path(target):
+        if action is Action.FILE_WRITE and _is_core_os_path(target, cwd=cwd):
             return PermissionClassification.PROHIBITED
 
         for pattern in self._prohibited:
@@ -476,9 +479,11 @@ class PermissionGate:
             }},
         )
 
-    async def check(self, action: Action, target: str) -> None:
+    async def check(self, action: Action, target: str, cwd: str = "/") -> None:
         """Checks permission for an action, raising PermissionDeniedError if unauthorized."""
-        classification = self.classify(action, target)
+        if action != Action.SHELL_COMMAND:
+            target = os.path.abspath(os.path.join(cwd, os.path.expanduser(target)))
+        classification = self.classify(action, target, cwd=cwd)
 
         if classification is PermissionClassification.SAFE:
             return

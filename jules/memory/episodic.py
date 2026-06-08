@@ -32,7 +32,14 @@ class EpisodicMemory:
         tables = db.list_tables()
         table_names = tables.tables if hasattr(tables, "tables") else list(tables)
         if self.table_name in table_names:
-            return db.open_table(self.table_name)
+            table = db.open_table(self.table_name)
+            existing_dim = table.schema.field("vector").type.list_size
+            if existing_dim != self.vector_dimension:
+                raise ValueError(
+                    f"Table '{self.table_name}' has vector dimension {existing_dim}, "
+                    f"but expected {self.vector_dimension}. Embedding model mismatch."
+                )
+            return table
 
         schema = pa.schema(
             [
@@ -54,6 +61,11 @@ class EpisodicMemory:
                 self._table = self._open_or_create_table()
             table = self._table
         assert table is not None
+        if len(table) > 0:
+            try:
+                table.delete(f"id = '{episode_id}'")
+            except Exception:
+                pass
         table.add([{"id": episode_id, "vector": vector, "timestamp_ts": timestamp}])
 
     async def store_async(self, episode: Episode, vector: list[float]) -> None:
@@ -69,6 +81,9 @@ class EpisodicMemory:
                 self._table = self._open_or_create_table()
             table = self._table
         assert table is not None
+
+        if len(table) == 0:
+            return []
 
         now = time.time()
         results = table.search(query_vector).limit(limit * 2).to_list()

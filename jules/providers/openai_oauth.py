@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import uuid
 from typing import Any, AsyncIterator
 
 from jules.auth import get_valid_token
-from jules.memory.models import SessionContext
+
 from jules.providers.base import ContentEvent, ProviderError, ProviderUnavailableError
 
 _OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
@@ -34,20 +35,24 @@ def _extract_chatgpt_account_id(token: str) -> str:
         raise ValueError(f"Error al decodificar el token JWT de OpenAI: {exc}") from exc
 
 
+def _read_sys_prompt() -> str:
+    try:
+        from jules.personality.loader import PersonalityLoader
+        return PersonalityLoader().load("openai_oauth")
+    except Exception:
+        return "You are Jules, a helpful AI assistant."
+
+
 class OpenAIOAuthProvider:
     name = "openai_oauth"
 
     def __init__(self, timeout_seconds: float = 60.0) -> None:
         self.timeout_seconds = timeout_seconds
 
-    def _system_prompt(self) -> str:
-        try:
-            from jules.personality.loader import PersonalityLoader
-            return PersonalityLoader().load("openai_oauth")
-        except Exception:
-            return "You are Jules, a helpful AI assistant."
+    async def _system_prompt(self) -> str:
+        return await asyncio.to_thread(_read_sys_prompt)
 
-    async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
+    async def ask(self, prompt: str, context: list[dict], model: str) -> str:
         del context
         try:
             import httpx  # type: ignore[import-not-found]
@@ -67,7 +72,7 @@ class OpenAIOAuthProvider:
             "type": "response.create",
             "model": model,
             "stream": True,
-            "instructions": self._system_prompt(),
+            "instructions": await self._system_prompt(),
             "input": [
                 {
                     "role": "user",
@@ -115,7 +120,7 @@ class OpenAIOAuthProvider:
     async def stream(
         self,
         prompt: str,
-        context: SessionContext,
+        context: list[dict],
         model: str,
     ) -> AsyncIterator[str]:
         del context
@@ -132,7 +137,7 @@ class OpenAIOAuthProvider:
             "type": "response.create",
             "model": model,
             "stream": True,
-            "instructions": self._system_prompt(),
+            "instructions": await self._system_prompt(),
             "input": [
                 {
                     "role": "user",
@@ -171,7 +176,7 @@ class OpenAIOAuthProvider:
                     if event_type in ("response.done", "response.completed", "response.incomplete"):
                         break
         except Exception as exc:
-            yield f"\n[Stream Error: {exc}]\n"
+            raise ProviderError(f"OpenAI OAuth stream error: {exc}") from exc
 
     async def embed(self, text: str) -> list[float]:
         del text
