@@ -67,9 +67,11 @@ jules/
 │   ├── cli/
 │   │   └── main.py            # entrypoint Click (legacy — fallback Fase 1.5)
 │   │
-│   ├── server/                # NUEVO (Fase 1.5): JSON-RPC sobre Unix socket
-│   │   ├── server.py          # listen, dispatch, lifecycle
-│   │   └── handlers.py        # mapeo method -> función del backend
+│   ├── server/                # NUEVO (Fase 1.5): servidor stdin/stdout
+│   │   ├── __init__.py
+│   │   ├── server.py          # loop asyncio: lee stdin, escribe stdout
+│   │   ├── handlers.py        # dispatch type -> función del backend
+│   │   └── protocol.py        # dataclasses de mensajes (tipado)
 │   │
 │   ├── core/
 │   │   ├── session.py         # gestión de sesión activa
@@ -106,15 +108,20 @@ jules/
 │   └── observability/
 │       └── logger.py
 │
-├── jules-tui/                 # NUEVO (Fase 1.5): frontend TypeScript/Bun
-│   ├── package.json
-│   ├── src/
-│   │   ├── index.tsx          # entrypoint, spawn Python, connect socket
-│   │   ├── ipc.ts             # cliente JSON-RPC + reconnection
-│   │   ├── app.tsx            # root component, state management
-│   │   ├── screens/           # welcome.tsx, chat.tsx
-│   │   └── widgets/           # chat-log, input-bar, sidebar, status-bar, model-picker
-│   └── build.ts               # bun build --compile config
+├── jules-tui/                 # NUEVO (Fase 1.5): frontend Rust
+│   ├── Cargo.toml
+│   ├── Cargo.lock
+│   └── src/
+│       ├── main.rs            # entrypoint: spawn Python, IPC loop, event loop
+│       ├── ipc.rs             # stdin/stdout protocol, (de)serialization
+│       ├── app.rs             # AppState: mensajes, modelo activo, input
+│       ├── ui.rs              # draw fn raíz (Ratatui frame)
+│       └── widgets/
+│           ├── chat_log.rs
+│           ├── input_bar.rs
+│           ├── sidebar.rs
+│           ├── status_bar.rs
+│           └── model_picker.rs
 │
 └── tests/
     ├── unit/
@@ -123,7 +130,7 @@ jules/
     │   └── test_router.py
     └── integration/
         ├── test_memory_flow.py
-        ├── test_server_ipc.py  # tests del JSON-RPC server (Fase 1.5)
+        ├── test_server_ipc.py  # tests del IPC server (Fase 1.5)
         └── test_provider_coherence.py
 ```
 

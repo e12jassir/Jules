@@ -1,7 +1,10 @@
 # pyright: reportMissingImports=false, reportAttributeAccessIssue=false, reportCallIssue=false
 import json
+import os
+import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 try:
     import click  # type: ignore[import-not-found]
@@ -84,15 +87,44 @@ except Exception:
     gate = _NoopGate()  # type: ignore[assignment]
 
 
-@click.group(invoke_without_command=True)
-@click.pass_context
-def cli(ctx) -> None:
-    """Jules — capa cognitiva persistente."""
-    if ctx.invoked_subcommand is not None:
-        return
+def _run_textual_tui() -> None:
     from jules.cli.app import JulesApp  # type: ignore[import-not-found]
 
     JulesApp().run(inline=False)
+
+
+def _rust_binary_candidates() -> list[Path]:
+    root = Path(__file__).resolve().parents[2]
+    return [
+        root / "jules-tui" / "target" / "release" / "jules-tui",
+        root / "target" / "release" / "jules-tui",
+    ]
+
+
+def _run_rust_tui() -> bool:
+    for candidate in _rust_binary_candidates():
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            env = os.environ.copy()
+            env.setdefault("JULES_PYTHON", sys.executable)
+            completed = subprocess.run([str(candidate)], env=env, check=False)
+            raise SystemExit(completed.returncode)
+    return False
+
+
+@click.group(invoke_without_command=True)
+@click.option("--legacy", is_flag=True, help="Launch the legacy Textual TUI")
+@click.pass_context
+def cli(ctx, legacy: bool = False) -> None:
+    """Jules — capa cognitiva persistente."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if legacy:
+        _run_textual_tui()
+        return
+    if _run_rust_tui():
+        return
+    click.echo("Rust TUI binary not found; falling back to Textual. Build it with: cargo build --release", err=True)
+    _run_textual_tui()
 
 
 @cli.command()  # type: ignore[attr-defined]

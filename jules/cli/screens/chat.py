@@ -152,7 +152,9 @@ class ChatScreen(Screen[None]):
         elif not overlay.display and event.key == "tab":
             inp = self.query_one("#chat-input", Input)
             if self.focused is inp or inp.has_focus:
-                self.app.call_later(self.app.action_cycle_model)
+                cycle_model = getattr(self.app, "action_cycle_model", None)
+                if cycle_model is not None:
+                    self.app.call_later(cycle_model)
                 event.stop()
 
     def _complete_with(self, command_id: str | None) -> None:
@@ -208,7 +210,9 @@ class ChatScreen(Screen[None]):
         elif command.name == "model":
             # No args → open interactive picker
             if not command.args:
-                await self.app.action_open_model_picker()
+                open_model_picker = getattr(self.app, "action_open_model_picker", None)
+                if open_model_picker is not None:
+                    await open_model_picker()
                 return
 
             from jules.cli.commands import handle_model

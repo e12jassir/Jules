@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from textual.app import ComposeResult  # type: ignore[import-not-found]
 from textual.screen import ModalScreen  # type: ignore[import-not-found]
 from textual.widgets import Input, OptionList, Static  # type: ignore[import-not-found]
@@ -173,13 +175,13 @@ class ModelPickerScreen(ModalScreen[tuple[str, str] | None]):
             provider, model = key.split(":", 1)
             self.dismiss((provider, model))
 
-    def _refresh_list(self, models: list[tuple[str, str]]) -> None:
+    def _refresh_list(self, models: Sequence[tuple[str, str]]) -> None:
         lst = self.query_one("#model-list", OptionList)
         lst.clear_options()
         for opt in self._build_options(models):
             lst.add_option(opt)
 
-    def _build_options(self, models: list[tuple[str, str]]) -> list[Option]:
+    def _build_options(self, models: Sequence[tuple[str, str]]) -> list[Option]:
         options: list[Option] = []
         model_set = {(p, m) for p, m in models}
 

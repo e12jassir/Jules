@@ -328,7 +328,7 @@ class JulesApp(App[None]):
                 self.run_worker(self._set_active_model(provider, model))
 
         await self.push_screen(
-            ModelPickerScreen(self._cached_models, current, recents),
+            ModelPickerScreen(tuple(self._cached_models), current, recents),
             on_picked,
         )
 
@@ -429,11 +429,11 @@ async def _get_shared_memory() -> tuple:
     return _SHARED_PERSISTENT_MEMORY, _SHARED_EPISODIC_MEMORY
 
 
-async def _retrieve_memory_references(message: str) -> list[str]:
-    """Best-effort memory retrieval; imports and setup are bounded off-loop."""
-    try:
-        from jules.memory.engine import MemoryEngine
+def _retrieve_memory_references_blocking(message: str) -> list[str]:
+    """Blocking helper so degraded-mode tests can patch the retrieval boundary."""
+    from jules.memory.engine import MemoryEngine
 
+    async def run() -> list[str]:
         persistent, episodic = await _get_shared_memory()
         memory = MemoryEngine(
             persistent=persistent,
@@ -441,11 +441,22 @@ async def _retrieve_memory_references(message: str) -> list[str]:
             provider=_NoopScoringProvider(),
             embedding_provider=None,
         )
-        episodes = await asyncio.wait_for(
-            memory.retrieve_async(message, limit=3),
+        episodes = await memory.retrieve_async(message, limit=3)
+        return [
+            f"{ep.problem[:80] if ep.problem else ep.solution[:80] if ep.solution else ''}"
+            for ep in episodes
+        ]
+
+    return asyncio.run(run())
+
+
+async def _retrieve_memory_references(message: str) -> list[str]:
+    """Best-effort memory retrieval; imports and setup are bounded off-loop."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_retrieve_memory_references_blocking, message),
             timeout=1.5,
         )
-        return [f"{ep.problem[:80] if ep.problem else ep.solution[:80] if ep.solution else ''}" for ep in episodes]
     except Exception:
         return []
 

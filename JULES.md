@@ -2,7 +2,7 @@
 ## Capa Cognitiva Persistente para el Sistema Operativo
 
 > **Versión:** 1.5 — Canónica
-> **Estado:** Fase 1 completada — Módulos 0–12 completados y validados. Fase 1.5 en progreso — migración TUI a OpenTUI (TypeScript/Bun).
+> **Estado:** Fase 1 completada — Módulos 0–12 completados y validados. Fase 1.5 en progreso — migración TUI a Rust + Ratatui.
 > **Principio rector:** Construir lo mínimo que funcione, no lo máximo que se pueda imaginar.
 
 ---
@@ -848,17 +848,21 @@ jules/                     # repositorio del proyecto
 │   │   └── doctor.py      # jules doctor — diagnóstico de entorno
 │   └── observability/
 │       └── logger.py
-│   │   ├── app.tsx        # root component, state management
-│   │   ├── screens/
-│   │   │   ├── welcome.tsx
-│   │   │   └── chat.tsx
-│   │   └── widgets/
-│   │       ├── chat-log.tsx
-│   │       ├── input-bar.tsx
-│   │       ├── sidebar.tsx
-│   │       ├── status-bar.tsx
-│   │       └── model-picker.tsx
-│   └── build.ts           # bun build --compile config
+├── jules-tui/                 # NUEVO (Fase 1.5): frontend Rust
+│   ├── Cargo.toml
+│   ├── Cargo.lock
+│   └── src/
+│       ├── main.rs            # entrypoint: spawn Python, IPC loop, event loop
+│       ├── ipc.rs             # stdin/stdout protocol, (de)serialization
+│       ├── app.rs             # AppState: mensajes, modelo activo, input
+│       ├── ui.rs              # draw fn raíz (Ratatui frame)
+│       └── widgets/
+│           ├── chat_log.rs
+│           ├── input_bar.rs
+│           ├── sidebar.rs
+│           ├── status_bar.rs
+│           └── model_picker.rs
+│
 └── tests/
     ├── unit/
     └── integration/

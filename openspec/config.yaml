@@ -1,5 +1,6 @@
 schema: spec-driven
-mode: hybrid
+mode: openspec
+strict_tdd: true
 delivery_strategy: single-pr
 context: |
   Tech stack: Python 3.11+, asyncio, pytest, SQLAlchemy, Alembic, LanceDB, aiosqlite

@@ -118,9 +118,10 @@ def _status_get_sync() -> StatusEvent:
 
     try:
         import sqlite3
-        from pathlib import Path
 
-        db_path = Path.home() / ".jules" / "memory.sqlite3"
+        from jules.memory.persistent import DEFAULT_SQLITE_PATH
+
+        db_path = DEFAULT_SQLITE_PATH
         if db_path.exists():
             conn = sqlite3.connect(str(db_path))
             cursor = conn.execute("SELECT COUNT(*) FROM episodes")
