@@ -694,3 +694,5 @@ Textual provee `App.run_test()` y `Pilot` para tests automatizados de TUI.
 > **Nota final:** este spec reemplaza completamente el Módulo 11 original.
 > El `main.py` actual se descarta excepto el comando `doctor` que se porta sin cambios.
 > Los módulos 0–10 no se tocan.
+>
+> **Nota sobre Migración del Frontend:** Aunque Textual permite una experiencia de terminal de pantalla completa, su aspecto sigue sujeto a las restricciones y renderizado de la terminal. Para alcanzar el nivel más alto de calidad visual y experiencia de usuario (por ejemplo, layouts más flexibles comparables a interfaces web), el enfoque oficial es delegar la UI enriquecida a la Desktop App (Tauri + SvelteKit) descrita en el Item 6 de la Fase 2, la cual operará en paralelo como frontend gráfico complementario a esta CLI.

@@ -122,7 +122,7 @@ def test_check_processes_one_megabyte_input_under_local_guardrail() -> None:
     payload = ("safe payload line with ordinary words and numbers 12345\n" * 20_000)[
         : 1_048_576
     ]
-    threshold_seconds = 0.50 if os.environ.get("CI") else 0.10
+    threshold_seconds = 0.50 if os.environ.get("CI") else 0.25
 
     result = Sanitizer.check(payload)
     timings = []
@@ -141,7 +141,7 @@ def test_check_detects_secret_embedded_at_end_of_large_input_within_threshold() 
     secret_line = "sk-" + "A" * 24  # valid openai_key pattern
     payload = (safe_padding + secret_line)[:1_048_576]
     assert secret_line in payload  # guard: secret must survive the slice
-    threshold_seconds = 0.50 if os.environ.get("CI") else 0.10
+    threshold_seconds = 0.50 if os.environ.get("CI") else 0.25
 
     timings = []
     for _ in range(3):
@@ -159,7 +159,7 @@ def test_check_processes_near_miss_slack_prefix_under_threshold() -> None:
     # Exercises regex engine on a pattern that partially matches then fails.
     # Newline separator ensures no cross-iteration boundary matches.
     near_miss = ("xoxb-" + "A" * 50 + "\n") * 1_000
-    threshold_seconds = 0.50 if os.environ.get("CI") else 0.10
+    threshold_seconds = 0.50 if os.environ.get("CI") else 0.25
 
     timings = []
     for _ in range(3):

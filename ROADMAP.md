@@ -521,6 +521,8 @@ whisper.cpp para STT, Piper para TTS. Integración de librerías, no arquitectur
 
 Muestra: modelo activo, tier, contexto, memoria, salud del scoring. UI encima del CLI, no en paralelo.
 
+> **Nota Estratégica (Migración del Frontend):** Tras evaluar las capacidades del frontend de terminal (Textual), se determinó que para proveer una experiencia con mayor fluidez, diseño dinámico y estética tipo web a pantalla completa, la interfaz gráfica con Tauri + SvelteKit es el camino oficial y recomendado. Esta aplicación será la encargada de escalar la experiencia visual de los usuarios más allá de lo que las herramientas nativas de terminal como Textual pueden ofrecer.
+
 | Fase | ¿Correr? | Modelo | Razón |
 |---|---|---|---|
 | `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |

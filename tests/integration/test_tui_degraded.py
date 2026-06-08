@@ -29,7 +29,7 @@ def _chat_content(log: ChatLog) -> str:
 @pytest.mark.asyncio
 async def test_memory_retrieval_degrades_to_empty_list_when_engine_unavailable() -> None:
     """_retrieve_memory_references returns [] when engine setup fails, not an exception."""
-    with patch("jules.cli.app._retrieve_memory_references_blocking", side_effect=RuntimeError("lancedb unavailable")):
+    with patch("jules.cli.app._get_shared_memory", side_effect=RuntimeError("lancedb unavailable")):
         refs = await _retrieve_memory_references("hello")
     assert refs == []
 
