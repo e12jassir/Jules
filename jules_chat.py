@@ -19,6 +19,9 @@ Comandos disponibles en el chat:
   /model <nombre>   — Cambia el modelo dentro del proveedor actual
   /memory           — Muestra los últimos episodios guardados en memoria
   /status           — Tabla de estado de los proveedores
+  /login <prov>     — Login OAuth (openai | claude | codex)
+  /logout <prov>    — Borra token OAuth guardado
+  /auth [prov]      — Estado OAuth guardado
   /history          — Muestra el historial de la sesión en RAM
   /clear            — Limpia el historial de la sesión
   /exit             — Cierra el chat
@@ -42,12 +45,14 @@ from typing import cast
 # Rich (UI premium) — graceful fallback a texto plano
 # ──────────────────────────────────────────────────────────────────────────────
 try:
-    from rich.console import Console
-    from rich.live import Live
-    from rich.markdown import Markdown
-    from rich.panel import Panel
-    from rich.spinner import Spinner
-    from rich.table import Table
+    import importlib
+
+    Console = importlib.import_module("rich.console").Console
+    Live = importlib.import_module("rich.live").Live
+    Markdown = importlib.import_module("rich.markdown").Markdown
+    Panel = importlib.import_module("rich.panel").Panel
+    Spinner = importlib.import_module("rich.spinner").Spinner
+    Table = importlib.import_module("rich.table").Table
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
@@ -135,6 +140,9 @@ def print_help() -> None:
             ("/model <nombre>",   "Cambia el modelo dentro del proveedor actual"),
             ("/memory [N]",       "Muestra los últimos N episodios guardados (default 5)"),
             ("/status",           "Estado en tiempo real de todos los proveedores"),
+            ("/login <prov>",     "Login OAuth: openai | claude | codex"),
+            ("/logout <prov>",    "Borra token OAuth guardado"),
+            ("/auth [prov]",      "Estado OAuth guardado"),
             ("/history",          "Historial de la sesión en RAM"),
             ("/clear",            "Limpia el historial de la sesión"),
             ("/context [set|reset]", "Muestra o simula el contexto de la terminal detectado"),
@@ -150,6 +158,9 @@ def print_help() -> None:
         print("  /model <nombre>   — cambia modelo del proveedor actual")
         print("  /memory [N]       — últimos episodios en memoria")
         print("  /status           — salud de los proveedores")
+        print("  /login <prov>     — login OAuth")
+        print("  /logout <prov>    — borrar token OAuth")
+        print("  /auth [prov]      — estado OAuth")
         print("  /history          — historial de sesión")
         print("  /clear            — limpia historial")
         print("  /context          — muestra/simula contexto del terminal")
@@ -520,7 +531,7 @@ async def _ask(
         pname = "opencode"
     elif mode == "codex":
         provider = router.providers["codex"]
-        resolved_model = current_model or getattr(provider, "default_model", "codex")
+        resolved_model = current_model or cast(str, getattr(provider, "default_model", "codex"))
         pname = "codex"
     else:
         raise ValueError(f"Modo desconocido: {mode}")
@@ -730,6 +741,66 @@ async def main() -> None:
 
             if cmd == "/status":
                 await check_health(router, local_ollama_models)
+                continue
+
+            if cmd.startswith("/login"):
+                import importlib
+
+                auth_pkce = importlib.import_module("jules.core.auth_pkce")
+                OAuthError = auth_pkce.OAuthError
+                login_provider = auth_pkce.login_provider
+                normalize_provider_name = auth_pkce.normalize_provider_name
+
+                parts = user_input.split()
+                provider = normalize_provider_name(parts[1] if len(parts) > 1 else "openai")
+                prefer_device_code = any(arg.lower() in {"device", "device-code", "headless"} for arg in parts[2:])
+                try:
+                    token = await login_provider(
+                        provider,
+                        prefer_device_code=prefer_device_code,
+                        notify=lambda message: console.print(f"[yellow]⚠️ {message}[/yellow]"),
+                    )
+                except OAuthError as exc:
+                    console.print(f"[red]❌ Login OAuth falló para {provider}: {exc}[/red]")
+                else:
+                    console.print(f"[green]✅ Login OAuth exitoso para {provider}. Token guardado.[/green]")
+                    if token.expires_at:
+                        console.print(f"[dim]Vence en: {datetime.fromtimestamp(token.expires_at)}[/dim]")
+                continue
+
+            if cmd.startswith("/logout"):
+                import importlib
+
+                auth_pkce = importlib.import_module("jules.core.auth_pkce")
+                logout_provider = auth_pkce.logout_provider
+                normalize_provider_name = auth_pkce.normalize_provider_name
+
+                parts = user_input.split()
+                provider = normalize_provider_name(parts[1] if len(parts) > 1 else "openai")
+                if logout_provider(provider):
+                    console.print(f"[green]✅ Token OAuth eliminado para {provider}.[/green]")
+                else:
+                    console.print(f"[dim]No había token OAuth guardado para {provider}.[/dim]")
+                continue
+
+            if cmd.startswith("/auth"):
+                import importlib
+
+                auth_pkce = importlib.import_module("jules.core.auth_pkce")
+                get_auth_status = auth_pkce.get_auth_status
+                normalize_provider_name = auth_pkce.normalize_provider_name
+
+                parts = user_input.split()
+                providers = [normalize_provider_name(parts[1])] if len(parts) > 1 else ["openai", "claude"]
+                for provider in providers:
+                    status = get_auth_status(provider)
+                    if not status.logged_in:
+                        console.print(f"[dim]{provider}: no autenticado[/dim]")
+                    elif status.expired:
+                        console.print(f"[yellow]{provider}: expirado[/yellow]")
+                    else:
+                        expires = datetime.fromtimestamp(status.expires_at).isoformat(sep=' ', timespec='minutes') if status.expires_at else 'sin vencimiento'
+                        console.print(f"[green]{provider}: vigente[/green] [dim](vence {expires})[/dim]")
                 continue
 
             if cmd == "/clear":
@@ -1001,9 +1072,9 @@ async def main() -> None:
     except (KeyboardInterrupt, EOFError):
         pass
     finally:
-        for provider in router.providers.values():
+        for provider_obj in router.providers.values():
             try:
-                await provider.close()
+                await provider_obj.close()
             except Exception:
                 pass
         if HAS_RICH:

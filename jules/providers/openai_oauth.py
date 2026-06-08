@@ -66,9 +66,19 @@ class OpenAIOAuthProvider:
         payload = {
             "type": "response.create",
             "model": model,
-            "stream": False,
+            "stream": True,
             "instructions": self._system_prompt(),
-            "input": prompt,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt,
+                        }
+                    ],
+                }
+            ],
         }
 
         try:
@@ -84,15 +94,16 @@ class OpenAIOAuthProvider:
                 while True:
                     msg = await ws.recv()
                     data = json.loads(msg)
+                    event_type = data.get("type")
                     
-                    if data.get("type") == "error":
+                    if event_type == "error":
                         error_msg = data.get("error", {}).get("message", "Unknown error")
                         raise ProviderError(f"OpenAI WS Error: {error_msg}")
                     
-                    if data.get("type") == "response.text.delta":
+                    if event_type in ("response.text.delta", "response.output_text.delta"):
                         full_response.append(data.get("delta", ""))
                     
-                    if data.get("type") == "response.done":
+                    if event_type in ("response.done", "response.completed", "response.incomplete"):
                         break
                         
                 return "".join(full_response)
@@ -122,7 +133,17 @@ class OpenAIOAuthProvider:
             "model": model,
             "stream": True,
             "instructions": self._system_prompt(),
-            "input": prompt,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt,
+                        }
+                    ],
+                }
+            ],
         }
 
         try:
@@ -137,16 +158,17 @@ class OpenAIOAuthProvider:
                 while True:
                     msg = await ws.recv()
                     data = json.loads(msg)
+                    event_type = data.get("type")
                     
-                    if data.get("type") == "error":
+                    if event_type == "error":
                         error_msg = data.get("error", {}).get("message", "Unknown error")
                         yield f"[Error: {error_msg}]"
                         break
                     
-                    if data.get("type") == "response.text.delta":
+                    if event_type in ("response.text.delta", "response.output_text.delta"):
                         yield data.get("delta", "")
                     
-                    if data.get("type") == "response.done":
+                    if event_type in ("response.done", "response.completed", "response.incomplete"):
                         break
         except Exception as exc:
             yield f"\n[Stream Error: {exc}]\n"
