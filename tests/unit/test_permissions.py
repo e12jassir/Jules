@@ -185,6 +185,6 @@ async def test_check_required_headless_failsafe_denies() -> None:
                 await gate.check(Action.PACKAGE_OP, "pacman -Syu")
 
             assert exc_info.value.reason == "no_display_environment"
-            mock_log.assert_called_once_with(Action.PACKAGE_OP, "pacman -Syu", PermissionClassification.REQUIRED, "no_display_environment")
+            mock_log.assert_called_once_with(Action.PACKAGE_OP, "/pacman -Syu", PermissionClassification.REQUIRED, "no_display_environment")
     finally:
         IS_BACKGROUND_TASK.reset(token)

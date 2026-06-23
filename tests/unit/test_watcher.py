@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import pytest
 
 from jules.core.events import EventBus, EventType
 from jules.core.session import SessionContext
@@ -26,13 +27,18 @@ def test_watcher_initialize_warns_on_low_inotify_limit(tmp_path, caplog, monkeyp
     assert "echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.d/jules.conf" in caplog.text
 
 
-def test_watcher_emits_project_and_coding_events(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_watcher_emits_project_and_coding_events(monkeypatch) -> None:
     monkeypatch.setenv("SHELL", "/usr/bin/zsh")
     bus = EventBus(session=SessionContext(cwd="/old"))
     watcher = LinuxWatcher(event_bus=bus, current_directory="/old")
 
     watcher.on_directory_changed("/new")
     watcher.on_file_modified("/new/main.py")
+    
+    import asyncio
+    if bus._background_tasks:
+        await asyncio.gather(*bus._background_tasks, return_exceptions=True)
 
     assert bus.session.cwd == "/new"
     assert bus.runtime.last_activity_at is not None

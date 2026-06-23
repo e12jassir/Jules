@@ -10,20 +10,24 @@ from jules.server.protocol import (
     CancelRequest,
     CommandRequest,
     CommandResultEvent,
+    ContextGetRequest,
     DoneEvent,
     ErrorEvent,
     InitRequest,
+    MemoryStatsEvent,
     MessageRequest,
     ModelChangedEvent,
     ModelListEvent,
     ModelListRequest,
     ModelSetRequest,
+    ProjectInfoEvent,
     QuitRequest,
     ReadyEvent,
     StatusEvent,
     StatusGetRequest,
     ThoughtEvent,
     TokenEvent,
+    ToolsEvent,
     from_json,
     to_json,
 )
@@ -77,6 +81,13 @@ class TestInboundRoundTrip:
         assert data == {"type": "status_get"}
         parsed = from_json(data)
         assert isinstance(parsed, StatusGetRequest)
+
+    def test_context_get_request(self):
+        msg = ContextGetRequest()
+        data = json.loads(to_json(msg))
+        assert data == {"type": "context_get"}
+        parsed = from_json(data)
+        assert isinstance(parsed, ContextGetRequest)
 
     def test_cancel_request(self):
         msg = CancelRequest()
@@ -143,6 +154,28 @@ class TestOutboundSerialization:
         msg = ErrorEvent(message="something broke", recoverable=False)
         data = json.loads(to_json(msg))
         assert data == {"type": "error", "message": "something broke", "recoverable": False}
+
+    def test_tools_event(self):
+        msg = ToolsEvent(filesystem=True, terminal=False, git=True, search=True, web=False)
+        data = json.loads(to_json(msg))
+        assert data == {
+            "type": "tools",
+            "filesystem": True,
+            "terminal": False,
+            "git": True,
+            "search": True,
+            "web": False,
+        }
+
+    def test_project_info_event(self):
+        msg = ProjectInfoEvent(path="/repo", branch="main", file_count=42)
+        data = json.loads(to_json(msg))
+        assert data == {"type": "project_info", "path": "/repo", "branch": "main", "file_count": 42}
+
+    def test_memory_stats_event(self):
+        msg = MemoryStatsEvent(episodes=7, facts=1, memories=2)
+        data = json.loads(to_json(msg))
+        assert data == {"type": "memory_stats", "episodes": 7, "facts": 1, "memories": 2}
 
 
 class TestFromJsonEdgeCases:

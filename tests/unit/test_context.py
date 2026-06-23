@@ -16,12 +16,13 @@ class FixedDateTime(datetime):
         return cls(2026, 5, 29, 9, 0, 0)
 
 
-def test_build_returns_debugging_when_last_command_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_build_returns_debugging_when_last_command_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
     monkeypatch.setenv("SHELL", "/bin/zsh")
     session = SessionContext(cwd="/tmp", last_exit_code=1, recent_commands=["pytest"])
 
-    built = ContextEngine.build(session, "fix this")
+    built = await ContextEngine.build(session, "fix this")
 
     assert built.intent == "debugging"
     assert built.project_root is None
@@ -44,7 +45,8 @@ def test_build_returns_learning_when_recent_commands_include_learning_signal(
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
     session = SessionContext(cwd="/tmp", recent_commands=recent_commands)
 
-    built = ContextEngine.build(session, "how does this work?")
+    import asyncio
+    built = asyncio.run(ContextEngine.build(session, "how does this work?"))
 
     assert built.intent == "learning"
 
@@ -57,12 +59,14 @@ def test_build_defaults_to_review_when_no_debugging_or_learning_signals(
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
     session = SessionContext(cwd="/tmp", recent_commands=recent_commands)
 
-    built = ContextEngine.build(session, "review this")
+    import asyncio
+    built = asyncio.run(ContextEngine.build(session, "review this"))
 
     assert built.intent == "review"
 
 
-def test_build_finds_nearest_git_project_root(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_build_finds_nearest_git_project_root(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
     project_root = tmp_path / "workspace"
     nested = project_root / "src" / "jules"
@@ -70,22 +74,24 @@ def test_build_finds_nearest_git_project_root(monkeypatch: pytest.MonkeyPatch, t
     (project_root / ".git").mkdir()
     session = SessionContext(cwd=str(nested), recent_commands=["git diff"])
 
-    built = ContextEngine.build(session, "check context")
+    built = await ContextEngine.build(session, "check context")
 
     assert built.project_root == str(project_root)
 
 
-def test_build_uses_unknown_shell_when_environment_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_build_uses_unknown_shell_when_environment_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
     monkeypatch.delenv("SHELL", raising=False)
     session = SessionContext(cwd="/tmp", recent_commands=[])
 
-    built = ContextEngine.build(session, "context")
+    built = await ContextEngine.build(session, "context")
 
     assert built.shell == "unknown"
 
 
-def test_build_completes_under_ten_milliseconds(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_build_completes_under_ten_milliseconds(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
     project_root = tmp_path / "repo"
     nested = project_root / "a" / "b" / "c"
@@ -97,7 +103,7 @@ def test_build_completes_under_ten_milliseconds(monkeypatch: pytest.MonkeyPatch,
     start = time.perf_counter()
     built = None
     for _ in range(iterations):
-        built = ContextEngine.build(session, "context")
+        built = await ContextEngine.build(session, "context")
     elapsed_ms = ((time.perf_counter() - start) * 1000) / iterations
 
     assert built is not None

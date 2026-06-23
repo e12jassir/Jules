@@ -107,16 +107,10 @@ class ChatScreen(Screen[None]):
         with Vertical(classes="chat-shell"):
             with Horizontal(classes="chat-layout"):
                 with Vertical(classes="chat-area"):
-                    with Horizontal(classes="chat-header"):
-                        with Horizontal(classes="chat-header-left"):
-                            yield Static("🌹 jules", classes="brand-logo")
-                            yield Static(" chat ", classes="tab tab-active")
-                            yield Static("+", classes="tab-add")
-                        yield Static("v0.1.0", classes="chat-version")
                     yield ChatLog()
+                    yield StatusBar()
                     yield InputBar()
                 yield Sidebar()
-            yield StatusBar()
         yield OptionList(id="cmd-overlay")
 
     def on_mount(self) -> None:
@@ -152,9 +146,7 @@ class ChatScreen(Screen[None]):
         elif not overlay.display and event.key == "tab":
             inp = self.query_one("#chat-input", Input)
             if self.focused is inp or inp.has_focus:
-                cycle_model = getattr(self.app, "action_cycle_model", None)
-                if cycle_model is not None:
-                    self.app.call_later(cycle_model)
+                self.app.call_later(self.app.action_cycle_model)
                 event.stop()
 
     def _complete_with(self, command_id: str | None) -> None:
@@ -210,9 +202,7 @@ class ChatScreen(Screen[None]):
         elif command.name == "model":
             # No args → open interactive picker
             if not command.args:
-                open_model_picker = getattr(self.app, "action_open_model_picker", None)
-                if open_model_picker is not None:
-                    await open_model_picker()
+                await self.app.action_open_model_picker()
                 return
 
             from jules.cli.commands import handle_model

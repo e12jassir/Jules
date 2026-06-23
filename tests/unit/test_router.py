@@ -56,15 +56,15 @@ class FakeProvider:
         self.name = name
         self.response = response or f"{name}-response"
         self.error = error
-        self.calls: list[tuple[str, SessionContext, str]] = []
+        self.calls: list[tuple[str, list[dict], str]] = []
 
-    async def ask(self, prompt: str, context: SessionContext, model: str) -> str:
+    async def ask(self, prompt: str, context: list[dict], model: str) -> str:
         self.calls.append((prompt, context, model))
         if self.error is not None:
             raise self.error
         return self.response
 
-    def stream(self, prompt: str, context: SessionContext, model: str):
+    def stream(self, prompt: str, context: list[dict], model: str):
         del prompt, context, model
         raise NotImplementedError
 
@@ -158,67 +158,76 @@ def make_router(config_path: Path, **provider_overrides: FakeProvider) -> Cognit
     return CognitiveRouter(config=load_config(config_path), providers=providers)
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("task", [TaskType.IDENTITY, TaskType.MEMORY_SCORING, TaskType.OFFLINE])
-def test_local_only_tasks_always_route_to_ollama(config_path: Path, task: TaskType) -> None:
-    provider, model = make_router(config_path).route(task)
+async def test_local_only_tasks_always_route_to_ollama(config_path: Path, task: TaskType) -> None:
+    provider, model = await make_router(config_path).route(task)
 
     assert provider.name == "ollama"
     assert model == "local-test-model"
 
 
-def test_coding_routes_to_opencode_low_cost(config_path: Path) -> None:
-    provider, model = make_router(config_path).route(TaskType.CODING)
+@pytest.mark.asyncio
+async def test_coding_routes_to_opencode_low_cost(config_path: Path) -> None:
+    provider, model = await make_router(config_path).route(TaskType.CODING)
 
     assert provider.name == "opencode"
     assert model == "oc-low"
 
 
-def test_coding_heavy_routes_to_opencode_high_cost(config_path: Path) -> None:
-    provider, model = make_router(config_path).route(TaskType.CODING_HEAVY)
+@pytest.mark.asyncio
+async def test_coding_heavy_routes_to_opencode_high_cost(config_path: Path) -> None:
+    provider, model = await make_router(config_path).route(TaskType.CODING_HEAVY)
 
     assert provider.name == "opencode"
     assert model == "oc-high"
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("task", [TaskType.QUICK, TaskType.REASONING])
-def test_quick_and_reasoning_route_to_antigravity_default_tier(config_path: Path, task: TaskType) -> None:
-    provider, model = make_router(config_path).route(task)
+async def test_quick_and_reasoning_route_to_antigravity_default_tier(config_path: Path, task: TaskType) -> None:
+    provider, model = await make_router(config_path).route(task)
 
     assert provider.name == "antigravity"
     assert model == "ag-low"
 
 
-def test_analysis_routes_to_antigravity_high_cost(config_path: Path) -> None:
-    provider, model = make_router(config_path).route(TaskType.ANALYSIS)
+@pytest.mark.asyncio
+async def test_analysis_routes_to_antigravity_high_cost(config_path: Path) -> None:
+    provider, model = await make_router(config_path).route(TaskType.ANALYSIS)
 
     assert provider.name == "antigravity"
     assert model == "ag-high"
 
 
-def test_cloud_user_override_is_blocked_for_local_only_task(config_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_cloud_user_override_is_blocked_for_local_only_task(config_path: Path) -> None:
     with pytest.raises(ValueError, match="requires local provider"):
-        make_router(config_path).route(
+        await make_router(config_path).route(
             TaskType.IDENTITY,
             user_override="opencode:oc-high",
         )
 
 
-def test_user_override_configured_model_resolves_provider(config_path: Path) -> None:
-    provider, model = make_router(config_path).route(TaskType.QUICK, user_override="ag-high")
+@pytest.mark.asyncio
+async def test_user_override_configured_model_resolves_provider(config_path: Path) -> None:
+    provider, model = await make_router(config_path).route(TaskType.QUICK, user_override="ag-high")
 
     assert provider.name == "antigravity"
     assert model == "ag-high"
 
 
-def test_user_override_configured_ollama_model_with_colon_resolves_provider(config_path: Path) -> None:
-    provider, model = make_router(config_path).route(TaskType.QUICK, user_override="llama3.2:1b")
+@pytest.mark.asyncio
+async def test_user_override_configured_ollama_model_with_colon_resolves_provider(config_path: Path) -> None:
+    provider, model = await make_router(config_path).route(TaskType.QUICK, user_override="llama3.2:1b")
 
     assert provider.name == "ollama"
     assert model == "llama3.2:1b"
 
 
-def test_user_override_can_target_openai_oauth_provider(config_path: Path) -> None:
-    provider, model = make_router(config_path).route(TaskType.QUICK, user_override="openai_oauth:gpt-5")
+@pytest.mark.asyncio
+async def test_user_override_can_target_openai_oauth_provider(config_path: Path) -> None:
+    provider, model = await make_router(config_path).route(TaskType.QUICK, user_override="openai_oauth:gpt-5")
 
     assert provider.name == "openai_oauth"
     assert model == "gpt-5"
@@ -282,6 +291,7 @@ async def test_local_only_fallback_never_leaks_to_cloud_provider(
     assert opencode.calls == []
 
 
+@pytest.mark.asyncio
 async def test_coding_route_falls_back_to_openai_oauth_when_opencode_has_no_models(
     tmp_path: Path,
 ) -> None:
@@ -290,20 +300,21 @@ async def test_coding_route_falls_back_to_openai_oauth_when_opencode_has_no_mode
     low_cost_tier = router.config.routing.tiers["low_cost"]
     router.config.routing.tiers["low_cost"] = replace(low_cost_tier, opencode=())
 
-    provider, model = router.route(TaskType.CODING)
+    provider, model = await router.route(TaskType.CODING)
 
     assert provider.name == "openai_oauth"
     assert model == "gpt-5-mini"
 
 
-def test_coding_route_keeps_openai_oauth_ahead_of_codex_when_both_are_available(
+@pytest.mark.asyncio
+async def test_coding_route_keeps_openai_oauth_ahead_of_codex_when_both_are_available(
     config_path: Path,
 ) -> None:
     router = make_router(config_path)
     low_cost_tier = router.config.routing.tiers["low_cost"]
     router.config.routing.tiers["low_cost"] = replace(low_cost_tier, opencode=())
 
-    provider, model = router.route(TaskType.CODING)
+    provider, model = await router.route(TaskType.CODING)
 
     assert provider.name == "openai_oauth"
     assert model == "gpt-5-mini"
@@ -337,22 +348,25 @@ async def test_ask_with_fallback_reports_when_ollama_also_fails(
         await router.ask_with_fallback("hello", context, TaskType.CODING)
 
 
-def test_unknown_override_provider_fails(config_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_unknown_override_provider_fails(config_path: Path) -> None:
     with pytest.raises(ValueError, match="Unknown provider"):
-        make_router(config_path).route(TaskType.QUICK, user_override="unknown:model")
+        await make_router(config_path).route(TaskType.QUICK, user_override="unknown:model")
 
 
-def test_model_names_are_read_from_config_not_router_literals(config_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_model_names_are_read_from_config_not_router_literals(config_path: Path) -> None:
     router = make_router(config_path)
 
-    assert router.route(TaskType.QUICK)[1] == "ag-low"
-    assert router.route(TaskType.CODING)[1] == "oc-low"
-    assert router.route(TaskType.CODING_HEAVY)[1] == "oc-high"
+    assert (await router.route(TaskType.QUICK))[1] == "ag-low"
+    assert (await router.route(TaskType.CODING))[1] == "oc-low"
+    assert (await router.route(TaskType.CODING_HEAVY))[1] == "oc-high"
 
 
-def test_empty_provider_override_model_fails(config_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_empty_provider_override_model_fails(config_path: Path) -> None:
     with pytest.raises(ValueError, match="Invalid user_override"):
-        make_router(config_path).route(TaskType.QUICK, user_override="opencode:")
+        await make_router(config_path).route(TaskType.QUICK, user_override="opencode:")
 
 
 async def test_antigravity_ask_passes_prompt_directly_without_separator(
@@ -368,9 +382,15 @@ async def test_antigravity_ask_passes_prompt_directly_without_separator(
 
     class FakeProcess:
         returncode = 0
+        def __init__(self):
+            self.input_data = b""
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, input=None, *args, **kwargs) -> tuple[bytes, bytes]:
+            if input:
+                self.input_data = input
             return b"ok", b""
+
+    proc = FakeProcess()
 
     async def fake_create_subprocess_exec(*args: str, **kwargs: object) -> FakeProcess:
         nonlocal captured_args
@@ -378,7 +398,7 @@ async def test_antigravity_ask_passes_prompt_directly_without_separator(
         env = kwargs.get("env")
         assert isinstance(env, dict)
         captured_env.update({str(key): str(value) for key, value in env.items()})
-        return FakeProcess()
+        return proc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     provider = AntigravityProvider()
@@ -386,18 +406,12 @@ async def test_antigravity_ask_passes_prompt_directly_without_separator(
     provider.source_config = source_config
     provider.prepare_profiles(("ag/low",))
 
-    response = await provider.ask("hello world", context=SessionContext(
-        project="Jules",
-        directory="/tmp/jules",
-        active_files=[],
-        inferred_intent="testing",
-        time_of_day="night",
-    ), model="ag/low")
+    response = await provider.ask("hello world", context=[], model="ag/low")
 
     expected_profile = provider._profile_path("ag/low")
     assert response == "ok"
-    # '--' separator prevents argument injection — prompt is always safe.
-    assert captured_args == ("agy", "--print", "--", "hello world")
+    assert captured_args == ("agy", "--print", "--")
+    assert proc.input_data == b"hello world"
     assert captured_env["XDG_CONFIG_HOME"] == str(expected_profile)
     assert (expected_profile / "antigravity" / "config.toml").read_text(encoding="utf-8") == (
         'model = "ag/low"\ntimeout = 60\nenabled = true\n'
@@ -416,14 +430,20 @@ async def test_antigravity_ask_passes_dash_prompt_safely_with_separator(
 
     class FakeProcess:
         returncode = 0
+        def __init__(self):
+            self.input_data = b""
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, input=None, *args, **kwargs) -> tuple[bytes, bytes]:
+            if input:
+                self.input_data = input
             return b"ok", b""
+
+    proc = FakeProcess()
 
     async def fake_create_subprocess_exec(*args: str, **kwargs: object) -> FakeProcess:
         nonlocal captured_args
         captured_args = args
-        return FakeProcess()
+        return proc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     provider = AntigravityProvider()
@@ -431,16 +451,11 @@ async def test_antigravity_ask_passes_dash_prompt_safely_with_separator(
     provider.source_config = source_config
     provider.prepare_profiles(("ag/low",))
 
-    response = await provider.ask("--not-a-flag", context=SessionContext(
-        project="Jules",
-        directory="/tmp/jules",
-        active_files=[],
-        inferred_intent="testing",
-        time_of_day="night",
-    ), model="ag/low")
+    response = await provider.ask("--not-a-flag", context=[], model="ag/low")
 
     assert response == "ok"
-    assert captured_args == ("agy", "--print", "--", "--not-a-flag")
+    assert captured_args == ("agy", "--print", "--")
+    assert proc.input_data == b"--not-a-flag"
 
 
 async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -449,7 +464,7 @@ async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.
     class FakeProcess:
         returncode = 0
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, *args, **kwargs) -> tuple[bytes, bytes]:
             return b"ok", b""
 
     async def fake_create_subprocess_exec(*args: str, **kwargs: object) -> FakeProcess:
@@ -463,7 +478,7 @@ async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.
     provider = AntigravityProvider()
     provider.profile_root = tmp_path / "profiles"
 
-    response = await provider._run_cli(["agy", "--print", "--", "hello"], timeout=1.0, model="ag-low")
+    response = await provider._run_cli(["agy", "--print", "--"], "hello", timeout=1.0, model="ag-low")
 
     assert response == "ok"
     assert captured_env["XDG_CONFIG_HOME"] == str(provider._profile_path("ag-low"))
@@ -513,19 +528,21 @@ def test_antigravity_profile_symlink_safety(tmp_path: Path) -> None:
 
 
 
-def test_available_models_includes_configured(config_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_available_models_includes_configured(config_path: Path) -> None:
     router = make_router(config_path)
-    models = router.available_models()
+    models = await router.available_models()
 
     assert isinstance(models, tuple)
-    configured = router._configured_models()
+    configured = await router._configured_models()
     for entry in configured:
         assert entry in models
 
 
-def test_current_model_returns_tuple(config_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_current_model_returns_tuple(config_path: Path) -> None:
     router = make_router(config_path)
-    result = router.current_model()
+    result = await router.current_model()
 
     assert isinstance(result, tuple)
     assert len(result) == 2

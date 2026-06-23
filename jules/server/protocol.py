@@ -52,6 +52,11 @@ class StatusGetRequest(IpcMessage):
 
 
 @dataclass
+class ContextGetRequest(IpcMessage):
+    type: str = field(default="context_get", init=False)
+
+
+@dataclass
 class CancelRequest(IpcMessage):
     type: str = field(default="cancel", init=False)
 
@@ -124,6 +129,32 @@ class StatusEvent(IpcMessage):
 
 
 @dataclass
+class ToolsEvent(IpcMessage):
+    filesystem: bool = False
+    terminal: bool = False
+    git: bool = False
+    search: bool = False
+    web: bool = False
+    type: str = field(default="tools", init=False)
+
+
+@dataclass
+class ProjectInfoEvent(IpcMessage):
+    path: str = ""
+    branch: str = "---"
+    file_count: int = 0
+    type: str = field(default="project_info", init=False)
+
+
+@dataclass
+class MemoryStatsEvent(IpcMessage):
+    episodes: int = 0
+    facts: int = 0
+    memories: int = 0
+    type: str = field(default="memory_stats", init=False)
+
+
+@dataclass
 class ErrorEvent(IpcMessage):
     message: str = ""
     recoverable: bool = True
@@ -143,6 +174,7 @@ _INBOUND_DISPATCH: dict[str, type[IpcMessage]] = {
     "model_set": ModelSetRequest,
     "model_list": ModelListRequest,
     "status_get": StatusGetRequest,
+    "context_get": ContextGetRequest,
     "cancel": CancelRequest,
     "quit": QuitRequest,
 }

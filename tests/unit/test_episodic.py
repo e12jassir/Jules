@@ -1,7 +1,7 @@
 import asyncio
 import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock
+from unittest.mock import Mock, MagicMock
 
 import pytest
 
@@ -25,7 +25,8 @@ def test_init_defers_lancedb_connection(tmp_path, monkeypatch):
 
 
 def test_open_or_create_table_handles_list_tables_response(tmp_path, monkeypatch):
-    table = Mock()
+    table = MagicMock()
+    table.schema.field.return_value.type.list_size = 2048
     db = Mock()
     db.list_tables.return_value = ["episodes_vector"]
     db.open_table.return_value = table
@@ -39,7 +40,8 @@ def test_open_or_create_table_handles_list_tables_response(tmp_path, monkeypatch
 
 
 async def test_lazy_table_initialization_is_thread_safe(tmp_path, monkeypatch):
-    table = Mock()
+    table = MagicMock()
+    table.__len__.return_value = 0
     open_calls = 0
 
     def open_table_once():
