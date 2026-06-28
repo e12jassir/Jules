@@ -51,13 +51,13 @@ And the gate MUST NOT log any denial or warning event
 
 ### 1.2 Required Actions
 
-Actions that modify system state via an approved package manager (`pacman`, `yay`) or that alter writable application configuration MUST be classified as *Required*.
+Actions that modify system state via a package manager (`pacman`, `yay`, `dnf`, `apt`, `zypper`, etc.) or that alter writable application configuration MUST be classified as *Required*.
 
 **Scenario 1.2 — Required action matched by package manager pattern**
 
 ```gherkin
 Given an action request arrives at the PermissionGate
-When the action string matches the pattern for a system package operation (pacman, yay)
+When the action string matches the pattern for a system package operation (pacman, yay, dnf, apt, etc.)
 Then the gate MUST classify the action as Required
 And the gate MUST NOT execute the action immediately
 And the gate MUST initiate the approval flow appropriate to the execution context (§ Req. 2 or § Req. 3)

@@ -9,18 +9,20 @@
 
 ## ENTORNO OBJETIVO
 
-Jules se desarrolla y opera en el siguiente entorno de referencia:
+Jules es agnóstico al sistema operativo. Funciona en cualquier Linux moderno y se diseña para ser portable a macOS y Windows en el futuro.
 
 | Componente | Valor |
 |---|---|
-| Distribución | EndeavourOS (Arch-based, rolling release) |
-| Escritorio | KDE Plasma 6 |
-| Servidor de display | Wayland (KWin como compositor) |
-| Shell | Verificar antes del Módulo 8: `echo $SHELL` |
+| OS | Linux (cualquier distro con glibc, systemd opcional) |
+| Display server | Wayland o X11 — detección en runtime |
+| Terminal | Cualquier emulador con soporte de 256 colores / true color |
+| Shell | Detectado en runtime — fish / zsh / bash |
 | Python | Virtualenv dedicado — nunca el Python del sistema |
-| Gestor de paquetes | pacman + AUR (yay / paru) |
+| Gestor de paquetes | El del sistema (dnf, pacman, apt, etc.) — Jules no asume cuál |
 
-Toda decisión de arquitectura que toque el sistema operativo, ventanas, shell o servicios systemd debe validarse contra este entorno antes de considerarse done.
+**Entorno de desarrollo actual:** Fedora + GNOME/Wayland.
+
+Toda decisión de arquitectura que toque el sistema operativo, display server, shell o servicios systemd debe funcionar en al menos Fedora y Arch sin cambios. Si algo es específico de una distro, debe estar detrás de detección en runtime.
 
 ---
 
@@ -98,7 +100,7 @@ Regla operativa: si no está en el scope de la Fase actual, no existe todavía.
 
 9. **HUMAN-CENTERED** — Jules augmenta al usuario. No lo reemplaza ni genera dependencia.
 
-10. **ENTORNO-AWARE** — Jules conoce el entorno en el que vive. Las integraciones de sistema se diseñan para KDE Plasma + Wayland desde el inicio, no como adaptación posterior.
+10. **ENTORNO-AWARE** — Jules conoce el entorno en el que vive. Las integraciones de sistema se diseñan con detección en runtime (display server, DE, package manager) y degradación graceful cuando un componente no está disponible.
 
 ---
 
@@ -201,15 +203,15 @@ Motor de Persistencia
 | Provider externo 1 | Antigravity CLI (subprocess) | Google + Claude + GPT via subprocess |
 | Provider externo 2 | OpenCode CLI (subprocess) | GPT / Codex / Deepseek / Llama via subprocess |
 
-### Nota crítica: LanceDB en EndeavourOS
+### Nota crítica: LanceDB
 
-LanceDB no está en los repositorios oficiales de Arch. Se instala vía pip y compila dependencias de Rust localmente. Requisitos:
+LanceDB se instala vía pip y compila dependencias de Rust localmente. Requisitos:
 
-- `base-devel` instalado
+- Herramientas de compilación del sistema (`build-essential` en Debian/Ubuntu, `gcc`/`make` en Fedora, `base-devel` en Arch)
 - Rust actualizado (`rustup update`)
 - Todo dentro del virtualenv de Jules — nunca en el Python del sistema
 
-En rolling release, una actualización de sistema puede romper dependencias compiladas sin aviso. Si LanceDB falla después de una actualización, reconstruir el virtualenv antes de asumir que el problema es del código.
+En distros rolling release, una actualización de sistema puede romper dependencias compiladas sin aviso. Si LanceDB falla después de una actualización, reconstruir el virtualenv antes de asumir que el problema es del código.
 
 ### Nota crítica: virtualenv es obligatorio
 
@@ -240,9 +242,9 @@ Uso exclusivo: identidad, routing, importance scoring, modo offline
 |---|---|
 | Llama 3.2 1B | Identidad base, scoring de memoria, offline |
 
-#### Nota crítica: Ollama y systemd en EndeavourOS
+#### Nota crítica: Ollama y systemd
 
-Ollama instalado vía AUR crea `ollama.service`, que corre como usuario del sistema `ollama`, no como tu usuario. Los modelos descargados con `ollama pull` bajo tu usuario pueden no ser visibles para el servicio del sistema, y viceversa.
+Ollama instalado via paquete del sistema (RPM, AUR, o `.deb`) crea `ollama.service`, que corre como usuario del sistema `ollama`. Los modelos descargados con `ollama pull` bajo tu usuario pueden no ser visibles para el servicio del sistema, y viceversa.
 
 Verificar antes de dar el Módulo 3 por done:
 
@@ -567,7 +569,7 @@ class EventType(str, Enum):
     SESSION_ENDED   = "session_ended"
 ```
 
-### Nota crítica: shell hooks en EndeavourOS
+### Nota crítica: shell hooks
 
 Los hooks de shell dependen del shell activo. **Verificar antes de implementar:**
 
@@ -580,7 +582,7 @@ echo $SHELL
 
 Fish no es compatible con los hooks de bash/zsh. Si el shell activo es fish, los hooks deben implementarse en `~/.config/fish/conf.d/jules.fish` usando las funciones de evento de fish. No intentar adaptar hooks de bash a fish.
 
-### Nota crítica: inotify en EndeavourOS
+### Nota crítica: inotify en Linux
 
 Los filesystem watchers usan inotify. El límite por defecto puede ser insuficiente en proyectos grandes:
 
@@ -588,9 +590,9 @@ Los filesystem watchers usan inotify. El límite por defecto puede ser insuficie
 # Ver límite actual
 cat /proc/sys/fs/inotify/max_user_watches
 
-# Si está por debajo de 65536, aumentar
-echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.d/jules.conf
-sudo sysctl -p /etc/sysctl.d/jules.conf
+# Si está por debajo de 65536, aumentar (funciona en cualquier distro)
+echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.d/99-jules.conf
+sudo sysctl -p /etc/sysctl.d/99-jules.conf
 ```
 
 Jules verifica este límite al arranque (`jules doctor`) y advierte si está cerca del techo. Un watcher que se agota silenciosamente es difícil de depurar.
@@ -729,19 +731,19 @@ Jules puede controlar el entorno Linux:
 - manejar sesiones tmux / zellij
 - automatizar workflows repetitivos
 
-### Herramientas por función — KDE Plasma + Wayland
+### Herramientas por función — Linux Desktop
 
 | Función | Herramienta | Nota |
 |---|---|---|
-| Gestión de ventanas | `qdbus` / `dbus-send` → KWin | Correcto para KDE Plasma |
-| Gestión de ventanas | `wmctrl` | Soporte parcial bajo Wayland — usar con precaución |
-| Eventos del desktop | `DBus` | Funciona en Plasma |
+| Gestión de ventanas | `dbus-send` / `gdbus` → compositor | Depende del DE: KWin (KDE), Mutter (GNOME), etc. |
+| Gestión de ventanas | `wmctrl` / `xdotool` | Solo X11 — no funciona bajo Wayland nativo |
+| Eventos del desktop | D-Bus | Funciona en GNOME, KDE, y la mayoría de DEs |
 | Sesiones tmux/zellij | `subprocess` | Sin restricciones |
 | Actividad de archivos | filesystem watchers (inotify) | Ver nota de límites |
 | Hooks de shell | fish / zsh / bash | Según shell detectado |
 | Comandos y CLIs | `subprocess` | General |
 
-> `hyprctl` es exclusivo de Hyprland y no existe en KDE Plasma. No usar.
+> La integración con el compositor es específica del DE. Jules detecta el DE en runtime y selecciona el adaptador correcto. Si el DE no es soportado, degrada silenciosamente (no crash).
 
 **Prioridad:** Fase 2.
 
