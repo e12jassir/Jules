@@ -547,11 +547,24 @@ class _ScoringAdapter:
         return await self.provider.ask(prompt, self.context, self.model)
 
 
-def _compose_prompt(personality: str, message: str, memory_refs: list[str] | None = None) -> str:
+def _compose_prompt(
+    personality: str,
+    message: str,
+    memory_refs: list[str] | None = None,
+    chat_history: list[tuple[str, str]] | None = None,
+    history_limit: int = 10,
+) -> str:
     parts = []
     if personality:
         parts.append(personality)
     if memory_refs:
         parts.append("Relevant past context:\n- " + "\n- ".join(memory_refs))
+    if chat_history:
+        recent = chat_history[-history_limit:]
+        lines = ["Conversation so far:"]
+        for role, text in recent:
+            label = "Jules" if role == "jules" else "User"
+            lines.append(f"{label}: {text}")
+        parts.append("\n".join(lines))
     parts.append(f"User: {message}")
     return "\n\n".join(parts)

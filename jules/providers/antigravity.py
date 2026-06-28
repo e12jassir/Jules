@@ -44,7 +44,8 @@ class AntigravityProvider:
         if model not in self._prepared_models:
             raise ProviderError(f"Antigravity profile for model {model!r} was not prepared")
         return await self._run_cli(
-            [self.executable, "--print", "--", prompt],
+            [self.executable, "--print", "--"],
+            prompt,
             timeout=self.timeout_seconds,
             model=model,
         )
@@ -94,7 +95,7 @@ class AntigravityProvider:
     def _profile_path(self, model: str) -> Path:
         return self.profile_root / self._safe_profile_name(model)
 
-    async def _run_cli(self, args: list[str], timeout: float, model: str | None = None) -> str:
+    async def _run_cli(self, args: list[str], prompt: str, timeout: float, model: str | None = None) -> str:
         config_home = self._profile_path(model) if model else self.profile_root
         env = {**os.environ, "XDG_CONFIG_HOME": str(config_home)}
 
@@ -103,6 +104,7 @@ class AntigravityProvider:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -114,7 +116,9 @@ class AntigravityProvider:
             ) from exc
 
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode()), timeout=timeout
+            )
         except asyncio.TimeoutError as exc:
             try:
                 proc.kill()

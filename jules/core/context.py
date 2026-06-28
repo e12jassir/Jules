@@ -18,7 +18,7 @@ class BuiltContext:
 
 class ContextEngine:
     @staticmethod
-    def build(session: SessionContext, user_input: str) -> BuiltContext:
+    async def build(session: SessionContext, user_input: str) -> BuiltContext:
         del user_input
         project_root = ContextEngine._find_project_root(session.cwd)
         intent = ContextEngine._infer_intent(session)

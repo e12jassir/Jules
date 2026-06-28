@@ -81,8 +81,8 @@ async def test_openai_oauth_ask_uses_websocket(monkeypatch: pytest.MonkeyPatch) 
     sent_payload = json.loads(fake_ws.sent[0])
     assert sent_payload["type"] == "response.create"
     assert sent_payload["model"] == "gpt-5"
-    assert sent_payload["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
-    assert sent_payload["stream"] is True
+    assert sent_payload["input"] == "hi"
+    assert sent_payload["stream"] is False
 
 
 async def test_openai_oauth_stream_yields_deltas(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -70,7 +70,7 @@ class CognitiveRouter:
                 raise ValueError("No routing tiers configured")
             return next(iter(self.config.routing.tiers.values()))
 
-    def route(self, task: TaskType, user_override: str | None = None) -> tuple[Provider, str]:
+    async def route(self, task: TaskType, user_override: str | None = None) -> tuple[Provider, str]:
         if user_override:
             provider, model = self._resolve_user_override(user_override)
             if task in LOCAL_ONLY_TASKS and provider.name != "ollama":
@@ -102,7 +102,7 @@ class CognitiveRouter:
         model = "unresolved"
         tier = None
         try:
-            provider, model = self.route(task, user_override=user_override)
+            provider, model = await self.route(task, user_override=user_override)
             provider_name = provider.name
             tier = None if user_override else self._tier_for_task(task)
             logger.info(
@@ -204,7 +204,7 @@ class CognitiveRouter:
 
     def _resolve_user_override(self, override: str) -> tuple[Provider, str]:
         matches: list[tuple[Provider, str]] = []
-        for provider_name, model in self._configured_models():
+        for provider_name, model in self.registry.available_models():
             if model == override and provider_name not in [m[0].name for m in matches]:
                 matches.append((self.providers[provider_name], model))
 
@@ -265,27 +265,27 @@ class CognitiveRouter:
         except KeyError as exc:
             raise ValueError(f"Unknown provider: {provider_name}") from exc
 
-    def _configured_models(self) -> tuple[tuple[str, str], ...]:
+    async def _configured_models(self) -> tuple[tuple[str, str], ...]:
         return self.registry.available_models()
 
     def _configured_models_for_provider(self, provider_name: str) -> tuple[str, ...]:
         return tuple(
             model
-            for configured_provider, model in self._configured_models()
+            for configured_provider, model in self.registry.available_models()
             if configured_provider == provider_name
         )
 
     def _models_for_provider(self, provider_name: str, tier: RoutingTier) -> tuple[str, ...]:
         return self.registry.models_for_provider(provider_name, tier)
 
-    def available_models(self) -> tuple[tuple[str, str], ...]:
+    async def available_models(self) -> tuple[tuple[str, str], ...]:
         """Return de-duped (provider, model) tuples from the provider registry."""
         return self.registry.available_models()
 
-    def current_model(self, task: TaskType = TaskType.QUICK) -> tuple[str, str]:
+    async def current_model(self, task: TaskType = TaskType.QUICK) -> tuple[str, str]:
         """Return (provider_name, model) for the default route of the given task."""
         try:
-            provider, model = self.route(task)
+            provider, model = await self.route(task)
             return provider.name, model
         except Exception:
             return ("ollama", "local")

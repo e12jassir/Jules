@@ -30,6 +30,7 @@ async def test_build_returns_debugging_when_last_command_failed(monkeypatch: pyt
     assert built.shell == "/bin/zsh"
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "recent_commands",
     [
@@ -38,29 +39,28 @@ async def test_build_returns_debugging_when_last_command_failed(monkeypatch: pyt
         ["cat docs/architecture.md"],
     ],
 )
-def test_build_returns_learning_when_recent_commands_include_learning_signal(
+async def test_build_returns_learning_when_recent_commands_include_learning_signal(
     monkeypatch: pytest.MonkeyPatch,
     recent_commands: list[str],
 ) -> None:
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
     session = SessionContext(cwd="/tmp", recent_commands=recent_commands)
 
-    import asyncio
-    built = asyncio.run(ContextEngine.build(session, "how does this work?"))
+    built = await ContextEngine.build(session, "how does this work?")
 
     assert built.intent == "learning"
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("recent_commands", [["git status"], ["ls", "pytest tests/unit/test_context.py"]])
-def test_build_defaults_to_review_when_no_debugging_or_learning_signals(
+async def test_build_defaults_to_review_when_no_debugging_or_learning_signals(
     monkeypatch: pytest.MonkeyPatch,
     recent_commands: list[str],
 ) -> None:
     monkeypatch.setattr("jules.core.context.datetime", FixedDateTime)
     session = SessionContext(cwd="/tmp", recent_commands=recent_commands)
 
-    import asyncio
-    built = asyncio.run(ContextEngine.build(session, "review this"))
+    built = await ContextEngine.build(session, "review this")
 
     assert built.intent == "review"
 

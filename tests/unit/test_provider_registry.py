@@ -74,10 +74,9 @@ def test_provider_registry_catalog_exposes_kind_auth_and_models(tmp_path: Path) 
     assert catalog["openai_oauth"].enabled is True
 
 
-@pytest.mark.asyncio
-async def test_provider_registry_available_models_includes_all_enabled_configured_models(tmp_path: Path) -> None:
+def test_provider_registry_available_models_includes_all_enabled_configured_models(tmp_path: Path) -> None:
     registry = ProviderRegistry(load_config(_config_path(tmp_path)))
-    models = await registry.available_models()
+    models = registry.available_models()
 
     assert ("antigravity", "ag-low") in models
     assert ("opencode", "oc-low") in models
