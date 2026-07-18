@@ -9,18 +9,18 @@
 
 ## ENTORNO OBJETIVO
 
-Jules se desarrolla y opera en el siguiente entorno de referencia:
+Jules apunta a **cualquier distribución Linux** — no a un entorno de escritorio o distro específica. macOS está fuera de alcance (sin soporte planeado). Windows nunca fue objetivo.
 
 | Componente | Valor |
 |---|---|
-| Distribución | EndeavourOS (Arch-based, rolling release) |
-| Escritorio | KDE Plasma 6 |
-| Servidor de display | Wayland (KWin como compositor) |
-| Shell | Verificar antes del Módulo 8: `echo $SHELL` |
+| Sistema operativo | Linux (cualquier distribución) |
+| Gestor de servicios | systemd si está disponible; fallback sin systemd para distros que no lo usan (Alpine, Void, etc.) |
+| Escritorio / compositor | Ninguno asumido — Jules no depende de un entorno de escritorio específico |
+| Shell | Detectado en runtime (`$SHELL`) — soporte nativo para bash, zsh y fish |
 | Python | Virtualenv dedicado — nunca el Python del sistema |
-| Gestor de paquetes | pacman + AUR (yay / paru) |
+| Gestor de paquetes | No asumido — cada distro resuelve sus propias dependencias de sistema |
 
-Toda decisión de arquitectura que toque el sistema operativo, ventanas, shell o servicios systemd debe validarse contra este entorno antes de considerarse done.
+Toda decisión de arquitectura que toque el sistema operativo, ventanas, shell o servicios debe evaluar primero qué está realmente disponible en el entorno donde corre (detección en runtime), en vez de asumir una distro o desktop environment fijo.
 
 ---
 
@@ -98,7 +98,7 @@ Regla operativa: si no está en el scope de la Fase actual, no existe todavía.
 
 9. **HUMAN-CENTERED** — Jules augmenta al usuario. No lo reemplaza ni genera dependencia.
 
-10. **ENTORNO-AWARE** — Jules conoce el entorno en el que vive. Las integraciones de sistema se diseñan para KDE Plasma + Wayland desde el inicio, no como adaptación posterior.
+10. **ENTORNO-AWARE** — Jules conoce el entorno en el que vive. Las integraciones de sistema se diseñan de forma agnóstica a la distro y al escritorio: se detectan en runtime (systemd disponible o no, shell activo, presencia de D-Bus/session bus) en vez de asumir un stack fijo desde el inicio.
 
 ---
 
@@ -199,15 +199,15 @@ Motor de Persistencia
 | Provider externo 1 | Antigravity CLI | Google + Claude + GPT via subprocess |
 | Provider externo 2 | OpenCode CLI | GPT / Codex / Deepseek / Llama via subprocess |
 
-### Nota crítica: LanceDB en EndeavourOS
+### Nota crítica: LanceDB compila dependencias nativas
 
-LanceDB no está en los repositorios oficiales de Arch. Se instala vía pip y compila dependencias de Rust localmente. Requisitos:
+LanceDB no siempre está disponible como paquete precompilado en el gestor de paquetes de la distro. En muchos casos se instala vía pip y compila dependencias de Rust localmente. Requisitos generales (los nombres de paquete varían por distro):
 
-- `base-devel` instalado
+- Toolchain de compilación C/C++ (`build-essential` en Debian/Ubuntu, `base-devel` en Arch, `gcc`/`make` en Fedora, etc.)
 - Rust actualizado (`rustup update`)
 - Todo dentro del virtualenv de Jules — nunca en el Python del sistema
 
-En rolling release, una actualización de sistema puede romper dependencias compiladas sin aviso. Si LanceDB falla después de una actualización, reconstruir el virtualenv antes de asumir que el problema es del código.
+En distros rolling release (Arch, openSUSE Tumbleweed), una actualización de sistema puede romper dependencias compiladas sin aviso. Si LanceDB falla después de una actualización del sistema, reconstruir el virtualenv antes de asumir que el problema es del código.
 
 ### Nota crítica: virtualenv es obligatorio
 
@@ -238,11 +238,11 @@ Uso exclusivo: identidad, routing, importance scoring, modo offline
 |---|---|
 | Llama 3.2 1B | Identidad base, scoring de memoria, offline |
 
-#### Nota crítica: Ollama y systemd en EndeavourOS
+#### Nota crítica: Ollama y el usuario del servicio
 
-Ollama instalado vía AUR crea `ollama.service`, que corre como usuario del sistema `ollama`, no como tu usuario. Los modelos descargados con `ollama pull` bajo tu usuario pueden no ser visibles para el servicio del sistema, y viceversa.
+En distros con systemd, Ollama instalado como paquete de sistema (AUR, repos oficiales, etc.) suele crear un `ollama.service` que corre como un usuario de servicio dedicado (`ollama`), no como el usuario interactivo. Los modelos descargados con `ollama pull` bajo tu usuario pueden no ser visibles para el servicio del sistema, y viceversa.
 
-Verificar antes de dar el Módulo 3 por done:
+Verificar antes de dar el Módulo 3 por done (en distros con systemd):
 
 ```bash
 # Ver bajo qué usuario corre el servicio
@@ -254,6 +254,8 @@ sudo -u ollama ollama list
 # Alternativa: correr Ollama como servicio de usuario
 systemctl --user enable --now ollama
 ```
+
+**En distros sin systemd** (Alpine, Void, etc.), `jules doctor` no puede verificar el estado de "servicio activo" ni el usuario que lo ejecuta — no hay unidad de systemd que inspeccionar. El check cae a un fallback: solo confirma que el binario `ollama` responde en PATH y que `ollama list` devuelve al menos un modelo. Ver `jules/platform/doctor.py::_check_ollama_without_systemd`.
 
 La verificación de este punto es criterio de done del Módulo 3, no de Fase 1.5.
 
@@ -565,20 +567,23 @@ class EventType(str, Enum):
     SESSION_ENDED   = "session_ended"
 ```
 
-### Nota crítica: shell hooks en EndeavourOS
+### Nota crítica: shell hooks — depende del shell activo
 
-Los hooks de shell dependen del shell activo. **Verificar antes de implementar:**
+Los hooks de shell dependen del shell activo. **Verificar en runtime, nunca asumir:**
 
 ```bash
 echo $SHELL
-# /usr/bin/fish  → usar fish_preexec / fish_postexec / fish_prompt
-# /usr/bin/zsh   → usar precmd / preexec en .zshrc
-# /usr/bin/bash  → usar PROMPT_COMMAND / trap DEBUG en .bashrc
+# /usr/bin/fish  → usar fish_preexec / fish_prompt (funciones de evento nativas)
+# /usr/bin/zsh   → usar precmd / preexec vía add-zsh-hook en .zshrc
+# /usr/bin/bash  → bash no tiene precmd/preexec nativos; requiere el shim
+#                  bash-preexec (https://github.com/rcaloras/bash-preexec).
+#                  Si el usuario no lo tiene instalado, los hooks de Jules
+#                  quedan como no-op — degradación explícita, nunca error.
 ```
 
-Fish no es compatible con los hooks de bash/zsh. Si el shell activo es fish, los hooks deben implementarse en `~/.config/fish/conf.d/jules.fish` usando las funciones de evento de fish. No intentar adaptar hooks de bash a fish.
+Fish no es compatible con los hooks de bash/zsh. Si el shell activo es fish, los hooks se implementan en `~/.config/fish/config.fish` (o `conf.d/jules.fish`) usando las funciones de evento de fish. No intentar adaptar hooks de bash a fish. Ver `jules/platform/shell.py::install_shell_hooks` — despacha automáticamente según `$SHELL`.
 
-### Nota crítica: inotify en EndeavourOS
+### Nota crítica: inotify (Linux, todas las distros)
 
 Los filesystem watchers usan inotify. El límite por defecto puede ser insuficiente en proyectos grandes:
 
@@ -727,21 +732,23 @@ Jules puede controlar el entorno Linux:
 - manejar sesiones tmux / zellij
 - automatizar workflows repetitivos
 
-### Herramientas por función — KDE Plasma + Wayland
+### Herramientas por función — evaluadas por entorno detectado, no asumidas
+
+Jules no está atada a un desktop environment fijo. Cada función de control de entorno debe evaluar en runtime qué mecanismo está disponible (D-Bus/session bus activo, compositor específico, herramientas instaladas) y degradar con claridad si no hay soporte, en vez de asumir un DE particular.
 
 | Función | Herramienta | Nota |
 |---|---|---|
-| Gestión de ventanas | `qdbus` / `dbus-send` → KWin | Correcto para KDE Plasma |
-| Gestión de ventanas | `wmctrl` | Soporte parcial bajo Wayland — usar con precaución |
-| Eventos del desktop | `DBus` | Funciona en Plasma |
-| Sesiones tmux/zellij | `subprocess` | Sin restricciones |
-| Actividad de archivos | filesystem watchers (inotify) | Ver nota de límites |
-| Hooks de shell | fish / zsh / bash | Según shell detectado |
+| Gestión de ventanas | D-Bus (`qdbus` / `dbus-send`) hacia el compositor activo | Solo si el DE expone una interfaz D-Bus utilizable (KWin la expone; otros compositores, evaluar caso por caso) |
+| Gestión de ventanas | `wmctrl` | Soporte parcial e inconsistente bajo Wayland en general — usar con precaución, no como default |
+| Eventos del desktop | D-Bus / freedesktop.org notification spec | Estándar multi-DE (GNOME, KDE, XFCE) vía `notify-send` — no exclusivo de ningún entorno |
+| Sesiones tmux/zellij | `subprocess` | Sin restricciones — agnóstico de DE |
+| Actividad de archivos | filesystem watchers (inotify) | Ver nota de límites — Linux, cualquier distro |
+| Hooks de shell | fish / zsh / bash | Según shell detectado — ver `jules/platform/shell.py` |
 | Comandos y CLIs | `subprocess` | General |
 
-> `hyprctl` es exclusivo de Hyprland y no existe en KDE Plasma. No usar.
+> Compositores específicos (`hyprctl` para Hyprland, `qdbus`/KWin para KDE Plasma, etc.) solo se usan si Jules detecta ese compositor activo en runtime. Ninguno es la ruta por defecto ni una asunción de arquitectura — ver `jules/platform/dbus.py` para el estado actual (placeholder, sin implementación).
 
-**Prioridad:** Fase 2.
+**Prioridad:** Fase 2 — Item 3 del ROADMAP ("Automatización de entorno Linux"). Requiere `sdd-explore` obligatorio para relevar qué está disponible en el entorno real antes de proponer diseño.
 
 ---
 
@@ -818,10 +825,11 @@ jules/                     # repositorio del proyecto
 │   │   └── sanitizer.py
 │   ├── personality/
 │   │   └── loader.py
-│   ├── linux/
+│   ├── platform/
 │   │   ├── watcher.py     # filesystem watchers + inotify health check
 │   │   ├── shell.py       # hooks fish / zsh / bash según shell detectado
-│   │   └── doctor.py      # jules doctor — diagnóstico de entorno
+│   │   ├── doctor.py      # jules doctor — diagnóstico de entorno
+│   │   └── dbus.py        # placeholder — integración de escritorio futura, sin DE fijo
 │   └── observability/
 │       └── logger.py
 └── tests/
@@ -1059,7 +1067,7 @@ scoring_variance_threshold     = 0.01    # mínimo para considerar scoring sano
 ### Fase 2 — Done cuando:
 - Sistema de voz funciona en condiciones reales
 - Jules prepara entornos de trabajo automáticamente para ≥2 proyectos
-- Integración con KDE Plasma via D-Bus/KWin funciona sin `wmctrl`
+- Integración de automatización de entorno funciona en al menos un desktop environment real, seleccionado por lo que el `sdd-explore` encuentre disponible — sin comprometerse a KDE Plasma/KWin de antemano
 - Replay system reconstruye una sesión de debugging real
 - Dashboard Tauri muestra modelo activo, tier, contexto y salud del sistema
 - Iniciativa contextual activable con reglas funcionando correctamente

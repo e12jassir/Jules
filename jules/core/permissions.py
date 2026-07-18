@@ -403,7 +403,7 @@ class PermissionGate:
         return key.lower() == "y"
 
     async def _prompt_background(self, action: Action, target: str) -> bool:
-        """Dispatches a KDE Plasma desktop notification with action buttons and suspends task."""
+        """Dispatches a desktop notification (freedesktop.org notification spec) with action buttons and suspends task."""
         has_notify = await asyncio.to_thread(shutil.which, "notify-send")
         if not _has_display() or has_notify is None:
             self._log_denial(action, target, PermissionClassification.REQUIRED, "no_display_environment")

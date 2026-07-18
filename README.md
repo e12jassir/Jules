@@ -9,7 +9,7 @@
 ![Phase](https://img.shields.io/badge/Phase_1-Complete-22c55e?style=flat-square&labelColor=1e1e2e)
 ![Phase](https://img.shields.io/badge/Phase_1.5-Planned-6366f1?style=flat-square&labelColor=1e1e2e)
 ![Tests](https://img.shields.io/badge/Tests-120_passing-22c55e?style=flat-square&labelColor=1e1e2e)
-![Platform](https://img.shields.io/badge/EndeavourOS-KDE_Plasma_6-f97316?style=flat-square&labelColor=1e1e2e)
+![Platform](https://img.shields.io/badge/Platform-Linux_(any_distro)-f97316?style=flat-square&labelColor=1e1e2e)
 ![Python](https://img.shields.io/badge/Python-3.11+-eab308?style=flat-square&labelColor=1e1e2e)
 ![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square&labelColor=1e1e2e)
 
@@ -88,16 +88,16 @@ The response line does not wait for anything below it. This is a hard rule of th
 
 ### It Knows Its Environment
 
-Jules isn't a generic Linux tool. It was designed for a specific, deliberate environment:
+Jules is built for Linux — any distribution. No fixed desktop environment, no fixed init system assumed.
 
 | Component | Value |
 |---|---|
-| OS | EndeavourOS (Arch-based, rolling release) |
-| Desktop | KDE Plasma 6 + Wayland |
-| Compositor | KWin |
-| Shell | Detected at runtime — fish / zsh / bash |
+| OS | Linux — any distribution. macOS is not supported |
+| Desktop | Not assumed — detected at runtime, not hardcoded |
+| Init system | systemd when available, with a fallback path for distros that don't use it |
+| Shell | Detected at runtime — native hooks for fish / zsh / bash |
 
-It detects your shell, watches the filesystem via inotify, integrates with KDE Plasma via D-Bus, and understands the difference between you debugging and you reading docs. OS-level integrations are designed for this environment from the start — not retrofitted later.
+It detects your shell, watches the filesystem via a polling-based watcher (with an inotify limit health check), and understands the difference between you debugging and you reading docs. OS-level integrations are evaluated against what's actually available at runtime — never assumed from a fixed distro or desktop environment.
 
 ---
 

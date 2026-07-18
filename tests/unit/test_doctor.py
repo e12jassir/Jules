@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from jules.linux.doctor import (
+from jules.platform.doctor import (
     CheckResult,
     DoctorReport,
     check_ollama,
@@ -267,8 +267,8 @@ def test_check_sqlite_reports_alembic_failure(monkeypatch):
 
 def test_check_inotify(monkeypatch, tmp_path):
     tmp_file = tmp_path / "max_user_watches"
-    import jules.linux.doctor
-    monkeypatch.setattr(jules.linux.doctor, "INOTIFY_MAX_USER_WATCHES_PATH", tmp_file)
+    import jules.platform.doctor
+    monkeypatch.setattr(jules.platform.doctor, "INOTIFY_MAX_USER_WATCHES_PATH", tmp_file)
 
     # Case 1: low value
     tmp_file.write_text("8192", encoding="utf-8")
@@ -370,10 +370,10 @@ def test_check_shell(monkeypatch):
 
 
 def test_run_all_checks(monkeypatch):
-    import jules.linux.doctor
+    import jules.platform.doctor
 
     monkeypatch.setattr(
-        jules.linux.doctor,
+        jules.platform.doctor,
         "load_config",
         lambda: types.SimpleNamespace(doctor=types.SimpleNamespace(inotify_min_watches=65536)),
     )
@@ -391,7 +391,7 @@ def test_run_all_checks(monkeypatch):
         "check_shell",
     ]:
         monkeypatch.setattr(
-            jules.linux.doctor,
+            jules.platform.doctor,
             check_name,
             lambda *args, name=check_name: CheckResult(name=name, status="ok", message="ok")
         )
@@ -401,7 +401,7 @@ def test_run_all_checks(monkeypatch):
 
     # Mock one to fail
     monkeypatch.setattr(
-        jules.linux.doctor,
+        jules.platform.doctor,
         "check_ollama",
         lambda: CheckResult(name="Ollama", status="fail", message="fail")
     )
@@ -410,9 +410,9 @@ def test_run_all_checks(monkeypatch):
 
 
 def test_run_all_checks_reports_config_load_failure(monkeypatch):
-    import jules.linux.doctor
+    import jules.platform.doctor
 
-    monkeypatch.setattr(jules.linux.doctor, "load_config", lambda: (_ for _ in ()).throw(ValueError("bad config")))
+    monkeypatch.setattr(jules.platform.doctor, "load_config", lambda: (_ for _ in ()).throw(ValueError("bad config")))
 
     for check_name in [
         "check_ollama",
@@ -426,12 +426,12 @@ def test_run_all_checks_reports_config_load_failure(monkeypatch):
         "check_shell",
     ]:
         monkeypatch.setattr(
-            jules.linux.doctor,
+            jules.platform.doctor,
             check_name,
             lambda *args, name=check_name: CheckResult(name=name, status="ok", message="ok"),
         )
     monkeypatch.setattr(
-        jules.linux.doctor,
+        jules.platform.doctor,
         "check_inotify",
         lambda min_watches: CheckResult(name="inotify", status="ok", message=f"threshold {min_watches}"),
     )
@@ -502,7 +502,7 @@ def test_doctor_cli_returns_report_exit_code(monkeypatch):
 
 
 def test_json_output_serialization(monkeypatch):
-    import jules.linux.doctor
+    import jules.platform.doctor
 
     names = [
         "Ollama",
@@ -529,7 +529,7 @@ def test_json_output_serialization(monkeypatch):
         "check_shell",
     ]):
         monkeypatch.setattr(
-            jules.linux.doctor,
+            jules.platform.doctor,
             check_name,
             lambda *args, n=names[i]: CheckResult(name=n, status="ok", message="ok")
         )

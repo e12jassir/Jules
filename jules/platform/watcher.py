@@ -29,7 +29,7 @@ INOTIFY_FIX_COMMAND = (
 
 
 @dataclass(slots=True)
-class LinuxWatcher:
+class PlatformWatcher:
     """Conservative polling watcher for Phase 1.
 
     This is not an inotify watcher; snapshots are capped to avoid scanning large

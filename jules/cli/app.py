@@ -170,7 +170,7 @@ class JulesApp(App[None]):
     async def _run_doctor(self) -> None:
         """Run doctor checks in background and post result to StatusBar."""
         try:
-            from jules.linux.doctor import run_all_checks
+            from jules.platform.doctor import run_all_checks
 
             report = await asyncio.to_thread(run_all_checks)
             issues = [r.message for r in report.results if r.status in ("fail", "warn")]

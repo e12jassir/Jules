@@ -6,8 +6,8 @@ import pytest
 
 from jules.core.events import EventBus, EventType
 from jules.core.session import SessionContext
-from jules.linux import watcher as watcher_module
-from jules.linux.watcher import LinuxWatcher
+from jules.platform import watcher as watcher_module
+from jules.platform.watcher import PlatformWatcher
 
 
 def test_watcher_initialize_warns_on_low_inotify_limit(tmp_path, caplog, monkeypatch) -> None:
@@ -15,7 +15,7 @@ def test_watcher_initialize_warns_on_low_inotify_limit(tmp_path, caplog, monkeyp
     limit_file.write_text("8192", encoding="utf-8")
     monkeypatch.setattr(watcher_module, "INOTIFY_MAX_USER_WATCHES_PATH", limit_file)
     bus = EventBus(session=SessionContext(cwd="/project"))
-    watcher = LinuxWatcher(
+    watcher = PlatformWatcher(
         event_bus=bus,
         current_directory=str(tmp_path),
     )
@@ -31,7 +31,7 @@ def test_watcher_initialize_warns_on_low_inotify_limit(tmp_path, caplog, monkeyp
 async def test_watcher_emits_project_and_coding_events(monkeypatch) -> None:
     monkeypatch.setenv("SHELL", "/usr/bin/zsh")
     bus = EventBus(session=SessionContext(cwd="/old"))
-    watcher = LinuxWatcher(event_bus=bus, current_directory="/old")
+    watcher = PlatformWatcher(event_bus=bus, current_directory="/old")
 
     watcher.on_directory_changed("/new")
     watcher.on_file_modified("/new/main.py")
@@ -51,7 +51,7 @@ async def test_watcher_detects_file_modification(tmp_path, monkeypatch) -> None:
     bus = EventBus(session=SessionContext(cwd=str(tmp_path)))
     observed: list[dict] = []
     bus.subscribe(EventType.CODING_DETECTED, observed.append)
-    watcher = LinuxWatcher(
+    watcher = PlatformWatcher(
         event_bus=bus,
         current_directory=str(tmp_path),
     )
@@ -77,7 +77,7 @@ async def test_watcher_detects_first_file_after_empty_baseline(tmp_path, monkeyp
     bus = EventBus(session=SessionContext(cwd=str(tmp_path)))
     observed: list[dict] = []
     bus.subscribe(EventType.CODING_DETECTED, observed.append)
-    watcher = LinuxWatcher(
+    watcher = PlatformWatcher(
         event_bus=bus,
         current_directory=str(tmp_path),
     )
@@ -102,7 +102,7 @@ def test_watcher_excludes_large_generated_directories(tmp_path) -> None:
     node_file.write_text("generated", encoding="utf-8")
     source_file = tmp_path / "main.py"
     source_file.write_text("print('ok')", encoding="utf-8")
-    watcher = LinuxWatcher(event_bus=EventBus(), current_directory=str(tmp_path))
+    watcher = PlatformWatcher(event_bus=EventBus(), current_directory=str(tmp_path))
 
     snapshot = watcher._take_snapshot(tmp_path)
 
@@ -113,7 +113,7 @@ def test_watcher_excludes_large_generated_directories(tmp_path) -> None:
 def test_watcher_caps_polling_snapshot_size(tmp_path, caplog) -> None:
     for index in range(3):
         (tmp_path / f"file_{index}.py").write_text("print('ok')", encoding="utf-8")
-    watcher = LinuxWatcher(
+    watcher = PlatformWatcher(
         event_bus=EventBus(),
         current_directory=str(tmp_path),
         max_snapshot_files=2,

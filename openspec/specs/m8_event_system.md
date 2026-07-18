@@ -25,12 +25,12 @@ Debe definir:
   - `PROJECT_OPENED` → Actualiza el directorio de trabajo activo.
   - `CODING_DETECTED` → Marca timestamp de última actividad.
 
-### 3.2. `jules/linux/watcher.py`
+### 3.2. `jules/platform/watcher.py`
 Debe definir:
 - Función de chequeo `inotify`: Leer `/proc/sys/fs/inotify/max_user_watches`. Si es menor a `65536`, usar `logger.warning` indicando la orden `echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.d/jules.conf`.
 - Un watcher simple que detecte escrituras/modificaciones en archivos y emita el evento `CODING_DETECTED`.
 
-### 3.3. `jules/linux/shell.py`
+### 3.3. `jules/platform/shell.py`
 Debe definir:
 - Lógica de detección: leer `os.environ.get("SHELL")`.
 - Función `install_zsh_hooks()` que inyecte en `~/.zshrc` el bloque protegido por marcadores:

@@ -11,9 +11,9 @@
 
 | Componente | Valor |
 |---|---|
-| OS | EndeavourOS (rolling release) |
-| Escritorio | KDE Plasma 6 + Wayland |
-| Shell | Verificar con `echo $SHELL` antes del Módulo 8 |
+| OS | Linux — cualquier distribución. macOS sin soporte planeado |
+| Escritorio | No asumido — Jules no depende de un desktop environment específico |
+| Shell | Verificar con `echo $SHELL` antes del Módulo 8 — soporte nativo bash/zsh/fish |
 | Python | Virtualenv dedicado — obligatorio, nunca el Python del sistema |
 
 ---
@@ -123,7 +123,7 @@ Doctor va antes que el CLI principal porque el CLI va a depender de él para el 
 
 ```
 Tareas:
-- Implementar jules/linux/doctor.py
+- Implementar jules/platform/doctor.py
   Checks a implementar (ver tabla completa en JULES.md):
   - Ollama: servicio activo + modelos visibles + usuario correcto
   - Antigravity CLI: disponible en PATH + responde a --help
@@ -163,7 +163,7 @@ Tareas:
 **Clasificación:** MECÁNICO (en superficie) / ALTA COMPLEJIDAD (en integración) | **Estado:** ✅ Completado
 **Modelo:** GPT 5.4 / Deepseek para boilerplate
 
-El entrypoint que conecta todo. Conecta todos los módulos, maneja asyncio+Click, gestiona Wayland/KDE.
+El entrypoint que conecta todo. Conecta todos los módulos, maneja asyncio+Click, gestiona el entorno Linux detectado en runtime (shell, systemd o no, desktop environment si aplica).
 
 ```
 Comandos implementados:
@@ -219,7 +219,7 @@ Checklist de Fase 1 — todos en verde:
 
 ## FASE 1.5 — MIGRACIÓN TUI A RUST + RATATUI 📋 Planificado
 
-La TUI actual (Python Textual) tiene una limitación arquitectónica irresoluble: Textual pinta cada celda del terminal con color sólido, rompiendo la transparencia del compositor (Ghostty + KDE). La migración reemplaza **solo la capa de presentación** — el backend Python permanece intacto.
+La TUI actual (Python Textual) tiene una limitación arquitectónica irresoluble: Textual pinta cada celda del terminal con color sólido, rompiendo la transparencia del compositor cuando el terminal emulator soporta blur/transparencia (ej. Ghostty, Kitty con configuración de opacidad). Esto aplica en cualquier distro Linux con un compositor que soporte transparencia — no es específico de un DE. La migración reemplaza **solo la capa de presentación** — el backend Python permanece intacto.
 
 ### Decisión de arquitectura
 
@@ -308,7 +308,8 @@ Jules/
 
 // Streaming de respuesta
 {"type": "token",         "content": "hel"}
-{"type": "thought",       "content": "analizando..."}
+{"type": "thought",       "content": "analizando...", "done": false}   // done:false mientras arma el razonamiento
+{"type": "thought",       "content": "2 episodios relacionados encontrados", "done": true}  // done:true = último chunk del bloque thinking de este turno
 {"type": "done",          "tokens": 342}
 {"type": "cancelled"}                                       // confirma que la generación fue cancelada limpiamente
 
@@ -319,7 +320,12 @@ Jules/
 // Estado y configuración
 {"type": "model_changed", "provider": "google", "model": "gemini-3.5-flash-high"}
 {"type": "model_list",    "models": [["google", "gemini-flash"], ["ollama", "llama3.2:1b"]]}
-{"type": "status",        "online": true, "episodes": 25, "scoring_healthy": true}
+{"type": "status",        "online": true, "episodes": 25, "scoring_healthy": true,
+                           "routing_mode": "manual", "routing_reason": null}
+// routing_mode: "manual" (usuario eligió el modelo) | "auto" (Jules seleccionó el tier —
+//   solo ocurre en casos especiales: fallback de cuota, tareas LOCAL_ONLY).
+// routing_reason: string corto SOLO cuando routing_mode = "auto" (ej. "fallback: sin cuota
+//   antigravity"). null en modo manual — no hay nada que justificar.
 
 // Errores
 {"type": "error", "message": "provider unavailable", "recoverable": true}
@@ -420,6 +426,9 @@ B2.3  jules-tui/src/app.rs
           episodes: u32
           generating: bool
           current_token_buffer: String
+          current_thinking_buffer: String    // acumula chunks de "thought" del turno en curso
+          thinking_expanded: bool            // true = bloque Thinking visible completo, false = colapsado a solo "Thinking"
+          routing_mode: RoutingMode          // Manual | Auto { reason: String }
           scroll_offset: u16
           show_model_picker: bool
           model_list: Vec<(String, String)>  // (provider, model)
@@ -465,7 +474,7 @@ Verificación del batch:
 
 ```
 Objetivo: enviar un mensaje real, ver tokens streamear en tiempo real,
-verificar transparencia en Ghostty con compositor Wayland.
+verificar transparencia en un terminal emulator con soporte de blur/opacidad (ej. Ghostty, Kitty) sobre cualquier compositor Linux con transparencia habilitada.
 
 B3.1  jules-tui/src/ui.rs — layout raíz
       Layout::vertical([
@@ -480,20 +489,37 @@ B3.1  jules-tui/src/ui.rs — layout raíz
 
 B3.2  jules-tui/src/widgets/chat_log.rs
       impl Widget for ChatLog<'_>
-      - Renderizar Vec<ChatMessage> con colores del mockup:
-          usuario: Color::Rgb(102, 102, 102)   // #666666
-          jules:   Color::Rgb(255, 121, 198)   // #ff79c6
-          body:    Color::Rgb(204, 204, 204)   // #cccccc
+      - Renderizar Vec<ChatMessage> con la paleta del mockup v2 (jules_tui_mockup.html):
+          void (fondo):     Color::Rgb(11, 13, 18)    // #0b0d12
+          panel:            Color::Rgb(14, 17, 23)    // #0e1117
+          field (inputs):   Color::Rgb(20, 24, 36)    // #141824
+          border:           Color::Rgb(35, 40, 56)    // #232838
+          border-lit:       Color::Rgb(51, 60, 84)    // #333c54
+          texto:            Color::Rgb(221, 225, 236) // #dde1ec
+          dim:              Color::Rgb(108, 116, 136) // #6c7488
+          faint:            Color::Rgb(67, 73, 92)    // #43495c
+          accent (jules):   Color::Rgb(138, 166, 255) // #8aa6ff
+          amber (prompt):   Color::Rgb(226, 167, 101) // #e2a765
+          good (status ok): Color::Rgb(95, 217, 138)  // #5fd98a
+          warn:             Color::Rgb(224, 184, 77)  // #e0b84d
+      - Mensaje de usuario: texto en --dim, alineado con label "you"
+      - Mensaje de jules: label "jules" en --amber, cuerpo en --text
+      - Bloque Thinking (ver B3.2b) precede al cuerpo cuando el evento IPC lo trae
       - Cursor parpadeante █ al final del mensaje en generación
         (alternar visibilidad cada 500ms con tokio::time::interval)
       - Scroll: calcular visible_lines desde scroll_offset
       - Auto-scroll al fondo cuando llega nuevo token
 
+B3.2b jules-tui/src/widgets/thinking_block.rs   ← NUEVO (contrato completo abajo)
+      Ver "Contrato — Bloque Thinking colapsable" después de Batch 4.
+
 B3.3  jules-tui/src/widgets/input_bar.rs
       impl Widget for InputBar<'_>
-      - Borde: Color::Rgb(255, 121, 198) // #ff79c6 — igual que mockup
-      - Fondo del input: Color::Rgb(17, 17, 17) // #111111
-      - Prompt “>” en rosa, cursor de texto en posición real
+      - Borde: Color::Rgb(138, 166, 255) // #8aa6ff (--accent) — foco activo
+      - Fondo del input: Color::Rgb(20, 24, 36) // #141824 (--field)
+      - Prompt "›" en --amber (#e2a765), cursor de texto en posición real
+      - Statusline bajo el input: modo (--accent), modelo activo, provider,
+        hint de keybindings alineado a la derecha — igual que mockup (.statusline)
       - Keybindings:
           Enter     → enviar mensaje
           Backspace → borrar carácter
@@ -528,21 +554,45 @@ Objetivo: paridad funcional completa con la TUI Textual anterior.
 Binario distribuible. jules --legacy como fallback documentado.
 
 B4.1  jules-tui/src/widgets/status_bar.rs
-      - Izquierda: "~/cwd  ↳ branch  ● Auto-saved"
-      - Centro: keybindings (dim)
-      - Derecha: "HH:MM  🌹"
-      - Colores: igual que mockup HTML
+      - Izquierda: "~/cwd  ↳ branch" en --dim, versión en --faint
+      - Centro: nada (mockup v2 no lleva keybindings en la barra de home;
+        en chat sí van en la statusline del input, ver B3.3)
+      - Derecha: badge de estado del backend — punto --good si doctor sin warnings,
+        --warn si hay warnings (igual criterio que "doctor: N warning(s)" del mockup)
+      - Colores: paleta B3.2 (--void #0b0d12 de fondo, --border #232838, --faint #43495c)
       - Branch: leer via Command::new("git") en background cada 30s
 
 B4.2  jules-tui/src/widgets/sidebar.rs
-      Panel MODELO (arriba):
-        - Nombre del modelo activo (bold, Color::Rgb(240,240,240))
-        - Provider + "online" badge en verde
+      Estructura final = 3 paneles fijos, SIN tabs de sesión y SIN panel Herramientas
+      (ambos quedaron fuera de scope de Fase 1.5 — ver "Fuera de scope" más abajo).
+
+      Panel CONTEXTO:
+        - tokens (contador de la sesión actual)
+        - used (% de contexto usado)
+        - quota (provider activo + % de cuota restante, ej. "antigravity 62%")
+      Panel ROUTER:
+        - active: modelo activo actualmente en uso (siempre visible)
+        - mode: "manual" (usuario eligió vía model_set/override) u "auto"
+          (Jules seleccionó el tier — solo pasa en casos especiales, ver decisión
+          de arquitectura abajo). Sin justificación larga: una línea de motivo
+          SOLO cuando mode = auto (ej. "fallback: antigravity sin cuota").
+        - Fuente de datos: el backend debe exponer si el modelo activo vino de
+          user_override o de selección automática de tier (ver Batch 1 — protocol.py,
+          StatusEvent debe incluir routing_mode: "manual" | "auto" y opcionalmente
+          routing_reason: str | None)
       Panel MEMORIA:
-        - Episodios, hechos, recuerdos — actualizados via StatusEvent
-      Panel ESTADÍSTICAS:
-        - Tokens usados, costo sesión, tiempo sesión (ticker local)
+        - episodes: cantidad de episodios recuperados para el turno actual
+        - top match: % de similitud del episodio más relevante + antigüedad
+          (ej. "top match 91% — same issue, prior session (2d ago)")
       Sidebar colapsable: Ctrl+B toggle
+
+      Decisión de arquitectura (confirmada con usuario, 2026-07-18):
+      El router opera mayormente en modo manual — el usuario decide con qué modelo
+      trabajar. El modo automático existe para casos especiales (fallback de cuota,
+      tareas LOCAL_ONLY como identity/scoring). El panel Router NO debe presentar
+      un motor de "razonamiento de escalado" constante — sería sobre-ingeniería
+      para un caso que ocurre excepcionalmente. Alcanza con mostrar mode + reason
+      corto solo cuando el router intervino.
 
 B4.3  jules-tui/src/widgets/model_picker.rs
       - Overlay centrado (popup sobre el chat)
@@ -558,6 +608,7 @@ B4.4  Keybindings finales
       Ctrl+B   → toggle sidebar
       Ctrl+P   → command palette (slash commands como overlay)
       Ctrl+R   → reconectar backend (solo visible cuando backend_status = Dead)
+      Ctrl+T   → toggle thinking_expanded (colapsa/expande el bloque Thinking del mensaje activo)
       Tab      → cycle model (sin abrir picker)
       PgUp/Dn  → scroll chat
       Home/End → ir al principio/final del chat
@@ -590,9 +641,70 @@ B4.8  Tests Rust — integración y regresión
 Verificación del batch:
   Flujo completo: abrir TUI → escribir mensaje → ver streaming →
   cambiar modelo (Ctrl+M) → ver sidebar actualizar → cerrar (Ctrl+C)
-  Transparencia verificada en Ghostty + KDE compositor
+  Transparencia verificada en un terminal con soporte de blur/opacidad sobre un compositor real
   cargo build --release → binario funcional
 ```
+
+---
+
+### Contrato — Bloque Thinking colapsable
+
+> Confirmado con usuario (2026-07-18): el bloque Thinking muestra el razonamiento
+> real del modelo (no placeholder), y debe poder colapsarse a solo la etiqueta
+> "Thinking" sin expandir. Referencia visual: `.toolblock .thinking` en
+> `jules_tui_mockup.html`.
+
+**Evento IPC (Python → TUI):**
+```json
+{"type": "thought", "content": "2 episodios relacionados encontrados", "done": false}
+{"type": "thought", "content": ", revisado output de doctor", "done": true}
+```
+- Cada turno de generación puede emitir 0 o más eventos `thought` antes de los `token`.
+- `done: true` en el último chunk cierra el bloque Thinking de ese turno — la TUI
+  ya no debe esperar más `thought` hasta el próximo `message`.
+- Si no llegan eventos `thought` en un turno, no se renderiza bloque (igual que
+  hoy: el toolblock es opcional en el mockup, no todos los mensajes lo llevan).
+
+**Estado en AppState (Rust):**
+```rust
+current_thinking_buffer: String   // acumula contenido de "thought" del turno en curso
+thinking_expanded: bool           // aplica por defecto a todos los bloques Thinking
+                                   // renderizados; toggle global, no por-mensaje
+```
+- Cada `ChatMessage` persistido guarda su `thinking: Option<String>` completo
+  (no se descarta al cerrar el turno) — así el toggle también afecta mensajes
+  anteriores en el scroll, no solo el turno activo.
+- `handle_event(ThoughtEvent)` → aplica al `current_thinking_buffer`; en `done`
+  mueve el buffer a `thinking` del `ChatMessage` recién cerrado por `DoneEvent`.
+
+**Keybinding:** `Ctrl+T` → toggle `thinking_expanded` (ver B4.4).
+- `thinking_expanded = true`: se renderiza el `toolblock` completo con el texto
+  del razonamiento (estilo `.thinking` del mockup: `--faint`, itálica).
+- `thinking_expanded = false`: se renderiza solo la etiqueta `Thinking` en una
+  línea corta (sin el contenido), igual criterio visual a un summary colapsado.
+- Default al arrancar la TUI: `true` (expandido) — el usuario decide ocultarlo,
+  no al revés, para no esconder información por defecto.
+
+**Widget:** `jules-tui/src/widgets/thinking_block.rs` (nuevo, agregado a B3.2 como B3.2b).
+
+---
+
+### Fuera de scope de Fase 1.5 (confirmado con usuario, 2026-07-18)
+
+Estos dos elementos existían en el mockup v0.1.0 (Textual, ya reemplazado) y
+NO se llevan a la migración Rust/Ratatui. Quedan anotados para Fase 2, no se
+pierden — se registran acá para que no se re-descubran a mitad de un batch.
+
+- **Tabs de múltiples sesiones/chats** (pestañas + botón "+" del mockup v0.1.0):
+  no es prioridad ahora. Candidato a Fase 2 — ítem nuevo a definir con flujo SDD
+  completo (impacta AppState, protocolo IPC — necesita `session_id` en cada
+  mensaje — y persistencia de sesión en el backend).
+- **Panel "Herramientas"** (filesystem/terminal/git/search/web con ✓/○ del
+  mockup v0.1.0): se cae porque Jules todavía no ejecuta esas acciones — no
+  hay backend real detrás de esos íconos hoy. Se reincorpora a Fase 2 recién
+  cuando exista la capacidad real (probablemente ligado al Módulo de
+  automatización de entorno Linux vía D-Bus/KWin, ya listado en Fase 2 Item 3,
+  o a un ítem nuevo de "tool use" si se agrega antes).
 
 ---
 
@@ -677,12 +789,17 @@ Detectar stack del proyecto + verificar que Rust toolchain esté instalado (`rus
 
 ```
 - [ ] `jules` (binario Rust compilado) abre TUI sin error
-- [ ] Transparencia verificada en Ghostty + KDE compositor (captura de pantalla)
-- [ ] Paridad funcional completa con TUI Textual anterior
+- [ ] Transparencia verificada en un terminal con soporte de blur/opacidad sobre un compositor Linux real (captura de pantalla)
+- [ ] Diseño visual fiel a `jules_tui_mockup.html` v2 (paleta --accent/--amber/--good,
+      pantalla home con input directo a chat, sin tabs, sin panel Herramientas —
+      ver "Fuera de scope de Fase 1.5")
 - [ ] Streaming token a token funciona vía IPC (stdin/stdout pipes)
+- [ ] Bloque Thinking colapsable funciona: razonamiento real del backend, Ctrl+T
+      togglea `thinking_expanded`, default expandido
+- [ ] Sidebar con 3 paneles (Contexto, Router, Memoria) actualiza con datos reales
+- [ ] Panel Router muestra routing_mode (manual/auto) + reason solo cuando auto
 - [ ] Slash commands funcionan vía IPC
 - [ ] Model picker (Ctrl+M) funciona con datos reales
-- [ ] Sidebar actualiza con datos reales de memoria y modelo
 - [ ] Degradación graceful: backend muerto = mensaje de error visible, no crash
 - [ ] Respawn automático: hasta 3 intentos con 1s de espera entre cada uno; después muestra error y espera Ctrl+R
 - [ ] Startup TUI < 10ms (medido con `time`)
@@ -758,18 +875,18 @@ Apagada por defecto en `config.toml`. Solo señales objetivas, nunca silencio co
 **Clasificación:** CRÍTICO — Diseño SDD
 **Depende de:** Módulo 9 (permisos) completado
 
-Integración con KDE Plasma via D-Bus/KWin. NO usar `hyprctl` (exclusivo de Hyprland). `wmctrl` con soporte parcial bajo Wayland — evaluar antes de depender. `PermissionGate` en cada acción.
+Sin compromiso de antemano a un desktop environment específico. `sdd-explore` debe relevar qué mecanismo de gestión de ventanas/escritorio está realmente disponible en el entorno donde corre (D-Bus + compositor específico, `wmctrl`, u otro) antes de proponer diseño. `hyprctl` solo aplica si se detecta Hyprland — nunca asumido. `wmctrl` tiene soporte inconsistente bajo Wayland en general, no solo en un compositor — evaluar antes de depender. `PermissionGate` en cada acción, sin excepción.
 
 | Fase | ¿Correr? | Modelo | Razón |
 |---|---|---|---|
 | `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
-| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Explorar qué APIs de D-Bus/KWin están disponibles en el entorno real. No asumir |
-| `sdd-propose` | ✅ Sí — **obligatoria** | Claude Opus 4.8 | Decisión arquitectónica real: D-Bus vs wmctrl vs alternativas bajo Wayland. Sin esto se codea a ciegas |
-| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Qué acciones se exponen, cómo se integra con PermissionGate, qué falla gracefully |
-| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del adaptador Linux — abstracto para no acoplar al DE específico |
+| `sdd-explore` | ✅ Sí — **obligatoria** | Gemini 3.1 Pro | Explorar qué DE/compositor está activo y qué mecanismo de control expone (D-Bus, wmctrl, otro) en el entorno real. No asumir ningún DE de antemano |
+| `sdd-propose` | ✅ Sí — **obligatoria** | Claude Opus 4.8 | Decisión arquitectónica real basada en lo que explore encontró: qué mecanismo usar por DE detectado, cómo degradar si no hay soporte. Sin esto se codea a ciegas |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Qué acciones se exponen, cómo se integra con PermissionGate, qué falla gracefully cuando el DE detectado no soporta la acción |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Diseño del adaptador de plataforma — abstracto por diseño, sin acoplar a un DE específico; selecciona implementación en runtime |
 | `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Por acción de entorno |
 | `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
-| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que cada acción pasa por PermissionGate y falla gracefully si el entorno no responde |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que cada acción pasa por PermissionGate y falla gracefully en al menos un DE sin soporte simulado |
 | `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
 
 ---
@@ -850,6 +967,52 @@ Eliminar boot tax de subprocess (~2s/invocación). Daemon mode o HTTP/Sockets lo
 | `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Por provider (Antigravity daemon, OpenCode daemon, fallback si no soporta) |
 | `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
 | `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Medir latencia real antes y después. La mejora debe ser medible |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 8 — Tabs de múltiples sesiones en la TUI
+**Clasificación:** SEMI-CRÍTICO — Diseño SDD
+**Depende de:** Fase 1.5 completa (TUI Rust/Ratatui en uso real)
+
+Movido desde el mockup v0.1.0 (Textual, descartado) — no entró al scope de Fase 1.5
+por decisión explícita del usuario (no es prioridad ahora). Requiere `session_id`
+en el protocolo IPC y persistencia de sesión en el backend Python, no solo UI.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Cómo se identifican sesiones hoy en `jules/memory/` y `jules/core/session.py` — evaluar si ya hay una noción de sesión reutilizable |
+| `sdd-propose` | ✅ Sí | Claude Opus 4.8 | Cómo se particiona el estado (AppState) por tab, cómo cambia el protocolo IPC (session_id por mensaje) |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Contrato de creación/cierre/cambio de tab vía IPC |
+| `sdd-design` | ✅ Sí | Claude Opus 4.8 | Multiplexar el proceso Python child por sesión vs un solo proceso con sesiones internas — decisión no trivial |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomposición atómica |
+| `sdd-apply` | ✅ Sí | Claude Sonnet 4.6 | Rust (widget de tabs) + Python (routing por session_id) |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que cambiar de tab no mezcla contexto/memoria entre sesiones |
+| `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
+
+---
+
+### ITEM 9 — Panel "Herramientas" en la TUI
+**Clasificación:** MECÁNICO — Interfaz sobre capacidad real
+**Depende de:** Al menos una capacidad real de tool-use (ej. Fase 2 Item 3 — automatización de entorno Linux, o un módulo de tool-use si se agrega antes)
+
+Movido desde el mockup v0.1.0 — se cae de Fase 1.5 porque Jules no ejecuta hoy
+ninguna de esas acciones (filesystem/terminal/git/search/web). No tiene sentido
+mostrar un ✓ que no representa una capacidad real. Implementar recién cuando el
+backend tenga al menos una herramienta real invocable, para que el panel refleje
+estado verdadero, no decorativo.
+
+| Fase | ¿Correr? | Modelo | Razón |
+|---|---|---|---|
+| `sdd-init` | ✅ Sí | Gemini 3.5 Flash | Contexto |
+| `sdd-explore` | ✅ Sí | Gemini 3.1 Pro | Confirmar qué herramientas están realmente implementadas en ese momento — no asumir del mockup |
+| `sdd-propose` | ❌ No | — | UI mecánica sobre datos ya existentes, una vez que la capacidad real está |
+| `sdd-spec` | ✅ Sí | Claude Sonnet 4.6 | Contrato de qué expone cada herramienta al StatusEvent (disponible/no disponible) |
+| `sdd-design` | ❌ No | — | Extensión mecánica del sidebar existente (B4.2) |
+| `sdd-tasks` | ✅ Sí | Claude Sonnet 4.6 | Descomposición atómica |
+| `sdd-apply` | ✅ Sí | Gemini 3.5 Flash | Implementación |
+| `sdd-verify` | ✅ Sí | Claude Opus 4.8 | Verificar que el panel nunca muestra ✓ para una herramienta no disponible realmente |
 | `sdd-archive` | ✅ Sí | Gemini 3.1 Flash-Lite | Cierre |
 
 ---

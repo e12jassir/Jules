@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from jules.core.config import load_config
-from jules.linux.watcher import INOTIFY_MAX_USER_WATCHES_PATH, INOTIFY_MIN_WATCHES, INOTIFY_FIX_COMMAND
+from jules.platform.watcher import INOTIFY_MAX_USER_WATCHES_PATH, INOTIFY_MIN_WATCHES, INOTIFY_FIX_COMMAND
 from jules.memory.persistent import DEFAULT_SQLITE_PATH
 
 # EpisodicMemory receives its DB path from callers; doctor uses Jules' current default vector store.
@@ -44,17 +44,25 @@ def _expected_ollama_user() -> str:
 
 
 def check_ollama() -> CheckResult:
-    # Check if systemctl is active
-    try:
-        res = subprocess.run(
-            ["systemctl", "is-active", "ollama"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        is_active = res.stdout.strip() == "active"
-    except (FileNotFoundError, OSError, subprocess.SubprocessError):
-        is_active = False
+    # Check if systemctl is active (systemd-based distros)
+    has_systemctl = shutil.which("systemctl") is not None
+    is_active = False
+    if has_systemctl:
+        try:
+            res = subprocess.run(
+                ["systemctl", "is-active", "ollama"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            is_active = res.stdout.strip() == "active"
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            is_active = False
+
+    if not has_systemctl:
+        # Non-systemd distro (Alpine, Void, etc.) — fall back to checking the
+        # binary directly instead of assuming a specific init system.
+        return _check_ollama_without_systemd()
 
     if not is_active:
         return CheckResult(
@@ -119,6 +127,58 @@ def check_ollama() -> CheckResult:
             name="Ollama",
             status="ok",
             message=f"activo, {first_model} disponible (usuario: {user})"
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as e:
+        return CheckResult(
+            name="Ollama",
+            status="fail",
+            message=f"Ollama execution failed: {e}"
+        )
+
+
+def _check_ollama_without_systemd() -> CheckResult:
+    """Fallback check for distros without systemd — verifies via the CLI directly.
+
+    Cannot verify "service active" or "running user" without systemd, so this
+    check only confirms the binary responds and has at least one model.
+    """
+    if shutil.which("ollama") is None:
+        return CheckResult(
+            name="Ollama",
+            status="fail",
+            message="ollama no encontrado en PATH (sistema sin systemd — verificando binario directamente)."
+        )
+    try:
+        res = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if res.returncode != 0:
+            return CheckResult(
+                name="Ollama",
+                status="fail",
+                message="ollama list falló (sistema sin systemd — no se puede verificar estado del servicio)."
+            )
+        models = []
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if not line or "NAME" in line:
+                continue
+            parts = line.split()
+            if parts:
+                models.append(parts[0])
+        if not models:
+            return CheckResult(
+                name="Ollama",
+                status="fail",
+                message="ollama responde pero no hay modelos descargados."
+            )
+        return CheckResult(
+            name="Ollama",
+            status="ok",
+            message=f"binario responde, {models[0]} disponible (sin systemd — estado de servicio no verificable)"
         )
     except (FileNotFoundError, OSError, subprocess.SubprocessError) as e:
         return CheckResult(

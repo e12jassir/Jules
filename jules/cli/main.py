@@ -62,14 +62,14 @@ class _FallbackReport:
 
 def _run_doctor_checks():
     return _FallbackReport(
-        results=[_FallbackCheck("doctor", "fail", "Módulo jules.linux.doctor no disponible")],
+        results=[_FallbackCheck("doctor", "fail", "Módulo jules.platform.doctor no disponible")],
         exit_code=1
     )
 
 
 # Module-level aliases so tests can monkeypatch cli_main.run_all_checks and cli_main.gate
 try:
-    from jules.linux.doctor import run_all_checks  # type: ignore[assignment]
+    from jules.platform.doctor import run_all_checks  # type: ignore[assignment]
 except Exception:
     run_all_checks = _run_doctor_checks  # type: ignore[assignment]
 

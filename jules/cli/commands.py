@@ -141,7 +141,7 @@ async def handle_doctor() -> str:
     import asyncio
 
     try:
-        from jules.linux.doctor import run_all_checks
+        from jules.platform.doctor import run_all_checks
 
         report = await asyncio.to_thread(run_all_checks)
         symbols = {"ok": "✓", "fail": "✗", "warn": "⚠"}

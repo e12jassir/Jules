@@ -65,7 +65,7 @@ from jules.core.router import CognitiveRouter, TaskType
 from jules.core.session import SessionContext as TerminalSessionContext
 from jules.core.context import ContextEngine
 from jules.core.events import EventBus, EventType
-from jules.linux.watcher import LinuxWatcher
+from jules.platform.watcher import PlatformWatcher
 from jules.memory.engine import MemoryEngine
 from jules.memory.episodic import EpisodicMemory
 from jules.memory.models import Base, Episode, SessionContext
@@ -694,7 +694,7 @@ async def main() -> None:
         recent_commands=list(env_recent_commands)
     )
     event_bus = EventBus(session=terminal_session)
-    watcher = LinuxWatcher(event_bus=event_bus, current_directory=env_cwd)
+    watcher = PlatformWatcher(event_bus=event_bus, current_directory=env_cwd)
     watcher.initialize()
     asyncio.create_task(watcher.start())
     

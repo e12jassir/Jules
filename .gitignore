@@ -4,6 +4,7 @@ __pycache__/
 *.db
 vectors/
 ~/.jules/memory/
+.venv/
 # Local Pi runtime state
 .atl/
 .pi-lens/
