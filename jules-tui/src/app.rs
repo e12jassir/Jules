@@ -141,6 +141,9 @@ pub struct AppState {
     pub provider_overlay_input_mode: bool,
     pub provider_overlay_key_input: String,
     pub provider_overlay_status_msg: Option<String>,
+    pub sessions_overlay_visible: bool,
+    pub sessions_overlay_selected: usize,
+    pub sessions_list: Vec<crate::sessions::SessionItem>,
     /// Animation tick counter for UI animations (e.g. streaming loading bar).
     pub anim_tick: usize,
     /// `true` while the backend is generating a response (from submit_input until Done/Error).
@@ -264,6 +267,9 @@ impl AppState {
             provider_overlay_input_mode: false,
             provider_overlay_key_input: String::new(),
             provider_overlay_status_msg: None,
+            sessions_overlay_visible: false,
+            sessions_overlay_selected: 0,
+            sessions_list: Vec::new(),
             anim_tick: 0,
             is_generating: false,
         };
@@ -373,6 +379,9 @@ impl AppState {
             }
             "themes" => {
                 self.open_theme_picker();
+            }
+            "sessions" => {
+                self.open_sessions_picker();
             }
             "models" => {
                 self.open_models_picker();
@@ -504,6 +513,51 @@ impl AppState {
                 }
                 if !model.is_empty() {
                     self.active_model = model;
+                }
+            }
+            BackendEvent::SessionsJson(json_str) => {
+                let mut items = Vec::new();
+                for chunk in json_str.split("{\"id\":") {
+                    let sid = extract_json_str(chunk, "id").unwrap_or_default();
+                    if !sid.is_empty() {
+                        let title = extract_json_str(chunk, "title").unwrap_or_default();
+                        let count = extract_json_num(chunk, "count").unwrap_or(0);
+                        let updated_at = extract_json_str(chunk, "updated_at").unwrap_or_default();
+                        items.push(crate::sessions::SessionItem {
+                            id: sid,
+                            title: if title.is_empty() { "Nueva Sesión".to_string() } else { title },
+                            count,
+                            updated_at,
+                        });
+                    }
+                }
+                self.sessions_list = items;
+            }
+            BackendEvent::LoadedSession(json_str) => {
+                self.messages.clear();
+                self.pending_jules_message = None;
+                for msg_chunk in json_str.split("{\"role\":") {
+                    let role_str = extract_json_str(msg_chunk, "role").unwrap_or_default();
+                    let content = extract_json_str(msg_chunk, "content").unwrap_or_default();
+                    if !content.is_empty() {
+                        let role = if role_str == "user" { Role::User } else { Role::Jules };
+                        let who = if role == Role::User { "tú" } else { "jules" };
+                        self.messages.push(ChatMessage {
+                            role,
+                            who,
+                            thinking: None,
+                            body: content,
+                            tagline: None,
+                        });
+                    }
+                }
+                self.sessions_overlay_visible = false;
+                self.screen = Screen::Chat;
+            }
+            BackendEvent::DeletedSession(sid) => {
+                self.sessions_list.retain(|s| s.id != sid);
+                if self.sessions_overlay_selected >= self.sessions_list.len() && !self.sessions_list.is_empty() {
+                    self.sessions_overlay_selected = self.sessions_list.len() - 1;
                 }
             }
             BackendEvent::Thinking(chunk) => {
@@ -868,6 +922,55 @@ impl AppState {
         }
     }
 
+    pub fn open_sessions_picker(&mut self) {
+        self.sessions_overlay_selected = 0;
+        self.sessions_overlay_visible = true;
+        if let Some(backend) = self.backend.as_mut() {
+            let _ = backend.send_command("sessions_json", &[]);
+        }
+    }
+
+    pub fn close_sessions_picker(&mut self) {
+        self.sessions_overlay_visible = false;
+    }
+
+    pub fn sessions_picker_move(&mut self, delta: i32) {
+        if !self.sessions_overlay_visible {
+            return;
+        }
+        let len = self.sessions_list.len() as i32;
+        if len == 0 {
+            return;
+        }
+        let current = self.sessions_overlay_selected as i32;
+        let next = ((current + delta) % len + len) % len;
+        self.sessions_overlay_selected = next as usize;
+    }
+
+    pub fn sessions_picker_accept(&mut self) {
+        if !self.sessions_overlay_visible {
+            return;
+        }
+        if let Some(item) = self.sessions_list.get(self.sessions_overlay_selected) {
+            let sid = item.id.clone();
+            if let Some(backend) = self.backend.as_mut() {
+                let _ = backend.send_command("load_session", &[sid]);
+            }
+        }
+    }
+
+    pub fn sessions_picker_delete(&mut self) {
+        if !self.sessions_overlay_visible {
+            return;
+        }
+        if let Some(item) = self.sessions_list.get(self.sessions_overlay_selected) {
+            let sid = item.id.clone();
+            if let Some(backend) = self.backend.as_mut() {
+                let _ = backend.send_command("delete_session", &[sid]);
+            }
+        }
+    }
+
     /// Cancel any active streaming response turn, resetting status to Idle.
     pub fn cancel_streaming(&mut self) {
         if self.is_streaming() {
@@ -978,4 +1081,27 @@ fn real_git_branch() -> Option<String> {
     } else {
         Some(branch)
     }
+}
+
+fn extract_json_str(json: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let pos = json.find(&needle)?;
+    let after = &json[pos + needle.len()..];
+    let colon = after.find(':')?;
+    let val_part = after[colon + 1..].trim_start();
+    if !val_part.starts_with('"') {
+        return None;
+    }
+    let end_quote = val_part[1..].find('"')?;
+    Some(val_part[1..1 + end_quote].to_string())
+}
+
+fn extract_json_num(json: &str, key: &str) -> Option<usize> {
+    let needle = format!("\"{key}\"");
+    let pos = json.find(&needle)?;
+    let after = &json[pos + needle.len()..];
+    let colon = after.find(':')?;
+    let val_part = after[colon + 1..].trim_start();
+    let num_str: String = val_part.chars().take_while(|c| c.is_ascii_digit()).collect();
+    num_str.parse().ok()
 }

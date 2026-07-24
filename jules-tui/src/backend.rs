@@ -20,6 +20,9 @@ pub enum BackendEvent {
     ContentChunk(String),
     Done,
     Error(String),
+    SessionsJson(String),
+    LoadedSession(String),
+    DeletedSession(String),
     /// The backend process's stdout closed unexpectedly (crash, EOF).
     Disconnected,
 }
@@ -137,6 +140,11 @@ fn parse_event(line: &str) -> BackendEvent {
             BackendEvent::ContentChunk(extract_string_field(line, "content").unwrap_or_default())
         }
         Some("done") => BackendEvent::Done,
+        Some("sessions_json") => BackendEvent::SessionsJson(line.to_string()),
+        Some("loaded_session") => BackendEvent::LoadedSession(line.to_string()),
+        Some("deleted_session") => {
+            BackendEvent::DeletedSession(extract_string_field(line, "session_id").unwrap_or_default())
+        }
         Some("tool_status") => BackendEvent::Thinking(String::new()),
         Some("error") => BackendEvent::Error(extract_string_field(line, "message").unwrap_or_default()),
         _ => BackendEvent::Error(format!("unrecognized backend line: {line}")),

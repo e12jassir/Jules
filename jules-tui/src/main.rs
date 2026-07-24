@@ -5,6 +5,7 @@ mod commands;
 mod models;
 mod palette;
 mod providers;
+mod sessions;
 mod ui;
 mod widgets;
 
@@ -178,6 +179,10 @@ fn handle_key_home(state: &mut AppState, code: KeyCode) {
 }
 
 fn handle_key_chat(state: &mut AppState, code: KeyCode) {
+    if state.sessions_overlay_visible {
+        handle_key_sessions_overlay(state, code);
+        return;
+    }
     if state.provider_overlay_visible {
         handle_key_provider_overlay(state, code);
         return;
@@ -319,6 +324,17 @@ fn handle_mouse(state: &mut AppState, event: MouseEvent) {
         MouseEventKind::ScrollDown => {
             state.scroll_offset = state.scroll_offset.saturating_sub(3);
         }
+        _ => {}
+    }
+}
+
+fn handle_key_sessions_overlay(state: &mut AppState, code: KeyCode) {
+    match code {
+        KeyCode::Up => state.sessions_picker_move(-1),
+        KeyCode::Down => state.sessions_picker_move(1),
+        KeyCode::Enter => state.sessions_picker_accept(),
+        KeyCode::Char('d') | KeyCode::Delete => state.sessions_picker_delete(),
+        KeyCode::Esc => state.close_sessions_picker(),
         _ => {}
     }
 }

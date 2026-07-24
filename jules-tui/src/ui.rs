@@ -62,6 +62,10 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         dim_backdrop(frame.buffer_mut(), area, state.theme);
         draw_provider_picker(frame, area, state);
     }
+    if state.sessions_overlay_visible {
+        dim_backdrop(frame.buffer_mut(), area, state.theme);
+        draw_sessions_picker(frame, area, state);
+    }
 }
 
 /// Darkens every cell already painted on screen by blending its
@@ -927,6 +931,161 @@ fn draw_provider_picker(frame: &mut Frame, area: Rect, state: &AppState) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("Opciones  •  ", Style::default().fg(theme.faint())),
+        Span::styled(
+            "Esc ",
+            Style::default()
+                .fg(theme.amber())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Cerrar", Style::default().fg(theme.faint())),
+    ]);
+    Paragraph::new(footer).render(
+        Rect {
+            x: inner_area.x,
+            y: footer_y,
+            width: inner_area.width,
+            height: 1,
+        },
+        buf,
+    );
+}
+
+fn draw_sessions_picker(frame: &mut Frame, area: Rect, state: &AppState) {
+    use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+
+    let theme = state.theme;
+    let popup_width = 76.min(area.width.saturating_sub(2));
+    let popup_height = 24.min(area.height.saturating_sub(2));
+
+    let popup_area = Rect {
+        x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+        y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    let bg = theme.panel_bg().unwrap_or(theme.void());
+    let highlight_bg = theme.field_bg().unwrap_or(theme.void());
+    let buf = frame.buffer_mut();
+
+    let fill_style = Style::default().bg(bg).fg(theme.text());
+    for row_y in popup_area.y..popup_area.y + popup_area.height {
+        for col_x in popup_area.x..popup_area.x + popup_area.width {
+            if let Some(cell) = buf.cell_mut((col_x, row_y)) {
+                cell.set_style(fill_style);
+            }
+        }
+    }
+
+    for row_y in popup_area.y..popup_area.y + popup_area.height {
+        if let Some(cell) = buf.cell_mut((popup_area.x, row_y)) {
+            cell.set_symbol("┃");
+            cell.set_style(Style::default().fg(theme.accent()).bg(bg));
+        }
+        if let Some(cell) = buf.cell_mut((popup_area.x + popup_area.width - 1, row_y)) {
+            cell.set_symbol("┃");
+            cell.set_style(Style::default().fg(theme.accent()).bg(bg));
+        }
+    }
+
+    let inner_area = Rect {
+        x: popup_area.x + 2,
+        y: popup_area.y + 1,
+        width: popup_area.width.saturating_sub(4),
+        height: popup_area.height.saturating_sub(2),
+    };
+
+    let title_line = Line::from(vec![Span::styled(
+        "Historial de Sesiones Guardadas",
+        Style::default()
+            .fg(theme.amber())
+            .add_modifier(Modifier::BOLD),
+    )]);
+    Paragraph::new(title_line).render(
+        Rect {
+            x: inner_area.x,
+            y: inner_area.y,
+            width: inner_area.width,
+            height: 1,
+        },
+        buf,
+    );
+
+    if state.sessions_list.is_empty() {
+        let msg = Line::from(Span::styled(
+            "No hay sesiones guardadas en el historial.",
+            Style::default().fg(theme.dim()),
+        ));
+        Paragraph::new(msg).render(
+            Rect {
+                x: inner_area.x,
+                y: inner_area.y + 4,
+                width: inner_area.width,
+                height: 1,
+            },
+            buf,
+        );
+    } else {
+        let list_area = Rect {
+            x: inner_area.x,
+            y: inner_area.y + 2,
+            width: inner_area.width,
+            height: inner_area.height.saturating_sub(4),
+        };
+
+        let items: Vec<ListItem> = state
+            .sessions_list
+            .iter()
+            .map(|item| {
+                let meta_str = format!(" [{} msgs • {}]", item.count, item.updated_at);
+                ListItem::new(Line::from(vec![
+                    Span::styled("💬 ", Style::default().fg(theme.amber())),
+                    Span::styled(
+                        format!("{:<40}", item.title),
+                        Style::default()
+                            .fg(theme.text())
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(meta_str, Style::default().fg(theme.faint())),
+                ]))
+            })
+            .collect();
+
+        let list = List::new(items).highlight_style(
+            Style::default()
+                .fg(theme.text())
+                .bg(highlight_bg)
+                .add_modifier(Modifier::BOLD),
+        );
+
+        let mut list_state = ListState::default();
+        list_state.select(Some(state.sessions_overlay_selected));
+        ratatui::widgets::StatefulWidget::render(list, list_area, buf, &mut list_state);
+    }
+
+    let footer_y = inner_area.y + inner_area.height.saturating_sub(1);
+    let footer = Line::from(vec![
+        Span::styled(
+            "↑/↓ ",
+            Style::default()
+                .fg(theme.amber())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Navegar  •  ", Style::default().fg(theme.faint())),
+        Span::styled(
+            "Enter ",
+            Style::default()
+                .fg(theme.good())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Restaurar Sesión  •  ", Style::default().fg(theme.faint())),
+        Span::styled(
+            "d/Del ",
+            Style::default()
+                .fg(theme.amber())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Borrar  •  ", Style::default().fg(theme.faint())),
         Span::styled(
             "Esc ",
             Style::default()
