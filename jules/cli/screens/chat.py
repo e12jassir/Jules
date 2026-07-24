@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from textual.app import ComposeResult  # type: ignore[import-not-found]
-from textual.containers import Horizontal, Vertical  # type: ignore[import-not-found]
+from textual.containers import Horizontal, Vertical, VerticalScroll  # type: ignore[import-not-found]
 from textual.screen import Screen  # type: ignore[import-not-found]
 from textual.widgets import Input, OptionList, Static  # type: ignore[import-not-found]
 from textual.widgets.option_list import Option  # type: ignore[import-not-found]
@@ -154,6 +154,27 @@ class ChatScreen(Screen[None]):
             if self.focused is inp or inp.has_focus:
                 self.app.call_later(self.app.action_cycle_model)
                 event.stop()
+        elif not overlay.display and event.key in ("pageup", "pagedown", "ctrl+up", "ctrl+down", "home", "end"):
+            # Manual chat scroll — needed because the Input widget normally
+            # holds focus while chatting, which otherwise swallows every
+            # key press and leaves the transcript unscrollable (user report,
+            # 2026-07-19: "no puedo subir ni bajar"). Home/End jump to the
+            # oldest/newest message; PageUp/PageDown and Ctrl+Up/Ctrl+Down
+            # scroll incrementally.
+            scroll = self.query_one("#_chat-scroll", VerticalScroll)
+            if event.key == "pageup":
+                scroll.scroll_page_up()
+            elif event.key == "pagedown":
+                scroll.scroll_page_down()
+            elif event.key == "ctrl+up":
+                scroll.scroll_up()
+            elif event.key == "ctrl+down":
+                scroll.scroll_down()
+            elif event.key == "home":
+                scroll.scroll_home()
+            elif event.key == "end":
+                scroll.scroll_end()
+            event.stop()
 
     def _complete_with(self, command_id: str | None) -> None:
         if not command_id:

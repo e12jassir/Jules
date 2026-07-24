@@ -29,25 +29,25 @@ class _MessageWidget(Widget):
     }
     ._msg-time {
         width: auto;
-        color: #555555;
+        color: #888888;
     }
     ._msg-body {
         width: 100%;
         height: auto;
         padding-left: 3;
-        color: #cccccc;
+        color: #888888;
     }
     ._msg-thought {
         width: 100%;
         height: auto;
         padding-left: 3;
-        color: #666666;
+        color: #555555;
     }
     ._msg-user ._msg-name {
-        color: #888888;
+        color: #FFFFFF;
     }
     ._msg-jules ._msg-name {
-        color: #ff79c6;
+        color: #FFFFFF;
     }
     """
 
@@ -56,6 +56,7 @@ class _MessageWidget(Widget):
         self._avatar = avatar
         self._name = name
         self._timestamp = timestamp
+        self._is_jules = role_class == "_msg-jules"
         self._body_text = ""
         self._thought_text = ""
         self._body_widget: Static | None = None
@@ -63,7 +64,13 @@ class _MessageWidget(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="_msg-header"):
-            yield Static(f"{self._avatar} {self._name}", classes="_msg-name")
+            if not self._is_jules:
+                # Jules' own messages drop the avatar+name label (user
+                # decision, 2026-07-19) — the timestamp stays for both
+                # roles, right-aligned the same way it always was.
+                yield Static(f"{self._avatar} {self._name}", classes="_msg-name")
+            else:
+                yield Static("", classes="_msg-name")
             yield Static(self._timestamp, classes="_msg-time")
         self._thought_widget = Static("", classes="_msg-thought", markup=True)
         self._thought_widget.display = False
@@ -83,7 +90,10 @@ class _MessageWidget(Widget):
     def append_body(self, token: str, cursor: bool = True) -> None:
         self._body_text += token
         if self._body_widget:
-            suffix = "▌" if cursor else ""
+            # Vertical bar cursor removed from Jules' own messages (user
+            # decision, 2026-07-19) — kept for other roles in case this
+            # widget is reused for a role that still wants a typing cursor.
+            suffix = "▌" if (cursor and not self._is_jules) else ""
             self._body_widget.update(self._body_text + suffix)
 
     def append_thought(self, token: str) -> None:
@@ -91,7 +101,8 @@ class _MessageWidget(Widget):
         if self._thought_widget:
             self._thought_widget.display = True
             escaped = self._thought_text.replace("[", "\\[")
-            self._thought_widget.update(f"[dim italic]{escaped}▌[/dim italic]")
+            cursor = "" if self._is_jules else "▌"
+            self._thought_widget.update(f"[dim italic]{escaped}{cursor}[/dim italic]")
 
     def finalize(self) -> None:
         # Hide thoughts once the final response is present; keep if no content

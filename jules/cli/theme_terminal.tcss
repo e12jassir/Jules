@@ -6,7 +6,7 @@ Screen, JulesApp {
     margin: 0;
     padding: 0;
     border: none;
-    layers: base;
+    layers: base overlay;
     overflow: hidden;
 }
 
@@ -28,14 +28,14 @@ WelcomeScreen, ChatScreen {
     dock: top;
     height: 1;
     background: $background;
-    border-bottom: solid $accent;
+    border-bottom: solid $panel;
     color: $text-muted;
 }
 .welcome-title {
     color: $text;
     text-style: bold;
 }
-.welcome-title .accent { color: $accent; }
+.welcome-title .accent { color: $text; }
 .version { color: $text-muted; }
 
 .welcome-screen {
@@ -45,13 +45,13 @@ WelcomeScreen, ChatScreen {
     padding: 1 2;
 }
 .rose-art {
-    color: $accent;
+    color: $text;
     text-align: center;
     margin-top: 1;
     margin-bottom: 0;
 }
 .logo {
-    color: $accent;
+    color: $text;
     text-align: center;
     text-style: bold;
     margin-top: 0;
@@ -72,12 +72,12 @@ WelcomeScreen, ChatScreen {
     margin-top: 1;
 }
 .tip-row {
-    color: $success;
+    color: $text-muted;
     text-align: center;
 }
 .welcome-input {
     width: 60;
-    border: tall $accent;
+    border: tall $text-muted;
     background: $surface;
     margin: 1 0;
     padding: 0 1;
@@ -114,7 +114,7 @@ WelcomeScreen, ChatScreen {
     align: left middle;
 }
 .brand-logo {
-    color: $accent;
+    color: $text;
     text-style: bold;
     height: 100%;
     width: auto;
@@ -129,8 +129,8 @@ WelcomeScreen, ChatScreen {
     padding: 0 1;
 }
 .tab-active {
-    color: $accent;
-    border-bottom: solid $accent;
+    color: $text;
+    border-bottom: solid $text-muted;
 }
 .tab-add {
     color: $text-muted;
@@ -156,7 +156,7 @@ ChatLog {
 InputBar {
     width: 100%;
     height: 3;
-    border: tall $accent;
+    border: tall $text-muted;
     background: $surface;
 }
 InputBar Input {
@@ -189,7 +189,7 @@ Sidebar {
 .panel-header {
     width: 100%;
     height: auto;
-    color: $accent;
+    color: $text;
     text-style: bold;
     padding: 1 1 0 1;
 }
@@ -198,7 +198,7 @@ Sidebar {
     height: auto;
     padding: 0 1 1 1;
     border-bottom: solid $panel;
-    color: $text;
+    color: $text-muted;
 }
 ContextPanel, ModelPanel, MemoryPanel, ToolsPanel, StatsPanel {
     width: 100%;
@@ -215,10 +215,10 @@ StatusBar {
 }
 .status-left  { width: 1fr; color: $text-muted; }
 .status-center { width: 2fr; text-align: center; color: $text-muted; }
-.status-right  { width: 1fr; text-align: right; color: $accent; }
+.status-right  { width: 1fr; text-align: right; color: $text; }
 
 /* ── UTILITIES ── */
-.status-accent { color: $accent; }
-.online  { color: $success; }
-.offline { color: $error; text-style: bold; }
-.warn    { color: $warning; }
+.status-accent { color: $text; }
+.online  { color: $text-muted; }
+.offline { color: $text-muted; text-style: bold; }
+.warn    { color: $text-muted; }

@@ -2,11 +2,11 @@
 
 Screen, JulesApp {
     background: #071014;
-    color: #D9E3E8;
+    color: #FFFFFF;
     margin: 0;
     padding: 0;
     border: none;
-    layers: base;
+    layers: base overlay;
     overflow: hidden;
 }
 
@@ -29,14 +29,14 @@ WelcomeScreen, ChatScreen {
     height: 1;
     background: #071014;
     border-bottom: solid #1C2A31;
-    color: #7AB7B2;
+    color: #888888;
 }
 .welcome-title {
-    color: #F2F7F7;
+    color: #FFFFFF;
     text-style: bold;
 }
-.welcome-title .accent { color: #1AA6A6; }
-.version { color: #5F8F8A; }
+.welcome-title .accent { color: #FFFFFF; }
+.version { color: #888888; }
 
 .welcome-screen {
     width: 100%;
@@ -45,43 +45,43 @@ WelcomeScreen, ChatScreen {
     padding: 1 2;
 }
 .rose-art {
-    color: #1AA6A6;
+    color: #FFFFFF;
     text-align: center;
     margin-top: 1;
     margin-bottom: 0;
 }
 .logo {
-    color: #1AA6A6;
+    color: #FFFFFF;
     text-align: center;
     text-style: bold;
     margin-top: 0;
 }
 .tagline {
-    color: #7AB7B2;
+    color: #888888;
     text-align: center;
     margin-bottom: 1;
 }
 .model-row {
-    color: #7AB7B2;
+    color: #888888;
     text-align: center;
     margin-top: 0;
 }
 .bindings-row {
-    color: #7AB7B2;
+    color: #888888;
     text-align: center;
     margin-top: 1;
 }
 .tip-row {
-    color: #4FA6A0;
+    color: #888888;
     text-align: center;
 }
 .welcome-input {
     width: 60;
-    border: tall #1AA6A6;
+    border: tall #888888;
     background: #0D161B;
     margin: 1 0;
     padding: 0 1;
-    color: #D9E3E8;
+    color: #FFFFFF;
 }
 
 /* ── CHAT SHELL ── */
@@ -114,7 +114,7 @@ WelcomeScreen, ChatScreen {
     align: left middle;
 }
 .brand-logo {
-    color: #1AA6A6;
+    color: #FFFFFF;
     text-style: bold;
     height: 100%;
     width: auto;
@@ -122,25 +122,25 @@ WelcomeScreen, ChatScreen {
     padding: 0 1 0 0;
 }
 .tab {
-    color: #7AB7B2;
+    color: #888888;
     height: 100%;
     width: auto;
     content-align: center middle;
     padding: 0 1;
 }
 .tab-active {
-    color: #1AA6A6;
-    border-bottom: solid #1AA6A6;
+    color: #FFFFFF;
+    border-bottom: solid #888888;
 }
 .tab-add {
-    color: #1C2A31;
+    color: #888888;
     height: 100%;
     width: auto;
     content-align: center middle;
     padding: 0 1;
 }
 .chat-version {
-    color: #1C2A31;
+    color: #888888;
     height: 100%;
     content-align: right middle;
     width: 8;
@@ -156,19 +156,19 @@ ChatLog {
 InputBar {
     width: 100%;
     height: 3;
-    border: tall #1AA6A6;
+    border: tall #888888;
     background: #0D161B;
 }
 InputBar Input {
     border: none;
     background: transparent;
-    color: #D9E3E8;
+    color: #FFFFFF;
     padding: 0 1;
 }
 InputBar Input:disabled {
     border: none;
     background: transparent;
-    color: #5F8F8A;
+    color: #888888;
     opacity: 0.7;
 }
 
@@ -189,7 +189,7 @@ Sidebar {
 .panel-header {
     width: 100%;
     height: auto;
-    color: #1AA6A6;
+    color: #FFFFFF;
     text-style: bold;
     padding: 1 1 0 1;
 }
@@ -198,7 +198,7 @@ Sidebar {
     height: auto;
     padding: 0 1 1 1;
     border-bottom: solid #1C2A31;
-    color: #7AB7B2;
+    color: #888888;
 }
 ContextPanel, ModelPanel, MemoryPanel, ToolsPanel, StatsPanel {
     width: 100%;
@@ -211,14 +211,14 @@ StatusBar {
     height: 1;
     background: #071014;
     border-top: tall #1C2A31;
-    color: #5F8F8A;
+    color: #888888;
 }
-.status-left  { width: 1fr; color: #5F8F8A; }
-.status-center { width: 2fr; text-align: center; color: #5F8F8A; }
-.status-right  { width: 1fr; text-align: right; color: #1AA6A6; }
+.status-left  { width: 1fr; color: #888888; }
+.status-center { width: 2fr; text-align: center; color: #888888; }
+.status-right  { width: 1fr; text-align: right; color: #FFFFFF; }
 
 /* ── UTILITIES ── */
-.status-accent { color: #1AA6A6; }
-.online  { color: #4FA6A0; }
-.offline { color: #5F8F8A; }
-.warn    { color: #6BB7B0; }
+.status-accent { color: #FFFFFF; }
+.online  { color: #888888; }
+.offline { color: #888888; }
+.warn    { color: #888888; }

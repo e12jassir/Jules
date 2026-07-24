@@ -136,22 +136,33 @@ async def handle_status() -> str:
         return "No se pudo obtener el estado de los providers."
 
 
-async def handle_doctor() -> str:
-    """Run jules doctor checks and return summary."""
+async def handle_doctor(args: tuple[str, ...] = ()) -> str:
+    """Run jules doctor checks and return summary, or run auto-fix if requested."""
     import asyncio
 
     try:
-        from jules.platform.doctor import run_all_checks
+        from jules.platform.doctor import run_all_checks, run_auto_repair
 
-        report = await asyncio.to_thread(run_all_checks)
+        if args and args[0] in ("fix", "--fix", "repair"):
+            actions = await asyncio.to_thread(run_auto_repair)
+            report = await asyncio.to_thread(run_all_checks)
+            lines = ["Reparaciones automáticas aplicadas:"]
+            if actions:
+                lines.extend(f"  ✓ {a}" for a in actions)
+            else:
+                lines.append("  (No se requirieron reparaciones)")
+            lines.extend(["", "Estado actual del sistema:"])
+        else:
+            report = await asyncio.to_thread(run_all_checks)
+            lines = []
+
         symbols = {"ok": "✓", "fail": "✗", "warn": "⚠"}
-        lines: list[str] = []
         for check in report.results:
             s = symbols.get(check.status, "?")
             lines.append(f"  {s} {check.name}: {check.message}")
         return "\n".join(lines)
-    except Exception:
-        return "No se pudo ejecutar doctor."
+    except Exception as e:
+        return f"No se pudo ejecutar doctor: {e}"
 
 
 async def handle_model(args: tuple[str, ...]) -> str | tuple[str, str, str]:
@@ -182,11 +193,26 @@ async def handle_model(args: tuple[str, ...]) -> str | tuple[str, str, str]:
                 lines.append(f"    • {m}")
         return "\n".join(lines)
 
-    name = " ".join(args)
-    # Resolve to (provider, model) — try exact match first, then prefix match
+    name = " ".join(args).strip()
+    if ":" in name:
+        p_name, m_name = name.split(":", 1)
+        p_key = p_name.lower().strip()
+        m_name = m_name.strip()
+        if p_key in ("opencode zen", "opencode"):
+            p_name = "opencode"
+        elif p_key == "openrouter":
+            p_name = "openrouter"
+        elif p_key == "ollama":
+            p_name = "ollama"
+        elif p_key == "antigravity":
+            p_name = "antigravity"
+        elif p_key in ("openai oauth", "openai"):
+            p_name = "openai_oauth"
+        return (f"Modelo activo: {p_name}:{m_name}", p_name, m_name)
+
+    # exact match on model name
     available_models = await router.available_models()
     all_models = [(p, m) for p, m in available_models if p not in _OAUTH_PROVIDERS]
-    # exact match on model name
     for provider, model in all_models:
         if model == name or f"{provider}:{model}" == name:
             return (f"Modelo activo: {provider}:{model}", provider, model)
@@ -197,53 +223,86 @@ async def handle_model(args: tuple[str, ...]) -> str | tuple[str, str, str]:
     return f"Modelo '{name}' no encontrado. Usá /model para ver los disponibles."
 
 
+def _set_api_key(provider_name: str, key: str) -> str:
+    import os
+    from pathlib import Path
+
+    p_map = {
+        "openrouter": "OPENROUTER_API_KEY",
+        "google": "GOOGLE_AI_API_KEY",
+        "gemini": "GOOGLE_AI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "gpt": "OPENAI_API_KEY",
+        "claude": "ANTHROPIC_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    }
+    var_name = p_map.get(provider_name.lower())
+    if not var_name:
+        return f"Proveedor de API Key desconocido: '{provider_name}'. Opciones válidas: openrouter, google, openai, claude."
+
+    os.environ[var_name] = key
+    env_path = Path.home() / ".jules" / ".env"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = []
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if not line.startswith(f"{var_name}="):
+                lines.append(line)
+    lines.append(f"{var_name}={key}")
+    env_path.write_text("\n".join(lines) + "\n")
+    return f"✓ API key para {provider_name} ({var_name}) guardada correctamente en ~/.jules/.env"
+
+
 async def handle_provider(args: tuple[str, ...]) -> str | tuple[str, str, str]:
     """Resolve provider selection, initialize auth if needed, and set active override."""
     if not args:
-        return "Uso: /provider <cli|oauth|api|local> <nombre>"
-    
-    cat = args[0].lower()
-    if len(args) < 2:
-        return f"Por favor especifica un proveedor para la categoría '{cat}'."
-        
-    name = args[1].lower()
-    
-    provider_id = None
-    default_model = ""
-    msg = ""
+        return (
+            "Proveedores disponibles:\n\n"
+            "  • openrouter  — OpenRouter (Claude, GPT-4o, Gemini, DeepSeek) [API Key]\n"
+            "  • google      — Google Gemini API [API Key]\n"
+            "  • openai      — OpenAI / GPT [API Key / OAuth]\n"
+            "  • opencode    — OpenCode Zen (modelos libres)\n"
+            "  • antigravity — Antigravity (modelos AGY)\n"
+            "  • ollama      — Ollama Local\n\n"
+            "Comandos de configuración:\n"
+            "  /provider set <proveedor> <API_KEY>   (Guarda tu API key en ~/.jules/.env)\n"
+            "  /provider <nombre>                     (Activa el proveedor)"
+        )
 
-    if cat == "oauth":
-        if name == "openai":
-            # Delegate to handle_login which properly surfaces the device code URL
-            return await handle_login(("openai", "device"))
-        elif name == "claude":
-            return "Claude OAuth no está configurado todavía."
-            
-    elif cat == "cli":
-        if name == "codex":
-            provider_id = "codex"
-            default_model = "openai/gpt-5.4-mini"
-            msg = "CLI configurado: Codex (Copilot)"
-        elif name == "opencode":
-            provider_id = "opencode"
-            default_model = "opencode/minimax-m3-free"
-            msg = "CLI configurado: OpenCode"
-        elif name == "antigravity":
-            provider_id = "antigravity"
-            default_model = "gemini-3.5-flash-low"
-            msg = "CLI configurado: Antigravity"
-            
-    elif cat == "local":
-        provider_id = "ollama"
-        default_model = "llama3.2:1b"
-        msg = "Proveedor configurado: Ollama Local"
-        
-    else:
-        return f"Categoría de proveedor desconocida: {cat}"
-        
-    if provider_id:
-        return (f"{msg}\nModelo por defecto: {default_model}", provider_id, default_model)
-    return f"Proveedor desconocido: {name}"
+    first = args[0].lower()
+
+    if first == "set":
+        if len(args) < 3:
+            return "Uso: /provider set <openrouter|google|openai|claude> <TU_API_KEY>"
+        return _set_api_key(args[1], args[2])
+
+    # Direct provider selection, e.g. `/provider openrouter` or `/provider google`
+    name = first
+    cat = args[1].lower() if len(args) >= 2 else ""
+
+    if name in ("openrouter", "api") and (cat == "openrouter" or name == "openrouter"):
+        return ("Proveedor configurado: OpenRouter", "openrouter", "openrouter:anthropic/claude-3.7-sonnet")
+
+    if name in ("google", "gemini", "api") and (cat in ("google", "gemini") or name in ("google", "gemini")):
+        return ("Proveedor configurado: Google Gemini API", "google", "google:gemini-2.5-flash")
+
+    if name in ("opencode", "cli") and (cat == "opencode" or name == "opencode"):
+        return ("Proveedor configurado: OpenCode", "opencode", "opencode:deepseek-v4-flash-free")
+
+    if name in ("antigravity", "cli") and (cat == "antigravity" or name == "antigravity"):
+        return ("Proveedor configurado: Antigravity", "antigravity", "antigravity:gemini-3.5-flash-low")
+
+    if name in ("codex", "cli") and (cat == "codex" or name == "codex"):
+        return ("Proveedor configurado: Codex (Copilot)", "codex", "codex:openai/gpt-5.4-mini")
+
+    if name in ("ollama", "local") and (cat == "ollama" or name == "ollama"):
+        return ("Proveedor configurado: Ollama Local", "ollama", "ollama:llama3.2:1b")
+
+    if name in ("openai", "oauth") and (cat == "openai" or name == "openai"):
+        return await handle_login(("openai", "device"))
+
+    return f"Proveedor no reconocido: '{name}'. Usá /provider para ver la lista."
 
 
 def _format_expiry(expires_at: float | None) -> str:

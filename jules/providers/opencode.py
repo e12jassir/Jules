@@ -34,7 +34,7 @@ class OpenCodeProvider:
         del context
         if prompt.startswith("-"):
             raise ProviderError("Invalid prompt: must not start with '-' to prevent argument injection.")
-        if not re.match(r"^[a-zA-Z0-9_.\-]+(/[a-zA-Z0-9_.\-]+)?$", model):
+        if not re.match(r"^[a-zA-Z0-9_.:\-]+(/[a-zA-Z0-9_.:\-]+)*$", model):
             raise ProviderError(
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )
@@ -53,7 +53,7 @@ class OpenCodeProvider:
         del context
         if prompt.startswith("-"):
             raise ProviderError("Invalid prompt: must not start with '-' to prevent argument injection.")
-        if not re.match(r"^[a-zA-Z0-9_.\-]+(/[a-zA-Z0-9_.\-]+)?$", model):
+        if not re.match(r"^[a-zA-Z0-9_.:\-]+(/[a-zA-Z0-9_.:\-]+)*$", model):
             raise ProviderError(
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )

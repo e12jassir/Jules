@@ -110,9 +110,32 @@ class JulesApp(App[None]):
         self._background_tasks = set()
         self._chat_history: list[tuple[str, str]] = []  # (role, content) — survives model switches
 
+    # Fallback values match _read_terminal_palette()'s own per-key
+    # defaults, so the visual result is consistent whether the palette
+    # came from Ghostty config or from this fallback. Without this,
+    # theme_terminal.tcss's `$text-muted` (and friends) reference
+    # variables Textual's App doesn't provide natively (only background/
+    # text/panel/surface/accent are built in) — CSS parsing crashed with
+    # "reference to undefined variable" whenever `_read_terminal_palette()`
+    # returned None, e.g. no ~/.config/ghostty/config.ghostty, or one
+    # without a plain `background=` line (found 2026-07-19: a real config
+    # using `theme = Cursor Dark` instead of a literal background value).
+    _TERMINAL_PALETTE_FALLBACK: dict[str, str] = {
+        "background": "#000000",
+        "surface": "#111111",
+        "panel": "#333333",
+        "text": "#ffffff",
+        "text-muted": "#888888",
+        "accent": "#00afaf",
+        "success": "#00af00",
+        "warning": "#afaf00",
+        "error": "#af0000",
+    }
+
     def get_css_variables(self) -> dict[str, str]:
         variables = super().get_css_variables()
         if self.CSS_PATH == "theme_terminal.tcss":
+            variables.update(self._TERMINAL_PALETTE_FALLBACK)
             if getattr(self, "_terminal_palette", None):
                 variables.update(self._terminal_palette)
         return variables
@@ -219,6 +242,7 @@ class JulesApp(App[None]):
             status_bar.set_generating(False)
 
     async def _stream_response(self, message: str, chat_history: list[tuple[str, str]] | None = None) -> AsyncIterator[object]:
+        from jules.auth.base import OAuthError
         from jules.core.context import ContextEngine
         from jules.core.router import TaskType, route, stream_with_fallback
         from jules.core.session import SessionContext as CoreSessionContext
@@ -257,7 +281,7 @@ class JulesApp(App[None]):
             else:
                 async for token in provider.stream(prompt, memory_context, model):
                     yield token
-        except (NotImplementedError, ProviderError):
+        except (NotImplementedError, ProviderError, OAuthError):
             async for event, fallback_model, fallback_provider in stream_with_fallback(prompt, memory_context, TaskType.QUICK, user_override=getattr(self, "_user_model_override", None)):
                 if fallback_model != self.active_model or fallback_provider != self.active_provider:
                     self.active_provider = fallback_provider

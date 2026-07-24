@@ -25,6 +25,9 @@ except ImportError:  # pragma: no cover
             if args[:1] == ["doctor"]:
                 self.commands["doctor"]("--json" in args)
                 return
+            if args[:1] == ["protocol"]:
+                self.commands["protocol"]()
+                return
             self.callback(_Context())
 
     class _ClickStub:
@@ -93,6 +96,14 @@ def cli(ctx) -> None:
     from jules.cli.app import JulesApp  # type: ignore[import-not-found]
 
     JulesApp().run(inline=False)
+
+
+@cli.command()  # type: ignore[attr-defined]
+def protocol() -> None:
+    """Headless NDJSON protocol server for non-Textual frontends (e.g. jules-tui)."""
+    from jules.cli.protocol import main as run_protocol
+
+    run_protocol()
 
 
 @cli.command()  # type: ignore[attr-defined]

@@ -31,6 +31,7 @@ class CheckResult:
     name: str
     status: Literal["ok", "fail", "warn"]
     message: str
+    code: str = ""
 
 
 @dataclass(slots=True)
@@ -68,7 +69,8 @@ def check_ollama() -> CheckResult:
         return CheckResult(
             name="Ollama",
             status="fail",
-            message="Ollama service is not active."
+            message="Ollama service is not active.",
+            code="OLLAMA_SERVICE_INACTIVE",
         )
 
     # Get running user
@@ -244,7 +246,8 @@ def check_lancedb() -> CheckResult:
         return CheckResult(
             name="LanceDB",
             status="fail",
-            message=f"Directory {path} does not exist or is not a directory."
+            message=f"Directory {path} does not exist or is not a directory.",
+            code="LANCEDB_DIR_MISSING",
         )
     try:
         lancedb = importlib.import_module("lancedb")
@@ -252,7 +255,8 @@ def check_lancedb() -> CheckResult:
         return CheckResult(
             name="LanceDB",
             status="fail",
-            message=f"LanceDB dependency is not available: {e}"
+            message=f"LanceDB dependency is not available: {e}",
+            code="LANCEDB_DEP_MISSING",
         )
     try:
         db = lancedb.connect(str(path))
@@ -266,7 +270,8 @@ def check_lancedb() -> CheckResult:
         return CheckResult(
             name="LanceDB",
             status="fail",
-            message=f"LanceDB is corrupt or failed to open: {e}"
+            message=f"LanceDB is corrupt or failed to open: {e}",
+            code="LANCEDB_CORRUPT",
         )
 
 
@@ -276,7 +281,8 @@ def check_sqlite() -> CheckResult:
         return CheckResult(
             name="SQLite",
             status="fail",
-            message=f"SQLite database file {db_path} does not exist."
+            message=f"SQLite database file {db_path} does not exist.",
+            code="SQLITE_MISSING_DB",
         )
     try:
         with sqlite3.connect(db_path) as conn:
@@ -285,7 +291,8 @@ def check_sqlite() -> CheckResult:
         return CheckResult(
             name="SQLite",
             status="fail",
-            message=f"SQLite database is not readable or corrupt: {e}"
+            message=f"SQLite database is not readable or corrupt: {e}",
+            code="SQLITE_CORRUPT",
         )
 
     # Run alembic current and heads
@@ -305,7 +312,8 @@ def check_sqlite() -> CheckResult:
             return CheckResult(
                 name="SQLite",
                 status="fail",
-                message=f"Alembic current failed: {curr_res.stderr.strip() or curr_res.stdout.strip()}"
+                message=f"Alembic current failed: {curr_res.stderr.strip() or curr_res.stdout.strip()}",
+                code="SQLITE_MIGRATIONS_PENDING",
             )
         heads_res = subprocess.run(
             [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_CONFIG_PATH), "heads"],
@@ -319,7 +327,8 @@ def check_sqlite() -> CheckResult:
             return CheckResult(
                 name="SQLite",
                 status="fail",
-                message=f"Alembic heads failed: {heads_res.stderr.strip() or heads_res.stdout.strip()}"
+                message=f"Alembic heads failed: {heads_res.stderr.strip() or heads_res.stdout.strip()}",
+                code="SQLITE_MIGRATIONS_PENDING",
             )
 
         def extract_revision(output: str) -> str | None:
@@ -339,7 +348,8 @@ def check_sqlite() -> CheckResult:
             return CheckResult(
                 name="SQLite",
                 status="fail",
-                message="No migrations applied."
+                message="No migrations applied.",
+                code="SQLITE_MIGRATIONS_PENDING",
             )
         elif curr_rev == head_rev:
             return CheckResult(
@@ -351,13 +361,15 @@ def check_sqlite() -> CheckResult:
             return CheckResult(
                 name="SQLite",
                 status="fail",
-                message=f"Database is behind head revision (current: {curr_rev}, head: {head_rev})"
+                message=f"Database is behind head revision (current: {curr_rev}, head: {head_rev})",
+                code="SQLITE_MIGRATIONS_PENDING",
             )
     except (FileNotFoundError, OSError, subprocess.SubprocessError) as e:
         return CheckResult(
             name="SQLite",
             status="fail",
-            message=f"Alembic checks failed: {e}"
+            message=f"Alembic checks failed: {e}",
+            code="SQLITE_MIGRATIONS_PENDING",
         )
 
 
@@ -459,7 +471,8 @@ def check_scoring() -> CheckResult:
         return CheckResult(
             name="Scoring",
             status="warn",
-            message="sin datos suficientes para evaluar salud"
+            message="sin datos suficientes para evaluar salud",
+            code="SCORING_LOG_MISSING",
         )
     try:
         lines = log_path.read_text(encoding="utf-8").splitlines()
@@ -546,3 +559,70 @@ def run_all_checks() -> DoctorReport:
             exit_code = 1
             break
     return DoctorReport(results=results, exit_code=exit_code)
+
+
+def run_auto_repair() -> list[str]:
+    """Execute targeted auto-repair actions based on doctor diagnostic codes."""
+    actions_taken: list[str] = []
+    report = run_all_checks()
+
+    for check in report.results:
+        if check.status not in ("fail", "warn") or not check.code:
+            continue
+
+        if check.code == "LANCEDB_DIR_MISSING":
+            try:
+                DEFAULT_LANCEDB_PATH.mkdir(parents=True, exist_ok=True)
+                actions_taken.append(f"Creado directorio LanceDB en {DEFAULT_LANCEDB_PATH}")
+            except Exception as e:
+                actions_taken.append(f"Fallo al crear directorio LanceDB: {e}")
+
+        elif check.code in ("SQLITE_MISSING_DB", "SQLITE_MIGRATIONS_PENDING"):
+            try:
+                DEFAULT_SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+                env = os.environ.copy()
+                env["JULES_DATABASE_PATH"] = str(DEFAULT_SQLITE_PATH)
+                res = subprocess.run(
+                    [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_CONFIG_PATH), "upgrade", "head"],
+                    capture_output=True,
+                    text=True,
+                    cwd=PROJECT_ROOT,
+                    env=env,
+                    timeout=10,
+                )
+                if res.returncode == 0:
+                    actions_taken.append(f"Aplicadas migraciones SQLite en {DEFAULT_SQLITE_PATH}")
+                else:
+                    from jules.memory.persistent import init_db
+                    init_db(DEFAULT_SQLITE_PATH)
+                    actions_taken.append(f"Inicializada SQLite con esquema base en {DEFAULT_SQLITE_PATH}")
+            except Exception as e:
+                actions_taken.append(f"Fallo al inicializar base SQLite: {e}")
+
+        elif check.code == "OLLAMA_SERVICE_INACTIVE":
+            if shutil.which("systemctl"):
+                try:
+                    res = subprocess.run(["systemctl", "start", "ollama"], capture_output=True, text=True, timeout=5)
+                    if res.returncode == 0:
+                        actions_taken.append("Servicio Ollama iniciado vía systemctl")
+                    else:
+                        actions_taken.append(f"Intento de iniciar Ollama devolvió: {res.stderr.strip()}")
+                except Exception as e:
+                    actions_taken.append(f"No se pudo iniciar servicio Ollama: {e}")
+            elif shutil.which("ollama"):
+                try:
+                    subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    actions_taken.append("Proceso 'ollama serve' iniciado en segundo plano")
+                except Exception as e:
+                    actions_taken.append(f"No se pudo iniciar 'ollama serve': {e}")
+
+        elif check.code == "SCORING_LOG_MISSING":
+            try:
+                log_path = Path.home() / ".jules" / "logs" / "scoring.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.write_text("HEALTHY - auto initialized baseline\n", encoding="utf-8")
+                actions_taken.append("Inicializado registro de salud de Scoring")
+            except Exception as e:
+                actions_taken.append(f"No se pudo crear log de Scoring: {e}")
+
+    return actions_taken

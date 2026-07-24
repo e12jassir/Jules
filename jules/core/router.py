@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Mapping
 
+from jules.auth.base import OAuthError
 from jules.core.config import JulesConfig, RoutingTier, load_config
 
 from jules.providers.base import Provider, ProviderError
@@ -27,9 +28,9 @@ class TaskType(str, Enum):
 LOCAL_ONLY_TASKS = {TaskType.IDENTITY, TaskType.MEMORY_SCORING, TaskType.OFFLINE}
 
 TASK_PROVIDER_CANDIDATES: dict[TaskType, tuple[str, ...]] = {
-    TaskType.QUICK: ("antigravity", "openai_oauth", "openrouter", "google", "codex"),
-    TaskType.REASONING: ("antigravity", "openai_oauth", "openrouter", "google", "codex"),
-    TaskType.ANALYSIS: ("antigravity", "openai_oauth", "openrouter", "google", "codex"),
+    TaskType.QUICK: ("antigravity", "openai_oauth", "openrouter", "google", "codex", "opencode"),
+    TaskType.REASONING: ("antigravity", "openai_oauth", "openrouter", "google", "codex", "opencode"),
+    TaskType.ANALYSIS: ("antigravity", "openai_oauth", "openrouter", "google", "codex", "opencode"),
     TaskType.CODING: ("opencode", "openai_oauth", "codex"),
     TaskType.CODING_HEAVY: ("opencode", "openai_oauth", "codex"),
 }
@@ -106,7 +107,7 @@ class CognitiveRouter:
             )
             response = await provider.ask(prompt, context, model)
             return response, model, provider.name
-        except (ProviderError, ValueError) as exc:
+        except (ProviderError, ValueError, OAuthError) as exc:
             if isinstance(exc, ValueError) and ("override" in str(exc).lower() or "requires local" in str(exc).lower()):
                 raise
             last_exc = exc
@@ -130,7 +131,7 @@ class CognitiveRouter:
                             fallback_provider = self._provider_by_name(provider_name)
                             response = await fallback_provider.ask(prompt, context, secondary_model)
                             return response, secondary_model, fallback_provider.name
-                        except (ProviderError, ValueError) as fallback_exc:
+                        except (ProviderError, ValueError, OAuthError) as fallback_exc:
                             last_exc = fallback_exc
 
             for fallback_name in self.config.routing.fallback_chain:
@@ -152,7 +153,7 @@ class CognitiveRouter:
 
                     response = await fallback_provider.ask(prompt, context, fallback_model)
                     return response, fallback_model, fallback_provider.name
-                except (ProviderError, ValueError) as fallback_exc:
+                except (ProviderError, ValueError, OAuthError) as fallback_exc:
                     last_exc = fallback_exc
 
             raise ProviderError(f"All providers in fallback chain failed. Last error: {last_exc}") from last_exc
@@ -182,7 +183,7 @@ class CognitiveRouter:
                 async for token in provider.stream(prompt, context, model):
                     yield token, model, provider.name
             return
-        except (ProviderError, ValueError, NotImplementedError) as exc:
+        except (ProviderError, ValueError, NotImplementedError, OAuthError) as exc:
             if isinstance(exc, ValueError) and ("override" in str(exc).lower() or "requires local" in str(exc).lower()):
                 raise
             last_exc = exc
@@ -211,7 +212,7 @@ class CognitiveRouter:
                                 async for token in fallback_provider.stream(prompt, context, secondary_model):
                                     yield token, secondary_model, fallback_provider.name
                             return
-                        except (ProviderError, ValueError, NotImplementedError) as fallback_exc:
+                        except (ProviderError, ValueError, NotImplementedError, OAuthError) as fallback_exc:
                             last_exc = fallback_exc
 
             for fallback_name in self.config.routing.fallback_chain:
@@ -244,26 +245,47 @@ class CognitiveRouter:
             raise ProviderError(f"All providers in fallback chain failed. Last error: {last_exc}") from last_exc
 
     async def _resolve_user_override(self, override: str) -> tuple[Provider, str]:
-        matches: list[tuple[Provider, str]] = []
+        # Configured model exact match
         for provider_name, model in await self._configured_models():
-            if model == override and provider_name not in [m[0].name for m in matches]:
-                matches.append((self.providers[provider_name], model))
-
-        if len(matches) > 1:
-            raise ValueError(f"Ambiguous model override '{override}'. Found in multiple providers. Please use 'provider:{override}'.")
-        if matches:
-            return matches[0]
+            if model == override and provider_name in self.providers:
+                return self.providers[provider_name], model
 
         if ":" in override:
-            provider_name, model = override.split(":", 1)
-            try:
-                provider = self.providers[provider_name]
-            except KeyError as exc:
-                raise ValueError(f"Unknown provider override: '{provider_name}'") from exc
-            return provider, self._validate_model(model, override)
+            parts = override.split(":", 1)
+            p_name = parts[0].lower().strip()
+            model_candidate = parts[1].strip()
+
+            if p_name in ("opencode zen", "opencode"):
+                p_name = "opencode"
+            elif p_name == "openrouter":
+                p_name = "openrouter"
+            elif p_name in ("openai oauth", "openai"):
+                p_name = "openai_oauth"
+            elif p_name == "ollama":
+                p_name = "ollama"
+            elif p_name == "antigravity":
+                p_name = "antigravity"
+
+            if p_name in self.providers:
+                return self.providers[p_name], self._validate_model(model_candidate, override)
+            raise ValueError(f"Unknown provider override: '{parts[0]}'")
+
+        # Match provider/model in catalog
+        for provider_name, provider_inst in self.providers.items():
+            for m in self.registry.all_models_for_provider(provider_name):
+                if m == override:
+                    return provider_inst, m
+
+        # Prefix heuristics for opencode / openrouter / ollama
+        if override.startswith("opencode/") and "opencode" in self.providers:
+            return self.providers["opencode"], override
+        if override.startswith("openrouter/") and "openrouter" in self.providers:
+            return self.providers["openrouter"], override
+        if "ollama" in self.providers:
+            return self.providers["ollama"], override
 
         raise ValueError(
-            "user_override must be 'provider:model' or a model present in config.toml"
+            f"user_override '{override}' could not be resolved to a valid provider/model"
         )
 
     def _provider_route(self, provider_name: str, tier: RoutingTier) -> tuple[Provider, str]:
