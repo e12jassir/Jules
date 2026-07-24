@@ -123,6 +123,24 @@ pub struct AppState {
     /// Highlighted index into `palette::ALL_THEMES` while the picker is
     /// open.
     pub theme_overlay_selected: usize,
+    /// `true` while the `/models` picker overlay is open — provider-
+    /// grouped model list with a free-text filter, mirroring OpenCode's
+    /// own model select popup (user request, 2026-07-21: recreate that
+    /// picker for Jules' `/models` command).
+    pub models_overlay_visible: bool,
+    /// Highlighted index into the current `models::filtered_rows(query)`
+    /// result while the picker is open.
+    pub models_overlay_selected: usize,
+    /// Free-text filter typed while the picker is open — matched against
+    /// both model and provider names (see `models::filtered_rows`).
+    pub models_overlay_query: String,
+    pub provider_overlay_visible: bool,
+    pub provider_overlay_selected: usize,
+    pub provider_overlay_sub_menu: bool,
+    pub provider_overlay_action_selected: usize,
+    pub provider_overlay_input_mode: bool,
+    pub provider_overlay_key_input: String,
+    pub provider_overlay_status_msg: Option<String>,
     /// Animation tick counter for UI animations (e.g. streaming loading bar).
     pub anim_tick: usize,
     /// `true` while the backend is generating a response (from submit_input until Done/Error).
@@ -181,11 +199,6 @@ impl AppState {
     }
 
     pub fn new() -> Self {
-        // Placeholder mock conversation removed (user decision, 2026-07-18):
-        // the chat starts empty — only the user's own submitted messages
-        // should appear, no canned Jules reply.
-        let messages: Vec<ChatMessage> = Vec::new();
-
         let python_path = Self::resolve_python_path();
         let backend_cwd = Self::resolve_backend_cwd();
         let (backend, backend_error) =
@@ -206,26 +219,26 @@ impl AppState {
             input: String::new(),
             cursor_pos: 0,
 
-            active_model: "Gemini 3.5 Flash (Primary)".to_string(),
-            active_provider: "Antigravity".to_string(),
+            active_model: "deepseek-v4-flash-free".to_string(),
+            active_provider: "OpenCode Zen".to_string(),
             routing_mode: RoutingMode::Manual,
             routing_reason: None,
 
-            messages,
+            messages: Vec::new(),
             scroll_offset: 0,
             thinking_expanded: true,
 
             ctx_tokens: 0,
             ctx_used_pct: 0,
-            ctx_quota_provider: "antigravity".to_string(),
+            ctx_quota_provider: "opencode".to_string(),
             ctx_quota_pct: 0,
 
             mem_episodes: 0,
             mem_top_match_pct: 0,
             mem_top_match_note: "none".to_string(),
 
-            cwd: real_cwd(),
-            git_branch: real_git_branch(),
+            cwd: String::new(),
+            git_branch: None,
             version: "0.4.0".to_string(),
 
             doctor_checks: Vec::new(),
@@ -241,6 +254,16 @@ impl AppState {
             command_overlay_selected: None,
             theme_overlay_visible: false,
             theme_overlay_selected: 0,
+            models_overlay_visible: false,
+            models_overlay_selected: 0,
+            models_overlay_query: String::new(),
+            provider_overlay_visible: false,
+            provider_overlay_selected: 0,
+            provider_overlay_sub_menu: false,
+            provider_overlay_action_selected: 0,
+            provider_overlay_input_mode: false,
+            provider_overlay_key_input: String::new(),
+            provider_overlay_status_msg: None,
             anim_tick: 0,
             is_generating: false,
         };
@@ -267,12 +290,13 @@ impl AppState {
         let text = trimmed.to_string();
         self.input.clear();
         self.cursor_pos = 0;
-        self.screen = Screen::Chat;
 
         if let Some((name, args)) = crate::commands::slash_command_line(&text) {
             self.dispatch_slash_command(&text, name, args);
             return;
         }
+
+        self.screen = Screen::Chat;
 
         self.messages.push(ChatMessage {
             role: Role::User,
@@ -321,6 +345,7 @@ impl AppState {
         let approx_tokens = (total_chars / 4) as u32;
         self.ctx_tokens = approx_tokens;
         self.ctx_used_pct = ((approx_tokens as f32 / 200_000.0) * 100.0).min(100.0) as u8;
+        self.ctx_quota_provider = self.active_provider.clone();
 
         let user_msg_count = self.messages.iter().filter(|m| matches!(m.role, Role::User)).count() as u32;
         self.mem_episodes = user_msg_count;
@@ -334,21 +359,10 @@ impl AppState {
     }
 
     /// Route a submitted `/command` line: `clear`/`exit` are resolved
-    /// entirely client-side (per jules/cli/protocol.py's docstring — they
-    /// are UI/process concerns, not backend logic); everything else is
-    /// sent to the backend as a `command` NDJSON message and dispatched
-    /// to the real handlers in `jules/cli/commands.py` (user decision,
-    /// 2026-07-19: reuse the existing CLI's command logic wholesale,
-    /// don't reimplement it).
-    fn dispatch_slash_command(&mut self, raw_text: &str, name: &str, args: Vec<String>) {
-        self.messages.push(ChatMessage {
-            role: Role::User,
-            who: "you",
-            thinking: None,
-            body: raw_text.to_string(),
-            tagline: None,
-        });
-
+    /// entirely client-side; everything else is sent to the backend as a
+    /// `command` NDJSON message. Slash commands do NOT get saved as chat
+    /// messages or force transition to the Chat screen unless they produce chat output.
+    fn dispatch_slash_command(&mut self, _raw_text: &str, name: &str, args: Vec<String>) {
         match name {
             "clear" => {
                 self.messages.clear();
@@ -360,7 +374,21 @@ impl AppState {
             "themes" => {
                 self.open_theme_picker();
             }
+            "models" => {
+                self.open_models_picker();
+            }
+            "provider" | "providers" => {
+                if args.is_empty() {
+                    self.open_provider_picker();
+                } else {
+                    self.screen = Screen::Chat;
+                    if let Some(backend) = self.backend.as_mut() {
+                        let _ = backend.send_command(name, &args);
+                    }
+                }
+            }
             "doctor" => {
+                self.screen = Screen::Chat;
                 self.pending_doctor = true;
                 match self.backend.as_mut() {
                     Some(backend) => {
@@ -393,6 +421,7 @@ impl AppState {
             }
             _ => match self.backend.as_mut() {
                 Some(backend) => {
+                    self.screen = Screen::Chat;
                     if let Err(e) = backend.send_command(name, &args) {
                         self.messages.push(ChatMessage {
                             role: Role::Jules,
@@ -404,6 +433,7 @@ impl AppState {
                     }
                 }
                 None => {
+                    self.screen = Screen::Chat;
                     let reason = self
                         .backend_error
                         .clone()
@@ -461,8 +491,20 @@ impl AppState {
         use crate::backend::BackendEvent;
         match event {
             BackendEvent::Status { provider, model } => {
-                self.active_provider = provider;
-                self.active_model = model;
+                if !provider.is_empty() {
+                    self.active_provider = match provider.to_lowercase().as_str() {
+                        "opencode" => "OpenCode Zen".to_string(),
+                        "openrouter" => "OpenRouter".to_string(),
+                        "ollama" => "Ollama".to_string(),
+                        "antigravity" => "Antigravity".to_string(),
+                        "openai_oauth" | "openai" => "OpenAI OAuth".to_string(),
+                        "google" => "Google".to_string(),
+                        _ => provider,
+                    };
+                }
+                if !model.is_empty() {
+                    self.active_model = model;
+                }
             }
             BackendEvent::Thinking(chunk) => {
                 self.is_generating = true;
@@ -647,6 +689,198 @@ impl AppState {
             self.theme = *theme;
         }
         self.theme_overlay_visible = false;
+    }
+
+    /// Open the `/models` picker overlay, resetting the filter and
+    /// pre-selecting the first row (there's no cheap reverse lookup from
+    /// `active_model`/`active_provider` into the flattened row list, and
+    /// unlike themes there's no small fixed enum to search — matches
+    /// OpenCode's own popup, which also opens with the first row
+    /// highlighted rather than the active model).
+    pub fn open_models_picker(&mut self) {
+        self.models_overlay_query.clear();
+        self.models_overlay_selected = 0;
+        self.models_overlay_visible = true;
+    }
+
+    pub fn close_models_picker(&mut self) {
+        self.models_overlay_visible = false;
+    }
+
+    pub fn models_picker_move(&mut self, delta: i32) {
+        if !self.models_overlay_visible {
+            return;
+        }
+        let len = crate::models::filtered_rows(&self.models_overlay_query).len() as i32;
+        if len == 0 {
+            return;
+        }
+        let current = self.models_overlay_selected as i32;
+        let next = ((current + delta) % len + len) % len;
+        self.models_overlay_selected = next as usize;
+    }
+
+    /// Apply the highlighted model/provider pair and close the picker.
+    pub fn models_picker_accept(&mut self) {
+        let rows = crate::models::filtered_rows(&self.models_overlay_query);
+        if let Some(row) = rows.get(self.models_overlay_selected) {
+            self.active_model = row.model.name.to_string();
+            self.active_provider = row.provider.to_string();
+            self.ctx_quota_provider = row.provider.to_string();
+
+            let model_full_name = format!("{}:{}", row.provider, row.model.full_name);
+            if let Some(backend) = self.backend.as_mut() {
+                let _ = backend.send_command("model", &[model_full_name]);
+            }
+        }
+        self.models_overlay_visible = false;
+    }
+
+    /// Append a character to the picker's free-text filter, resetting the
+    /// highlighted row back to the top of the new (smaller) result set —
+    /// mirrors typing into OpenCode's own model search box.
+    pub fn models_picker_type(&mut self, c: char) {
+        self.models_overlay_query.push(c);
+        self.models_overlay_selected = 0;
+    }
+
+    pub fn models_picker_backspace(&mut self) {
+        self.models_overlay_query.pop();
+        self.models_overlay_selected = 0;
+    }
+
+    pub fn open_provider_picker(&mut self) {
+        self.provider_overlay_selected = 0;
+        self.provider_overlay_sub_menu = false;
+        self.provider_overlay_action_selected = 0;
+        self.provider_overlay_input_mode = false;
+        self.provider_overlay_key_input.clear();
+        self.provider_overlay_status_msg = None;
+        self.provider_overlay_visible = true;
+    }
+
+    pub fn close_provider_picker(&mut self) {
+        if self.provider_overlay_input_mode {
+            self.provider_overlay_input_mode = false;
+            self.provider_overlay_key_input.clear();
+        } else if self.provider_overlay_sub_menu {
+            self.provider_overlay_sub_menu = false;
+        } else {
+            self.provider_overlay_visible = false;
+        }
+    }
+
+    pub fn provider_picker_move(&mut self, delta: i32) {
+        if !self.provider_overlay_visible || self.provider_overlay_input_mode {
+            return;
+        }
+        if self.provider_overlay_sub_menu {
+            let actions_count = 3;
+            let current = self.provider_overlay_action_selected as i32;
+            let next = ((current + delta) % actions_count + actions_count) % actions_count;
+            self.provider_overlay_action_selected = next as usize;
+            return;
+        }
+        let len = crate::providers::PROVIDERS.len() as i32;
+        if len == 0 {
+            return;
+        }
+        let current = self.provider_overlay_selected as i32;
+        let next = ((current + delta) % len + len) % len;
+        self.provider_overlay_selected = next as usize;
+    }
+
+    pub fn provider_picker_accept(&mut self) {
+        if !self.provider_overlay_visible {
+            return;
+        }
+        let providers = crate::providers::PROVIDERS;
+        let Some(item) = providers.get(self.provider_overlay_selected) else {
+            return;
+        };
+
+        if self.provider_overlay_input_mode {
+            let key = self.provider_overlay_key_input.trim().to_string();
+            if !key.is_empty() {
+                match crate::providers::save_api_key(item.env_var, &key) {
+                    Ok(_) => {
+                        self.provider_overlay_status_msg =
+                            Some(format!("✓ API key guardada para {}", item.name));
+                        self.active_provider = item.id.to_string();
+                        self.active_model = item.default_model.to_string();
+                        if let Some(backend) = self.backend.as_mut() {
+                            let _ = backend.send_command("provider", &[item.id.to_string()]);
+                        }
+                    }
+                    Err(e) => {
+                        self.provider_overlay_status_msg = Some(format!("Error: {e}"));
+                    }
+                }
+            }
+            self.provider_overlay_input_mode = false;
+            self.provider_overlay_key_input.clear();
+            self.provider_overlay_sub_menu = false;
+        } else if self.provider_overlay_sub_menu {
+            match self.provider_overlay_action_selected {
+                0 => {
+                    self.active_provider = item.id.to_string();
+                    self.active_model = item.default_model.to_string();
+                    if let Some(backend) = self.backend.as_mut() {
+                        let _ = backend.send_command("provider", &[item.id.to_string()]);
+                    }
+                    self.provider_overlay_status_msg =
+                        Some(format!("✓ Proveedor {} activado", item.name));
+                    self.provider_overlay_visible = false;
+                }
+                1 => {
+                    if item.auth_kind == crate::providers::AuthKind::ApiKey {
+                        self.provider_overlay_input_mode = true;
+                        self.provider_overlay_key_input.clear();
+                        self.provider_overlay_status_msg = None;
+                    } else {
+                        self.provider_overlay_status_msg =
+                            Some("Este proveedor no utiliza API Key".to_string());
+                    }
+                }
+                2 => {
+                    if !item.env_var.is_empty() {
+                        match crate::providers::delete_api_key(item.env_var) {
+                            Ok(_) => {
+                                self.provider_overlay_status_msg =
+                                    Some(format!("✓ API Key borrada para {}", item.name));
+                            }
+                            Err(e) => {
+                                self.provider_overlay_status_msg = Some(format!("Error: {e}"));
+                            }
+                        }
+                    } else {
+                        self.provider_overlay_status_msg =
+                            Some("Este proveedor no utiliza API Key".to_string());
+                    }
+                    self.provider_overlay_sub_menu = false;
+                }
+                _ => {}
+            }
+        } else {
+            self.provider_overlay_sub_menu = true;
+            self.provider_overlay_action_selected = 0;
+            self.provider_overlay_status_msg = None;
+        }
+    }
+
+    /// Cancel any active streaming response turn, resetting status to Idle.
+    pub fn cancel_streaming(&mut self) {
+        if self.is_streaming() {
+            self.is_generating = false;
+            self.pending_jules_message = None;
+            self.messages.push(ChatMessage {
+                role: Role::Jules,
+                who: "Jules",
+                thinking: None,
+                body: "[Petición cancelada por el usuario (Esc)]".to_string(),
+                tagline: None,
+            });
+        }
     }
 
     pub fn go_home(&mut self) {

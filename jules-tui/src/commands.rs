@@ -19,6 +19,7 @@ pub const COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "status", description: "Estado de providers" },
     SlashCommand { name: "doctor", description: "Correr diagnóstico" },
     SlashCommand { name: "model", description: "Cambiar modelo para el proveedor activo" },
+    SlashCommand { name: "models", description: "Elegir modelo desde el catálogo de proveedores" },
     SlashCommand { name: "provider", description: "Configurar proveedor (cli | oauth | api | local)" },
     SlashCommand { name: "login", description: "Login OAuth: openai | claude" },
     SlashCommand { name: "logout", description: "Borrar token OAuth guardado" },

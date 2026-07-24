@@ -59,13 +59,13 @@ impl<'a> Widget for ChatLog<'a> {
         let max_scroll = total_height.saturating_sub(viewport_height) as u16;
         let scroll_offset = self.scroll_offset.min(max_scroll);
 
-        // Walk messages top-to-bottom computing each one's absolute y
-        // position as if nothing were scrolled, then only paint the rows
-        // that fall inside the (possibly scrolled) viewport. This avoids
-        // needing a separate off-screen render pass.
-        let mut absolute_y: i64 = 0;
-        let viewport_top = scroll_offset as i64;
+        // viewport_top is measured from transcript line 0.
+        // scroll_offset = 0 means pinned to bottom (viewport_top = max_scroll).
+        // scroll_offset > 0 means scrolled up towards top.
+        let viewport_top = (max_scroll - scroll_offset) as i64;
         let viewport_bottom = viewport_top + area.height as i64;
+
+        let mut absolute_y: i64 = 0;
 
         for msg in self.messages {
             let msg_height = message_height(msg, bubble_width, self.thinking_expanded, self.theme);
@@ -77,29 +77,37 @@ impl<'a> Widget for ChatLog<'a> {
                 continue; // fully outside the visible viewport
             }
 
-            // Clip the message's rendered rect to the visible portion when
-            // it straddles the viewport edge (partially scrolled off).
-            // Rendering a message clipped mid-way (e.g. only its bottom 2
-            // rows visible) would require redrawing its internals fila by
-            // fila, which the current Paragraph-based renderer doesn't
-            // support cleanly — so a message that only partially overlaps
-            // the viewport is skipped entirely rather than drawn garbled.
-            // In practice this only affects the single message straddling
-            // the scroll boundary, which becomes fully visible after one
-            // more scroll step.
-            if msg_top < viewport_top || msg_bottom > viewport_bottom {
-                continue;
-            }
-
-            let screen_y = area.y + (msg_top - viewport_top) as u16;
-            let msg_area = Rect {
+            // Render message into offscreen temp_buf, then copy visible lines into viewport
+            let temp_rect = Rect {
+                x: 0,
+                y: 0,
+                width: area.x + area.width,
+                height: msg_height,
+            };
+            let mut temp_buf = ratatui::buffer::Buffer::empty(temp_rect);
+            let msg_draw_area = Rect {
                 x: area.x,
-                y: screen_y,
+                y: 0,
                 width: area.width,
                 height: msg_height,
             };
 
-            render_message(msg, msg_area, buf, self.thinking_expanded, self.theme);
+            render_message(msg, msg_draw_area, &mut temp_buf, self.thinking_expanded, self.theme);
+
+            let screen_y = area.y as i64 + (msg_top - viewport_top);
+
+            for row_in_msg in 0..msg_height {
+                let target_y = screen_y + row_in_msg as i64;
+                if target_y >= area.y as i64 && target_y < (area.y + area.height) as i64 {
+                    for x in 0..(area.x + area.width) {
+                        if let Some(cell) = temp_buf.cell((x, row_in_msg)) {
+                            if let Some(target_cell) = buf.cell_mut((x, target_y as u16)) {
+                                *target_cell = cell.clone();
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

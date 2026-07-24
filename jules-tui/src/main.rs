@@ -2,7 +2,9 @@ mod app;
 mod backend;
 mod banner;
 mod commands;
+mod models;
 mod palette;
+mod providers;
 mod ui;
 mod widgets;
 
@@ -10,7 +12,7 @@ use std::io;
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -21,14 +23,14 @@ use app::AppState;
 fn main() -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let result = run(&mut terminal);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
     result
@@ -68,11 +70,16 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
         };
 
         if event::poll(poll_timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        handle_key(&mut state, key.code, key.modifiers);
+                    }
                 }
-                handle_key(&mut state, key.code, key.modifiers);
+                Event::Mouse(mouse) => {
+                    handle_mouse(&mut state, mouse);
+                }
+                _ => {}
             }
         }
     }
@@ -110,6 +117,14 @@ fn handle_key(state: &mut AppState, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn handle_key_home(state: &mut AppState, code: KeyCode) {
+    if state.provider_overlay_visible {
+        handle_key_provider_overlay(state, code);
+        return;
+    }
+    if state.models_overlay_visible {
+        handle_key_models_overlay(state, code);
+        return;
+    }
     if state.theme_overlay_visible {
         handle_key_theme_overlay(state, code);
         return;
@@ -150,11 +165,27 @@ fn handle_key_home(state: &mut AppState, code: KeyCode) {
                 state.submit_input();
             }
         }
+        KeyCode::Esc => {
+            if state.is_streaming() {
+                state.cancel_streaming();
+            } else {
+                state.input.clear();
+                state.cursor_pos = 0;
+            }
+        }
         _ => {}
     }
 }
 
 fn handle_key_chat(state: &mut AppState, code: KeyCode) {
+    if state.provider_overlay_visible {
+        handle_key_provider_overlay(state, code);
+        return;
+    }
+    if state.models_overlay_visible {
+        handle_key_models_overlay(state, code);
+        return;
+    }
     if state.theme_overlay_visible {
         handle_key_theme_overlay(state, code);
         return;
@@ -199,6 +230,14 @@ fn handle_key_chat(state: &mut AppState, code: KeyCode) {
                 state.submit_input();
             }
         }
+        KeyCode::Esc => {
+            if state.is_streaming() {
+                state.cancel_streaming();
+            } else {
+                state.input.clear();
+                state.cursor_pos = 0;
+            }
+        }
         _ => {}
     }
 }
@@ -209,6 +248,77 @@ fn handle_key_theme_overlay(state: &mut AppState, code: KeyCode) {
         KeyCode::Down => state.theme_picker_move(1),
         KeyCode::Enter | KeyCode::Tab => state.theme_picker_accept(),
         KeyCode::Esc => state.close_theme_picker(),
+        _ => {}
+    }
+}
+
+fn handle_key_provider_overlay(state: &mut AppState, code: KeyCode) {
+    if state.provider_overlay_input_mode {
+        match code {
+            KeyCode::Char(c) => state.provider_overlay_key_input.push(c),
+            KeyCode::Backspace => {
+                state.provider_overlay_key_input.pop();
+            }
+            KeyCode::Enter => state.provider_picker_accept(),
+            KeyCode::Esc => {
+                state.provider_overlay_input_mode = false;
+                state.provider_overlay_key_input.clear();
+            }
+            _ => {}
+        }
+    } else {
+        match code {
+            KeyCode::Up => state.provider_picker_move(-1),
+            KeyCode::Down => state.provider_picker_move(1),
+            KeyCode::Enter => state.provider_picker_accept(),
+            KeyCode::Esc => state.close_provider_picker(),
+            _ => {}
+        }
+    }
+}
+
+/// `/models` picker keymap: Up/Down navigate the filtered row list,
+/// Enter/Tab confirms, Esc closes without applying (same shape as
+/// `handle_key_theme_overlay`), plus free-text typing/backspace to filter
+/// by model or provider name — mirrors OpenCode's own model select popup
+/// search box (user request, 2026-07-21).
+fn handle_key_models_overlay(state: &mut AppState, code: KeyCode) {
+    match code {
+        KeyCode::Up => state.models_picker_move(-1),
+        KeyCode::Down => state.models_picker_move(1),
+        KeyCode::Enter | KeyCode::Tab => state.models_picker_accept(),
+        KeyCode::Esc => state.close_models_picker(),
+        KeyCode::Char(c) => state.models_picker_type(c),
+        KeyCode::Backspace => state.models_picker_backspace(),
+        _ => {}
+    }
+}
+
+fn handle_mouse(state: &mut AppState, event: MouseEvent) {
+    if state.models_overlay_visible {
+        match event.kind {
+            MouseEventKind::ScrollUp => state.models_picker_move(-1),
+            MouseEventKind::ScrollDown => state.models_picker_move(1),
+            _ => {}
+        }
+        return;
+    }
+    if state.theme_overlay_visible {
+        match event.kind {
+            MouseEventKind::ScrollUp => state.theme_picker_move(-1),
+            MouseEventKind::ScrollDown => state.theme_picker_move(1),
+            _ => {}
+        }
+        return;
+    }
+
+    match event.kind {
+        MouseEventKind::ScrollUp => {
+            state.scroll_offset = state.scroll_offset.saturating_add(3);
+        }
+        MouseEventKind::ScrollDown => {
+            state.scroll_offset = state.scroll_offset.saturating_sub(3);
+        }
         _ => {}
     }
 }

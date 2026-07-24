@@ -5,7 +5,7 @@ edition = "2021"
 description = "Jules TUI — visual prototype (Ratatui), no backend IPC yet"
 
 [[bin]]
-name = "jules-tui"
+name = "jules"
 path = "src/main.rs"
 
 [dependencies]

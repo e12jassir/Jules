@@ -137,6 +137,7 @@ fn parse_event(line: &str) -> BackendEvent {
             BackendEvent::ContentChunk(extract_string_field(line, "content").unwrap_or_default())
         }
         Some("done") => BackendEvent::Done,
+        Some("tool_status") => BackendEvent::Thinking(String::new()),
         Some("error") => BackendEvent::Error(extract_string_field(line, "message").unwrap_or_default()),
         _ => BackendEvent::Error(format!("unrecognized backend line: {line}")),
     }
@@ -166,6 +167,19 @@ fn extract_string_field(json: &str, key: &str) -> Option<String> {
                 Some('t') => out.push('\t'),
                 Some('"') => out.push('"'),
                 Some('\\') => out.push('\\'),
+                Some('u') => {
+                    let mut hex = String::with_capacity(4);
+                    for _ in 0..4 {
+                        if let Some(hc) = chars.next() {
+                            hex.push(hc);
+                        }
+                    }
+                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                        if let Some(ch) = char::from_u32(code) {
+                            out.push(ch);
+                        }
+                    }
+                }
                 Some(other) => out.push(other),
                 None => break,
             },
@@ -173,4 +187,36 @@ fn extract_string_field(json: &str, key: &str) -> Option<String> {
         }
     }
     None // unterminated string — malformed line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_event_content_chunk_with_unicode() {
+        let line = r#"{"type": "content_chunk", "content": "Che, \u00bfqu\u00e9 tal?\n"}"#;
+        let event = parse_event(line);
+        match event {
+            BackendEvent::ContentChunk(text) => {
+                assert_eq!(text, "Che, ¿qué tal?\n");
+            }
+            _ => panic!("Expected ContentChunk"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_status_and_done() {
+        let line_status = r#"{"type": "status", "provider": "opencode", "model": "deepseek-v4-flash-free"}"#;
+        match parse_event(line_status) {
+            BackendEvent::Status { provider, model } => {
+                assert_eq!(provider, "opencode");
+                assert_eq!(model, "deepseek-v4-flash-free");
+            }
+            _ => panic!("Expected Status"),
+        }
+
+        let line_done = r#"{"type": "done"}"#;
+        assert!(matches!(parse_event(line_done), BackendEvent::Done));
+    }
 }
