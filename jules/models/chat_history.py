@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select  # type: ignore[import-not-found]
+from sqlalchemy import delete, func, select  # type: ignore[import-not-found]
 from sqlalchemy.ext.asyncio import AsyncSession  # type: ignore[import-not-found]
 from sqlalchemy.orm import Mapped, mapped_column  # type: ignore[import-not-found]
 
@@ -81,6 +81,42 @@ async def list_recent_sessions(session: AsyncSession, limit: int = 20) -> list[s
     return list(result.scalars())
 
 
+async def list_recent_sessions_info(session: AsyncSession, limit: int = 20) -> list[dict]:
+    """Return detailed info for recent chat sessions (ID, title, count, timestamp)."""
+    subq = (
+        select(
+            ChatHistoryORM.session_id,
+            func.max(ChatHistoryORM.created_at).label("last_activity"),
+            func.count(ChatHistoryORM.id).label("msg_count"),
+        )
+        .group_by(ChatHistoryORM.session_id)
+        .subquery()
+    )
+    result = await session.execute(
+        select(subq).order_by(subq.c.last_activity.desc()).limit(limit)
+    )
+    rows = result.all()
+
+    sessions_info = []
+    for row in rows:
+        sid = row.session_id
+        title_res = await session.execute(
+            select(ChatHistoryORM.content)
+            .where(ChatHistoryORM.session_id == sid, ChatHistoryORM.role == "user")
+            .order_by(ChatHistoryORM.created_at.asc(), ChatHistoryORM.id.asc())
+            .limit(1)
+        )
+        first_user_msg = title_res.scalar_one_or_none()
+        title = (first_user_msg[:45] + "...") if first_user_msg and len(first_user_msg) > 45 else (first_user_msg or sid[:18])
+        sessions_info.append({
+            "id": sid,
+            "title": title,
+            "count": row.msg_count,
+            "updated_at": row.last_activity.strftime("%Y-%m-%d %H:%M") if row.last_activity else "",
+        })
+    return sessions_info
+
+
 async def list_session_messages(session: AsyncSession, session_id: str) -> list[ChatHistoryEntry]:
     """Return messages for one persisted chat session in chronological order."""
     result = await session.execute(
@@ -89,4 +125,12 @@ async def list_session_messages(session: AsyncSession, session_id: str) -> list[
         .order_by(ChatHistoryORM.created_at.asc(), ChatHistoryORM.id.asc())
     )
     return [row.to_entry() for row in result.scalars()]
+
+
+async def delete_session(session: AsyncSession, session_id: str) -> None:
+    """Delete all history entries for a given session_id."""
+    await session.execute(
+        delete(ChatHistoryORM).where(ChatHistoryORM.session_id == session_id)
+    )
+    await session.commit()
 

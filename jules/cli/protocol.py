@@ -64,6 +64,20 @@ async def _dispatch_command(state: ChatEngineState, name: str, args: list[str]) 
             result = cmds.handle_help()
         elif name == "sessions":
             result = await cmds.handle_sessions()
+        elif name == "sessions_json":
+            sessions = await cmds.handle_sessions_json()
+            _write({"type": "sessions_json", "sessions": sessions})
+            return
+        elif name == "load_session":
+            sid = args[0] if args else ""
+            msgs = await cmds.handle_load_session(sid)
+            _write({"type": "loaded_session", "session_id": sid, "messages": msgs})
+            return
+        elif name == "delete_session":
+            sid = args[0] if args else ""
+            await cmds.handle_delete_session(sid)
+            _write({"type": "deleted_session", "session_id": sid})
+            return
         elif name == "memory":
             result = await cmds.handle_memory(" ".join(args))
         elif name == "status":

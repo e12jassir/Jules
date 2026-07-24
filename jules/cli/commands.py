@@ -73,6 +73,61 @@ async def handle_sessions(limit: int = 10) -> str:
         return "No hay sesiones guardadas todavía."
 
 
+async def handle_sessions_json(limit: int = 20) -> list[dict]:
+    """List recent chat sessions as structured JSON list."""
+    try:
+        import asyncio
+        from jules.memory.persistent import create_memory_engine, create_memory_sessionmaker
+        from jules.models.chat_history import list_recent_sessions_info
+
+        engine = await asyncio.to_thread(create_memory_engine)
+        session_factory = create_memory_sessionmaker(engine)
+        async with session_factory() as session:
+            sessions = await list_recent_sessions_info(session, limit)
+        await engine.dispose()
+        return sessions
+    except Exception:
+        return []
+
+
+async def handle_load_session(session_id: str) -> list[dict]:
+    """Load messages for a session ID as structured JSON list."""
+    if not session_id:
+        return []
+    try:
+        import asyncio
+        from jules.memory.persistent import create_memory_engine, create_memory_sessionmaker
+        from jules.models.chat_history import list_session_messages
+
+        engine = await asyncio.to_thread(create_memory_engine)
+        session_factory = create_memory_sessionmaker(engine)
+        async with session_factory() as session:
+            entries = await list_session_messages(session, session_id)
+        await engine.dispose()
+        return [{"role": e.role, "content": e.content} for e in entries]
+    except Exception:
+        return []
+
+
+async def handle_delete_session(session_id: str) -> bool:
+    """Delete a session from persistence."""
+    if not session_id:
+        return False
+    try:
+        import asyncio
+        from jules.memory.persistent import create_memory_engine, create_memory_sessionmaker
+        from jules.models.chat_history import delete_session
+
+        engine = await asyncio.to_thread(create_memory_engine)
+        session_factory = create_memory_sessionmaker(engine)
+        async with session_factory() as session:
+            await delete_session(session, session_id)
+        await engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
 async def handle_memory(query: str = "", limit: int = 8) -> str:
     """Show recent memory episodes."""
     try:
