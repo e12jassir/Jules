@@ -383,3 +383,83 @@ class TestHeadlessFallback:
 
             listener.stop_recording()
             mock_stream.stop.assert_called_once()
+
+    def test_strict_hardware_raises_when_unavailable(self, publisher: StatePublisher) -> None:
+        """Listener raises AudioHardwareUnavailableError when strict_hardware=True and device fails."""
+        with patch("sounddevice.InputStream", side_effect=OSError("No audio hardware")), pytest.raises(
+            AudioHardwareUnavailableError
+        ):
+            AudioListener(state_publisher=publisher, strict_hardware=True)
+
+    @pytest.mark.asyncio
+    async def test_record_phrase_stream_generator(self, publisher: StatePublisher) -> None:
+        """record_phrase_stream yields chunks as async generator until utterance completion."""
+        listener = AudioListener(state_publisher=publisher)
+        speech_frame = _generate_frame(duration_ms=30, amplitude=6000.0)
+        silence_frame = _generate_frame(duration_ms=30, amplitude=0.0)
+
+        chunks: list[bytes] = []
+
+        async def feeder() -> None:
+            await asyncio.sleep(0.01)
+            for _ in range(3):
+                listener.feed_audio(speech_frame)
+                await asyncio.sleep(0.005)
+            for _ in range(20):
+                listener.feed_audio(silence_frame)
+                await asyncio.sleep(0.005)
+
+        async def consumer() -> None:
+            async for chunk in listener.record_phrase_stream(timeout=3.0):
+                chunks.append(chunk)
+
+        await asyncio.gather(feeder(), consumer())
+        assert len(chunks) > 0
+        assert publisher.get_current_state().state == DaemonState.IDLE
+
+    @pytest.mark.asyncio
+    async def test_async_barge_in_callback(self, publisher: StatePublisher) -> None:
+        """Listener supports async coroutine callback for BargeInDetected."""
+        callback_event: BargeInEvent | None = None
+
+        async def async_barge_in(event: BargeInEvent) -> None:
+            nonlocal callback_event
+            callback_event = event
+
+        listener = AudioListener(
+            state_publisher=publisher,
+            barge_in_callback=async_barge_in,
+        )
+        publisher.update(state=DaemonState.SPEAKING)
+        speech_frame = _generate_frame(duration_ms=30, amplitude=6000.0)
+        listener.process_frame(speech_frame)
+
+        # Allow loop to execute coroutine
+        await asyncio.sleep(0.01)
+        assert callback_event is not None
+        assert callback_event.interrupted_state == DaemonState.SPEAKING
+
+    @pytest.mark.asyncio
+    async def test_ipc_barge_in_and_unknown_commands(self, publisher: StatePublisher) -> None:
+        """Listener handles voice_barge_in and unknown IPC operations."""
+        listener = AudioListener(state_publisher=publisher)
+        publisher.update(state=DaemonState.SPEAKING)
+
+        res = await listener.handle_ipc_command("voice_barge_in")
+        assert res["status"] == "ok"
+        assert res["barge_in"] is True
+        assert res["state"] == DaemonState.IDLE.value
+        assert publisher.get_current_state().state == DaemonState.IDLE
+
+        err_res = await listener.handle_ipc_command("unknown_op")
+        assert err_res["status"] == "error"
+
+    def test_listener_close(self, publisher: StatePublisher) -> None:
+        """Listener close releases stream resources."""
+        mock_stream = MagicMock()
+        with patch("sounddevice.InputStream", return_value=mock_stream):
+            listener = AudioListener(state_publisher=publisher)
+            listener.close()
+            mock_stream.close.assert_called_once()
+            assert listener._stream is None
+
