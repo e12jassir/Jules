@@ -9,19 +9,19 @@ models = ["llama3.2:1b"]
 antigravity = []
 opencode = ["opencode/deepseek-v4.1-flash-free", "opencode/deepseek-v4-flash-free", "opencode/nemotron-3-ultra-free", "opencode/nemotron-3.5-lightning-free", "opencode/mimo-v2.6-flash-free", "openrouter/openrouter/free"]
 codex = []
-google = []
+google = ["gemini-2.5-flash"]
 openrouter = []
 openai_oauth = []
 
 [routing.tiers.high_cost]
 antigravity = []
 opencode = ["openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"]
-google = []
+google = ["gemini-2.5-flash", "gemini-2.5-pro"]
 openrouter = []
 openai_oauth = []
 
 [routing.fallback]
-chain = ["primary", "opencode"]
+chain = ["primary", "google", "opencode"]
 
 [doctor]
 scoring_variance_threshold = 0.01
