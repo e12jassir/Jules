@@ -136,3 +136,50 @@ def test_init_db_creates_tables(tmp_path):
         assert "chat_history" in tables
     finally:
         conn.close()
+
+
+async def test_create_memory_engine_configures_wal_and_busy_timeout(tmp_path):
+    from jules.memory.persistent import create_memory_engine
+
+    db_file = tmp_path / "wal_test.sqlite3"
+    engine = create_memory_engine(f"sqlite+aiosqlite:///{db_file}")
+    try:
+        async with engine.connect() as conn:
+            jm = (await conn.exec_driver_sql("PRAGMA journal_mode;")).scalar()
+            bt = (await conn.exec_driver_sql("PRAGMA busy_timeout;")).scalar()
+            assert str(jm).lower() == "wal"
+            assert bt is not None and bt >= 5000
+    finally:
+        await engine.dispose()
+
+
+def test_init_db_configures_wal_mode(tmp_path):
+    import sqlite3
+    from jules.memory.persistent import init_db
+
+    db_file = tmp_path / "init_wal_test.sqlite3"
+    init_db(db_file)
+
+    conn = sqlite3.connect(str(db_file))
+    try:
+        cur = conn.cursor()
+        cur.execute("PRAGMA journal_mode;")
+        assert cur.fetchone()[0].lower() == "wal"
+    finally:
+        conn.close()
+
+
+async def test_persistent_memory_on_file_has_wal_and_busy_timeout(tmp_path):
+    from sqlalchemy import text
+    from jules.memory.persistent import PersistentMemory, build_sqlite_async_url
+
+    db_file = tmp_path / "persistent_wal.sqlite3"
+    pm = PersistentMemory(build_sqlite_async_url(db_file))
+    try:
+        async with pm.session() as session:
+            jm = (await session.execute(text("PRAGMA journal_mode;"))).scalar()
+            bt = (await session.execute(text("PRAGMA busy_timeout;"))).scalar()
+            assert str(jm).lower() == "wal"
+            assert bt is not None and bt >= 5000
+    finally:
+        await pm.engine.dispose()

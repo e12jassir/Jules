@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from jules.memory.models import Episode, EpisodeORM
@@ -18,6 +18,14 @@ def init_db(database_path: str | Path = DEFAULT_SQLITE_PATH) -> None:
     path = Path(database_path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{path}", future=True)
+    if ":memory:" not in str(path):
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=5000;")
+            cursor.close()
+
     try:
         Base.metadata.create_all(bind=engine)
     finally:
@@ -33,10 +41,21 @@ def build_sqlite_async_url(database_path: str | Path = DEFAULT_SQLITE_PATH) -> s
 
 def create_memory_engine(database_url: str | None = None) -> AsyncEngine:
     """Create the non-blocking SQLAlchemy engine for memory persistence."""
-    return create_async_engine(
-        database_url or build_sqlite_async_url(),
+    url = database_url or build_sqlite_async_url()
+    url_str = str(url)
+    engine = create_async_engine(
+        url,
         future=True,
     )
+    if "sqlite" in url_str and ":memory:" not in url_str:
+        @event.listens_for(engine.sync_engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=5000;")
+            cursor.close()
+
+    return engine
 
 
 def create_memory_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

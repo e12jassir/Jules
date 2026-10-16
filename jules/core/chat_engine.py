@@ -458,10 +458,16 @@ class ChatEngine:
         )
 
 
+TurnEvent = StreamEvent
+
 _default_engine_instance: ChatEngine | None = None
 
 
-async def stream_turn(state: ChatEngineState, message: str) -> AsyncIterator[StreamEvent]:
+async def stream_turn(
+    state: ChatEngineState,
+    message: str,
+    session_id: str | None = None,
+) -> AsyncIterator[TurnEvent]:
     """Compatibility wrapper for headless protocol callers."""
     global _default_engine_instance
     if _default_engine_instance is None:
@@ -470,7 +476,7 @@ async def stream_turn(state: ChatEngineState, message: str) -> AsyncIterator[Str
     core_ctx = CoreSessionContext(cwd=str(Path.cwd()))
     async for event in _default_engine_instance.stream_turn(
         user_input=message,
-        session_id=str(uuid4()),
+        session_id=session_id or str(uuid4()),
         session_ctx=core_ctx,
         chat_history=state.chat_history,
         user_override=state.user_model_override,
@@ -485,6 +491,7 @@ async def stream_turn(state: ChatEngineState, message: str) -> AsyncIterator[Str
 __all__ = [
     "ChatEngine",
     "ChatEngineState",
+    "TurnEvent",
     "compose_prompt",
     "stream_turn",
 ]

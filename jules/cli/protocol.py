@@ -35,9 +35,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from typing import TYPE_CHECKING
 
 from jules.core.chat_engine import ChatEngineState, stream_turn
 from jules.providers.base import ContentEvent, ThoughtEvent
+
+if TYPE_CHECKING:
+    from jules.memory.persistent import PersistentMemory
 
 
 def _write(obj: dict) -> None:
@@ -123,12 +127,17 @@ async def _dispatch_command(state: ChatEngineState, name: str, args: list[str]) 
     _write({"type": "done"})
 
 
-async def _handle_line(
-    state: ChatEngineState,
+async def handle_line(
     line: str,
+    state: ChatEngineState,
     session_id: str,
-    persistent: PersistentMemory | None,
+    persistent: PersistentMemory | None = None,
 ) -> None:
+    """Process a single JSON line protocol message."""
+    # Defensively support (state, line, ...) if passed in reverse order
+    if isinstance(line, ChatEngineState) and isinstance(state, str):
+        state, line = line, state
+
     try:
         msg = json.loads(line)
     except json.JSONDecodeError as exc:
@@ -159,28 +168,29 @@ async def _handle_line(
         return
 
     try:
-        response_chunks = []
-        async for event in stream_turn(state, content):
+        async for event in stream_turn(state, content, session_id=session_id):
             if isinstance(event, ThoughtEvent):
                 _write({"type": "thinking", "content": event.content})
             elif isinstance(event, ContentEvent):
-                response_chunks.append(event.content)
                 _write({"type": "content_chunk", "content": event.content})
             else:
                 # ToolStatusEvent or any future variant — forward generically.
                 _write({"type": "tool_status", "data": event.__dict__})
 
-        if persistent is not None:
-            full_response = "".join(response_chunks)
-            try:
-                await persistent.save_chat_history(session_id, content, full_response)
-            except Exception:  # noqa: BLE001
-                pass
-
         _write({"type": "status", "provider": state.active_provider, "model": state.active_model})
         _write({"type": "done"})
     except Exception as exc:  # noqa: BLE001 - protocol boundary must degrade, not crash
         _write({"type": "error", "message": str(exc)})
+
+
+async def _handle_line(
+    state: ChatEngineState,
+    line: str,
+    session_id: str,
+    persistent: PersistentMemory | None = None,
+) -> None:
+    """Compatibility alias for handle_line."""
+    await handle_line(line, state, session_id, persistent)
 
 
 async def run_protocol_loop() -> None:
@@ -207,7 +217,7 @@ async def run_protocol_loop() -> None:
         line = raw.decode("utf-8", errors="replace").strip()
         if not line:
             continue
-        await _handle_line(state, line, session_id, persistent)
+        await handle_line(line, state, session_id, persistent)
 
 
 def main() -> None:

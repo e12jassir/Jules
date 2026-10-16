@@ -626,3 +626,79 @@ async def test_voice_turn_chat_history_preservation_and_system_snapshot() -> Non
         # Check action was executed
         mock_open.assert_awaited_once_with("firefox", gate=None)
 
+
+@pytest.mark.asyncio
+async def test_stream_turn_compatibility_wrapper_respects_passed_session_id() -> None:
+    """stream_turn compatibility wrapper respects the passed session_id."""
+    from jules.core.chat_engine import ChatEngineState, stream_turn
+    import jules.core.chat_engine as ce_module
+
+    state = ChatEngineState()
+    custom_session = "custom-session-12345"
+
+    captured_kwargs: dict = {}
+
+    mock_engine = MagicMock()
+
+    async def fake_stream_turn(**kwargs):
+        captured_kwargs.update(kwargs)
+        yield ContentEvent(content="Hello from mock!")
+
+    mock_engine.stream_turn = fake_stream_turn
+    mock_engine.last_provider = "test-provider"
+    mock_engine.last_model = "test-model"
+
+    with patch.object(ce_module, "_default_engine_instance", mock_engine):
+        events = [
+            e
+            async for e in stream_turn(
+                state=state,
+                message="test input",
+                session_id=custom_session,
+            )
+        ]
+
+    assert len(events) == 1
+    assert events[0].content == "Hello from mock!"
+    assert captured_kwargs.get("session_id") == custom_session
+    assert captured_kwargs.get("user_input") == "test input"
+    assert state.active_provider == "test-provider"
+    assert state.active_model == "test-model"
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_compatibility_wrapper_generates_uuid_when_session_id_none() -> None:
+    """stream_turn compatibility wrapper generates uuid when session_id is None."""
+    import uuid
+    from jules.core.chat_engine import ChatEngineState, stream_turn
+    import jules.core.chat_engine as ce_module
+
+    state = ChatEngineState()
+    captured_kwargs: dict = {}
+
+    mock_engine = MagicMock()
+
+    async def fake_stream_turn(**kwargs):
+        captured_kwargs.update(kwargs)
+        yield ContentEvent(content="Hello fallback!")
+
+    mock_engine.stream_turn = fake_stream_turn
+    mock_engine.last_provider = None
+    mock_engine.last_model = None
+
+    with patch.object(ce_module, "_default_engine_instance", mock_engine):
+        events = [
+            e
+            async for e in stream_turn(
+                state=state,
+                message="test input",
+            )
+        ]
+
+    assert len(events) == 1
+    sid = captured_kwargs.get("session_id")
+    assert sid is not None
+    # Validate it is a valid UUID
+    uuid_obj = uuid.UUID(sid)
+    assert str(uuid_obj) == sid
+
