@@ -22,7 +22,9 @@ def _read_api_key_from_file() -> str | None:
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             if line.startswith("GOOGLE_AI_API_KEY="):
-                return line.split("=", 1)[1].strip()
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if val:
+                    return val
     return None
 
 
