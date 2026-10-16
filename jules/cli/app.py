@@ -105,10 +105,17 @@ class JulesApp(App[None]):
     _background_tasks: set  # set[asyncio.Task] — holds strong refs to prevent GC
     _cached_models: tuple[tuple[str, str], ...]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, chat_engine: Any | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._background_tasks = set()
         self._chat_history: list[tuple[str, str]] = []  # (role, content) — survives model switches
+        self._chat_engine = chat_engine
+
+    async def _get_chat_engine(self) -> Any:
+        if self._chat_engine is None:
+            from jules.core.chat_engine import ChatEngine
+            self._chat_engine = await ChatEngine.create_default()
+        return self._chat_engine
 
     # Fallback values match _read_terminal_palette()'s own per-key
     # defaults, so the visual result is consistent whether the palette
@@ -218,23 +225,23 @@ class JulesApp(App[None]):
             return
         response_parts: list[str] = []
         try:
-            async for event in self._stream_response(message, list(self._chat_history)):
+            async for event in self._stream_response(message, self._chat_history):
                 if isinstance(event, ThoughtEvent):
                     chat_log.append_thought(event.content)
                 elif isinstance(event, ContentEvent):
                     response_parts.append(event.content)
                     chat_log.append_token(event.content)
                 else:
-                    # Plain str fallback (legacy providers)
-                    response_parts.append(event)  # type: ignore[arg-type]
-                    chat_log.append_token(event)  # type: ignore[arg-type]
+                    response_parts.append(str(event))
+                    chat_log.append_token(str(event))
             response = "".join(response_parts)
             chat_log.finalize_message()
-            self._chat_history.append(("user", message))
-            self._chat_history.append(("jules", response))
             self._record_stats(message, response)
-            self._fire_background(self._persist_episode(message, response))
-            self._fire_background(self._persist_chat_history(message, response))
+            self.memory_episodes += 1
+            try:
+                self.screen.query_one(MemoryPanel).update_counts(self.memory_episodes, self.memory_facts, 0)  # type: ignore[attr-defined]
+            except Exception:
+                pass
         except Exception as exc:  # noqa: BLE001 - boundary must degrade instead of crashing TUI
             chat_log.append_token(f"Error procesando mensaje: {exc}", cursor=False)
             chat_log.finalize_message()
@@ -242,52 +249,25 @@ class JulesApp(App[None]):
             status_bar.set_generating(False)
 
     async def _stream_response(self, message: str, chat_history: list[tuple[str, str]] | None = None) -> AsyncIterator[object]:
-        from jules.auth.base import OAuthError
-        from jules.core.context import ContextEngine
-        from jules.core.router import TaskType, route, stream_with_fallback
         from jules.core.session import SessionContext as CoreSessionContext
-        from jules.memory.models import SessionContext as MemorySessionContext
-        from jules.personality.loader import MasterPersonalityMissingError, PersonalityLoader
-        from jules.providers.base import ContentEvent, ProviderError, StreamEvent
 
+        chat_engine = await self._get_chat_engine()
         core_context = CoreSessionContext(cwd=str(Path.cwd()))
-        built = await ContextEngine.build(core_context, message)
-        memory_context = MemorySessionContext(
-            project=Path(built.project_root).name if built.project_root else None,
-            directory=core_context.cwd,
-            active_files=[],
-            inferred_intent=built.intent,
-            time_of_day=str(built.time_of_day),
-            shell=built.shell,
-        )
+        history = self._chat_history if chat_history is None else chat_history
+        override = getattr(self, "_user_model_override", None)
 
-        provider, model = await route(TaskType.QUICK, user_override=getattr(self, "_user_model_override", None))
-        self.active_provider = provider.name
-        self.active_model = model
-        self._update_model_panel(model, provider.name, True)
-        memory_refs = await _retrieve_memory_references(message)
-        try:
-            personality = await asyncio.to_thread(PersonalityLoader().load, provider.name)
-        except MasterPersonalityMissingError:
-            yield ContentEvent(content="Archivo de personalidad master (~/.jules/personality/master.md) no encontrado. Es obligatorio para operar.")
-            return
-        prompt = _compose_prompt(personality, message, memory_refs, chat_history)
-
-        try:
-            # Prefer stream_events() for typed ThoughtEvent/ContentEvent
-            if hasattr(provider, "stream_events"):
-                async for event in provider.stream_events(prompt, memory_context, model):  # type: ignore[union-attr]
-                    yield event
-            else:
-                async for token in provider.stream(prompt, memory_context, model):
-                    yield token
-        except (NotImplementedError, ProviderError, OAuthError):
-            async for event, fallback_model, fallback_provider in stream_with_fallback(prompt, memory_context, TaskType.QUICK, user_override=getattr(self, "_user_model_override", None)):
-                if fallback_model != self.active_model or fallback_provider != self.active_provider:
-                    self.active_provider = fallback_provider
-                    self.active_model = fallback_model
-                    self._update_model_panel(fallback_model, fallback_provider, True)
-                yield event
+        async for event in chat_engine.stream_turn(
+            user_input=message,
+            session_id=self._session_id,
+            session_ctx=core_context,
+            chat_history=history,
+            user_override=override,
+        ):
+            if chat_engine.last_provider and chat_engine.last_model:
+                self.active_provider = chat_engine.last_provider
+                self.active_model = chat_engine.last_model
+                self._update_model_panel(chat_engine.last_model, chat_engine.last_provider, True)
+            yield event
 
     def _update_model_panel(self, model: str, provider: str, online: bool) -> None:
         try:
@@ -562,14 +542,12 @@ def _compose_prompt(
     chat_history: list[tuple[str, str]] | None = None,
     history_limit: int = 20,
 ) -> str:
-    parts = []
-    if personality:
-        parts.append(personality)
-    if memory_refs:
-        parts.append("Relevant past context:\n- " + "\n- ".join(memory_refs))
-    if chat_history:
-        recent = chat_history[-history_limit:]
-        history_block = "\n".join(f"{role.capitalize()}: {content}" for role, content in recent)
-        parts.append(f"Conversation so far:\n{history_block}")
-    parts.append(f"User: {message}")
-    return "\n\n".join(parts)
+    from jules.core.chat_engine import compose_prompt
+
+    return compose_prompt(
+        personality=personality,
+        message=message,
+        memory_refs=memory_refs,
+        chat_history=chat_history,
+        history_limit=history_limit,
+    )
