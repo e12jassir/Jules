@@ -1,7 +1,11 @@
 # pyright: reportMissingImports=false, reportAttributeAccessIssue=false, reportCallIssue=false
+from __future__ import annotations
+
+import asyncio
 import json
+from pathlib import Path
 import sys
-from dataclasses import dataclass
+from typing import Any
 
 try:
     import click  # type: ignore[import-not-found]
@@ -18,6 +22,13 @@ except ImportError:  # pragma: no cover
             def register(func):
                 self.commands[func.__name__] = func
                 return func
+            return register
+
+        def group(self, *_args, **_kwargs):
+            def register(func):
+                subgroup = _Group(func)
+                self.commands[func.__name__] = subgroup
+                return subgroup
             return register
 
         def __call__(self):
@@ -40,6 +51,10 @@ except ImportError:  # pragma: no cover
             return lambda func: func
 
         @staticmethod
+        def argument(*_args, **_kwargs):
+            return lambda func: func
+
+        @staticmethod
         def pass_context(func):
             return func
 
@@ -48,6 +63,9 @@ except ImportError:  # pragma: no cover
             print(message, file=sys.stderr if kwargs.get("err") else sys.stdout)
 
     click = _ClickStub()  # type: ignore[assignment]
+
+
+from dataclasses import dataclass
 
 
 @dataclass
@@ -85,6 +103,18 @@ except Exception:
         async def check(self, *_args, **_kwargs) -> None:
             pass
     gate = _NoopGate()  # type: ignore[assignment]
+
+
+def _run_async(coro: Any) -> Any:
+    """Safely execute an asynchronous coroutine from synchronous Click commands."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 @click.group(invoke_without_command=True)
@@ -147,6 +177,135 @@ def doctor(as_json: bool) -> None:
     else:
         console.print(f"[yellow]{problems} problema(s) detectado(s). Jules opera en modo parcialmente degradado.[/yellow]")
     sys.exit(report.exit_code)
+
+
+# ---------------------------------------------------------------------------
+# Daemon Group Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.group()  # type: ignore[attr-defined]
+def daemon() -> None:
+    """Gestión del servicio residente de Jules."""
+    pass
+
+
+@daemon.command(name="start")  # type: ignore[attr-defined]
+@click.option("--socket", "socket_path", default=None, help="Ruta personalizada del socket IPC")
+@click.option("--state", "state_path", default=None, help="Ruta personalizada del archivo de estado")
+def daemon_start(socket_path: str | None, state_path: str | None) -> None:
+    """Iniciar el daemon residente de Jules."""
+    from jules.daemon.service import JulesDaemon
+
+    daemon_obj = JulesDaemon(
+        socket_path=socket_path,
+        state_path=state_path,
+    )
+    click.echo(f"Iniciando Jules daemon en socket: {daemon_obj.socket_path}")
+    try:
+        _run_async(daemon_obj.run_forever())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        click.echo("\nDaemon detenido por el usuario.")
+    except Exception as exc:
+        click.echo(f"Error fatal en daemon: {exc}", err=True)
+        sys.exit(1)
+
+
+@daemon.command(name="status")  # type: ignore[attr-defined]
+@click.option("--socket", "socket_path", default=None, help="Ruta personalizada del socket IPC")
+@click.option("--json", "as_json", is_flag=True, help="Mostrar estado en formato JSON")
+def daemon_status(socket_path: str | None, as_json: bool) -> None:
+    """Consultar el estado del daemon residente."""
+    from jules.daemon.ipc import IPCClient, IPCConnectionError, IPCError
+
+    client = IPCClient(socket_path=socket_path)
+
+    async def _fetch():
+        return await client.get_status()
+
+    try:
+        status_data = _run_async(_fetch())
+    except (IPCConnectionError, FileNotFoundError, ConnectionRefusedError, OSError) as exc:
+        if as_json:
+            click.echo(json.dumps({"status": "offline", "health": "stopped", "error": str(exc)}, indent=2))
+        else:
+            click.echo("Jules daemon is not running (offline). Start it with 'jules daemon start'.", err=True)
+        sys.exit(1)
+    except Exception as exc:
+        if as_json:
+            click.echo(json.dumps({"status": "error", "error": str(exc)}, indent=2))
+        else:
+            click.echo(f"Error consultando daemon: {exc}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        click.echo(json.dumps(status_data, indent=2))
+        return
+
+    icon = status_data.get("icon", "🌹")
+    state = status_data.get("state", "UNKNOWN")
+    health = status_data.get("health", "unknown")
+    model = status_data.get("active_model") or "ninguno"
+    project = status_data.get("active_project") or "ninguno"
+    last_event = status_data.get("last_event") or "ninguno"
+
+    click.echo("──────────────────────────────────────")
+    click.echo(f" Estado Jules Daemon: {icon} {state} ({health})")
+    click.echo(f" Modelo Activo:       {model}")
+    click.echo(f" Proyecto Activo:     {project}")
+    click.echo(f" Último Evento:       {last_event}")
+    click.echo("──────────────────────────────────────")
+
+
+@daemon.command(name="install")  # type: ignore[attr-defined]
+@click.option("--path", "target_dir", default=None, help="Directorio destino para jules.service")
+def daemon_install(target_dir: str | None) -> None:
+    """Instalar unidad systemd --user para Jules."""
+    from jules.daemon.service import install_systemd_user_service
+
+    service_path = install_systemd_user_service(target_dir=target_dir)
+    click.echo(f"✓ Unidad systemd instalada en: {service_path}")
+    click.echo("\nPara activar e iniciar el servicio ahora:")
+    click.echo("  systemctl --user daemon-reload")
+    click.echo("  systemctl --user enable --now jules.service")
+    click.echo("\nNota para distribuciones sin systemd (Alpine/Void per JULES.md):")
+    click.echo("  Revise los comentarios en el archivo jules.service para OpenRC o runit.")
+
+
+# ---------------------------------------------------------------------------
+# Quick Ask Command
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="ask")  # type: ignore[attr-defined]
+@click.argument("text")
+@click.option("--session", "session_id", default="cli_ask", help="ID de sesión")
+@click.option("--socket", "socket_path", default=None, help="Ruta personalizada del socket IPC")
+def ask(text: str, session_id: str, socket_path: str | None) -> None:
+    """Hacer una consulta rápida a Jules a través del daemon."""
+    from jules.daemon.ipc import IPCClient, IPCConnectionError, IPCError
+    from jules.providers.base import ContentEvent, ThoughtEvent
+
+    client = IPCClient(socket_path=socket_path)
+
+    async def _stream():
+        async for chunk in client.stream_query(text=text, session_id=session_id):
+            if isinstance(chunk, ContentEvent):
+                click.echo(chunk.content, nl=False)
+
+    try:
+        _run_async(_stream())
+        click.echo()
+    except (IPCConnectionError, FileNotFoundError, ConnectionRefusedError, OSError):
+        click.echo(
+            "Daemon offline. Jules daemon is not running. "
+            "Start it with 'jules daemon start' or run 'jules' for interactive mode.",
+            err=True,
+        )
+        sys.exit(1)
+    except IPCError as exc:
+        click.echo(f"\nError en consulta IPC: {exc}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
