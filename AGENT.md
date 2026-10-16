@@ -20,24 +20,18 @@ Jules es una **capa cognitiva persistente** para Linux. No un chatbot. No un wra
 
 ---
 
-## FASE ACTIVA: 1 — NÚCLEO
+## FASE ACTIVA: ARQUITECTURA JARVIS & LIVING OS
 
-**Solo construir lo que está en esta lista. Todo lo demás no existe todavía.**
+**La autoridad técnica única de ejecución es [`MASTER_PLAN.md`](MASTER_PLAN.md).**
 
-- [x] CLI funcional — respuesta en terminal sin latencia perceptible
-- [x] Sanitizador con tests de seguridad
-- [x] Memoria persistente (SQLite + LanceDB)
-- [x] Llama 3.2 via Ollama — identidad local y scoring
-- [x] Antigravity CLI — provider externo principal
-- [x] OpenCode CLI — provider de coding
-- [x] Router quota-aware con tiers (free / low_cost / high_cost)
-- [x] Importance scoring via Llama local (nunca modelo externo)
-- [x] Sistema de eventos + watcher + shell hooks
-- [x] Sistema de permisos con PermissionGate
-- [x] Migraciones con Alembic
-- [x] Fallback a Ollama cuando providers externos fallan
-
-Si una tarea no está en esta lista: crear issue, no implementar.
+- [x] Fase 1: Desacoplamiento Cognitivo (`ChatEngine`) y Embeddings 768d (`nomic-embed-text`)
+- [x] Fase 2: Daemon Residente (`JulesDaemon`), Socket IPC (`/run/user/$UID/jules.sock`), Estado Atómico y servicio `systemd`
+- [x] Fase 3: Conciencia de Shell (hooks async Zsh/Bash/Fish) e InitiativeEngine con cooldown
+- [x] Fase 4: Voz Local Full-Duplex (<1.5s): VAD Silero (300ms), `faster-whisper INT8`, TTS dual-tier (`Edge TTS` + `Kokoro ONNX`) y Barge-In (<50ms)
+- [x] Fase 5.1: Percepción visual en RAM (`grim`) y portapapeles sanitizado (`wl-paste`)
+- [x] Fase 7.1: Herramientas OS nativas: PipeWire (`wpctl`), MPRIS (`playerctl`), Hyprland (`hyprctl`) y telemetría `/proc`
+- [ ] Fase 6: Consolidación REM nocturna, Replay Cognitivo y Gemelo Digital
+- [ ] Fase 7.2: Cliente MCP con autorización por voz
 
 ---
 
@@ -45,9 +39,11 @@ Si una tarea no está en esta lista: crear issue, no implementar.
 
 ```
 jules/
-├── AGENT.md
-├── JULES.md
-├── README.md
+├── MASTER_PLAN.md             # Plan maestro y autoridad técnica
+├── AGENT.md                   # Reglas inviolables para agentes
+├── JULES.md                   # Filosofía y manifiesto canónico
+├── README.md                  # Cara pública del proyecto
+├── ROADMAP.md                 # Balance y checklist de fases
 ├── pyproject.toml
 ├── alembic.ini
 ├── alembic/
@@ -55,17 +51,43 @@ jules/
 │
 ├── jules/
 │   ├── core/
-│   │   ├── session.py         # gestión de sesión activa
-│   │   ├── context.py         # detector de intención de contexto
-│   │   ├── router.py          # router quota-aware
-│   │   └── events.py          # sistema de eventos (solo Fase 1)
+│   │   ├── chat_engine.py     # Cerebro conversacional desacoplado
+│   │   ├── session.py         # Gestión de sesión activa
+│   │   ├── context.py         # Detector de intención de contexto
+│   │   ├── router.py          # CognitiveRouter quota-aware con fallback
+│   │   ├── permissions.py     # PermissionGate (Safe, Required, Prohibited)
+│   │   ├── events.py          # Sistema de eventos desacoplado
+│   │   └── config.py          # Configuración toml y validación
+│   │
+│   ├── daemon/
+│   │   ├── service.py         # JulesDaemon resident background service
+│   │   ├── ipc.py             # UNIX Domain Socket IPC server/client
+│   │   └── state.py           # Publicador de estado atómico (.state)
+│   │
+│   ├── voice/
+│   │   ├── listener.py        # Captura de audio y Silero VAD (300ms)
+│   │   ├── transcriber.py     # LocalTranscriber con faster-whisper INT8
+│   │   └── speaker.py         # VoiceSpeaker (Edge TTS + Kokoro) y chunker
+│   │
+│   ├── platform/
+│   │   ├── os_tools.py        # Reflejos OS (wpctl, playerctl, hyprctl, /proc)
+│   │   ├── initiative.py      # InitiativeEngine proactivo y cooldown
+│   │   ├── shell.py           # Hooks de terminal no bloqueantes
+│   │   ├── doctor.py          # Diagnóstico del entorno (jules doctor)
+│   │   ├── dbus.py            # Eventos D-Bus
+│   │   └── watcher.py         # File watcher
+│   │
+│   ├── perception/
+│   │   ├── vision.py          # Captura de pantalla en RAM (grim/maim)
+│   │   ├── clipboard.py       # Lectura sanitizada de portapapeles (wl-paste)
+│   │   └── errors.py          # Jerarquía de errores de percepción
 │   │
 │   ├── memory/
-│   │   ├── engine.py          # motor principal — orquesta todo
-│   │   ├── episodic.py        # LanceDB — episodios + embeddings
-│   │   ├── persistent.py      # SQLite — hechos y preferencias
-│   │   ├── scoring.py         # importance scoring — SIEMPRE Llama local
-│   │   └── models.py          # dataclasses Episode, SessionContext
+│   │   ├── engine.py          # Orquestador híbrido de memoria
+│   │   ├── episodic.py        # LanceDB — vectores 768d nomic-embed-text
+│   │   ├── persistent.py      # SQLite — fuente de verdad con ORM y migraciones
+│   │   ├── scoring.py         # Importance scoring vía Llama local
+│   │   └── models.py          # Modelos Episode, SessionContext, Base
 │   │
 │   ├── sanitizer/
 │   │   └── sanitizer.py       # PRIMER módulo en cualquier flujo
@@ -73,29 +95,25 @@ jules/
 │   ├── providers/
 │   │   ├── base.py            # Protocol Provider
 │   │   ├── ollama.py          # HTTP local
-│   │   ├── antigravity.py     # subprocess
-│   │   └── opencode.py        # subprocess
+│   │   ├── google.py          # Google GenAI nativo
+│   │   ├── openai_oauth.py    # OpenAI OAuth nativo
+│   │   ├── openrouter.py      # OpenRouter API
+│   │   ├── antigravity.py     # CLI subprocess
+│   │   └── opencode.py        # Coding subprocess
 │   │
 │   ├── personality/
-│   │   ├── loader.py          # carga presets por provider
-│   │   └── coherence.py       # verificación de identidad (async)
-│   │
-│   ├── linux/
-│   │   ├── watcher.py         # filesystem watchers
-│   │   ├── dbus.py            # eventos DBus
-│   │   └── shell.py           # hooks de shell
+│   │   ├── loader.py          # Carga presets por provider
+│   │   └── coherence.py       # Verificación de identidad y no servilismo
 │   │
 │   └── cli/
-│       └── main.py            # entrypoint
+│       ├── main.py            # Entrypoint Click
+│       ├── app.py             # Textual TUI interactivo
+│       ├── commands.py        # Slash commands
+│       └── protocol.py        # Headless NDJSON protocol
 │
 └── tests/
-    ├── unit/
-    │   ├── test_sanitizer.py  # tests de seguridad — críticos
-    │   ├── test_scoring.py
-    │   └── test_router.py
-    └── integration/
-        ├── test_memory_flow.py
-        └── test_provider_coherence.py
+    ├── unit/                  # Tests unitarios (>410 tests)
+    └── integration/           # Tests de flujo de memoria y providers
 ```
 
 ---
@@ -105,15 +123,17 @@ jules/
 | Capa | Tecnología |
 |---|---|
 | Lenguaje | Python 3.11+ |
-| CLI | Click + asyncio (Fase 1 — sin servidor HTTP) |
-| Backend | FastAPI (Fase 2+ — solo si dashboard Tauri lo requiere) |
-| DB relacional | SQLite (Fase 1) → PostgreSQL (si escala) |
+| Daemon & IPC | Background service + UNIX Domain Sockets (`jules.sock`, <5ms) |
+| Audio STT | `faster-whisper INT8` (local, warm resident en RAM) |
+| Audio VAD | Silero VAD (300ms ventana de silencio, PTT y Barge-In) |
+| Audio TTS | `Edge TTS` (primario es-CO) + `Kokoro ONNX` (fallback local) |
+| OS Tools | `wpctl` (PipeWire), `playerctl` (MPRIS), `hyprctl` (Wayland) |
+| Percepción | `grim` (screenshots en RAM) + `wl-paste` (portapapeles con Sanitizer) |
+| DB relacional | SQLite (fuente de verdad única, ORM SQLAlchemy 2.0) |
 | Migraciones | Alembic — desde el día uno, sin excepciones |
-| DB vectorial | LanceDB |
-| Inferencia local | Ollama |
-| Modelo local | Llama 3.2 1B — embeddings: 2048 dims, scoring, identidad |
-| Provider 1 | Antigravity CLI (subprocess) |
-| Provider 2 | OpenCode CLI (subprocess) |
+| DB vectorial | LanceDB (`nomic-embed-text` 768d, auto-reconstrucción desde SQLite) |
+| Inferencia local | Ollama (Llama 3.2 1B para scoring, identidad y routing) |
+| Proveedores Nube | Google GenAI, OpenRouter, OpenAI OAuth, Antigravity |
 
 No proponer cambios de stack sin razón técnica documentada como issue.
 

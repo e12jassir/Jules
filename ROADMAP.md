@@ -94,15 +94,17 @@ Para la implementación línea por línea, contratos de clase, pruebas obligator
 - [x] **Tarea 4.3 Tests:** [`tests/unit/test_voice_pipeline.py`](file:///home/e12jassir/Proyectos/Jules/tests/unit/test_voice_pipeline.py) en verde.
 
 ### Fase 5: Visión, Portapapeles y Telemetría del OS
-- [ ] **Tarea 5.1:** Screenshot on-demand (`grim`/`maim`), portapapeles (`wl-paste`/`xclip`) y filtro `Sanitizer`.
+- [x] **Tarea 5.1:** Screenshot on-demand en RAM (`grim`/`maim`), portapapeles (`wl-paste`/`xclip`) y filtro `Sanitizer` en [`jules/perception/`](file:///home/e12jassir/Proyectos/Jules/jules/perception).
+- [x] **Tarea 5.1 Tests:** [`tests/unit/test_perception_clipboard.py`](file:///home/e12jassir/Proyectos/Jules/tests/unit/test_perception_clipboard.py) y [`tests/unit/test_perception_vision.py`](file:///home/e12jassir/Proyectos/Jules/tests/unit/test_perception_vision.py) en verde.
 - [ ] **Tarea 5.2:** Monitor ligero de recursos de Linux (`/proc`, RAM, discos) y auto-defensa en [`jules/perception/telemetry.py`](file:///home/e12jassir/Proyectos/Jules/jules/perception/telemetry.py).
 
 ### Fase 6: Consolidación REM, Replay Cognitivo y Gemelo Digital
 - [ ] **Tarea 6.1:** Modelo `PersistentFactORM`, migración Alembic y motor `REMConsolidator` en [`jules/memory/consolidation.py`](file:///home/e12jassir/Proyectos/Jules/jules/memory/consolidation.py).
 - [ ] **Tarea 6.2:** Reconstrucción de sesiones en [`jules/memory/replay.py`](file:///home/e12jassir/Proyectos/Jules/jules/memory/replay.py) y coherencia/espejo en [`jules/personality/coherence.py`](file:///home/e12jassir/Proyectos/Jules/jules/personality/coherence.py).
 
-### Fase 7: Control del Entorno (D-Bus), MCP y PermissionGate Vocal
-- [ ] **Tarea 7.1:** Control multimedia MPRIS, Auto-Ducking de volumen y modo Focus en [`jules/platform/dbus.py`](file:///home/e12jassir/Proyectos/Jules/jules/platform/dbus.py).
+### Fase 7: Control del Entorno (D-Bus / OS Tools), MCP y PermissionGate Vocal
+- [x] **Tarea 7.1:** Herramientas nativas del OS: PipeWire volume (`wpctl`), media (`playerctl`), Hyprland (`hyprctl`) y telemetría `/proc` en [`jules/platform/os_tools.py`](file:///home/e12jassir/Proyectos/Jules/jules/platform/os_tools.py).
+- [x] **Tarea 7.1 Tests:** [`tests/unit/test_os_tools.py`](file:///home/e12jassir/Proyectos/Jules/tests/unit/test_os_tools.py) en verde.
 - [ ] **Tarea 7.2:** Cliente MCP seguro con confirmación hablada en [`jules/mcp/client.py`](file:///home/e12jassir/Proyectos/Jules/jules/mcp/client.py) y [`jules/core/permissions.py`](file:///home/e12jassir/Proyectos/Jules/jules/core/permissions.py).
 
 ### Fase 8: Diagnóstico y Demostración en Vivo

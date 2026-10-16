@@ -1,8 +1,8 @@
 # JULES
 ## Capa Cognitiva Persistente para el Sistema Operativo
 
-> **Versión:** 1.4 — Canónica
-> **Estado:** Fase 1 en progreso — Módulos 0–7 completados y validados (103 tests). Módulos 8, 9, 10 y 11 pendientes.
+> **Versión:** 2.0 — Canónica (Arquitectura Jarvis & Living OS)
+> **Estado:** Fases 1 (Core), 2 (Daemon & Sockets), 3 (Shell Hooks & Initiative), 4 (Voz Full-Duplex), 5.1 (Percepción RAM) y 7.1 (Reflejos OS) completadas y validadas (>410 tests passing).
 > **Principio rector:** Construir lo mínimo que funcione, no lo máximo que se pueda imaginar.
 
 ---
