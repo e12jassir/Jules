@@ -248,8 +248,8 @@ jules/
 
 **Objetivo:** Permitir que Jules ejecute acciones reales en el sistema operativo con seguridad militar y confirmación hablada.
 
-#### Tarea 7.1: Completar `jules/platform/dbus.py` (Multimedia y Modo Focus)
-- **QUÉ hacer:** Implementar el módulo `jules/platform/dbus.py` (actualmente un placeholder vacío) con detección en runtime de `playerctl` / `dbus-send` / `notify-send`.
+#### Tarea 7.1: [x] Herramientas de sistema operativo, audio y multimedia (`jules/platform/os_tools.py`)
+- **QUÉ hacer:** Implementar acciones directas del OS (`wpctl`, `playerctl`, `hyprctl`, `/proc`) integradas con `ChatEngine` y `os_tools`.
 - **CÓMO hacerlo:**
   1. Implementar control multimedia agnóstico del escritorio (`play_pause()`, `next_track()`, `set_volume()`, `get_current_track()`) vía especificación MPRIS D-Bus o `playerctl`.
   2. **Auto-Ducking de Audio:** Cuando Jules empiece a escucharte (`LISTENING`) o a hablarte (`SPEAKING`), bajar automáticamente el volumen de tu música/Spotify al 20% y restaurarlo al terminar.

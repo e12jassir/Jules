@@ -7,8 +7,9 @@
 <br/>
 
 ![Phase](https://img.shields.io/badge/Phase_1-Complete-22c55e?style=flat-square&labelColor=1e1e2e)
-![Phase](https://img.shields.io/badge/Phase_1.5-Planned-6366f1?style=flat-square&labelColor=1e1e2e)
-![Tests](https://img.shields.io/badge/Tests-120_passing-22c55e?style=flat-square&labelColor=1e1e2e)
+![Jarvis Layer](https://img.shields.io/badge/Jarvis_OS-Active-3b82f6?style=flat-square&labelColor=1e1e2e)
+![Voice & Daemon](https://img.shields.io/badge/Resident_Daemon-Online-10b981?style=flat-square&labelColor=1e1e2e)
+![Tests](https://img.shields.io/badge/Tests-406_passing-22c55e?style=flat-square&labelColor=1e1e2e)
 ![Platform](https://img.shields.io/badge/Platform-Linux_(any_distro)-f97316?style=flat-square&labelColor=1e1e2e)
 ![Python](https://img.shields.io/badge/Python-3.11+-eab308?style=flat-square&labelColor=1e1e2e)
 ![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square&labelColor=1e1e2e)
@@ -118,6 +119,31 @@ Privacy is not a feature here. It's the foundation.
 
 ---
 
+### It Has Senses and OS Reflexes
+
+Jules is not limited to text in a terminal. It perceives and interacts with the host environment directly:
+
+- **Ears (Local STT):** `faster-whisper INT8` running on local CPU with Silero VAD calibrated to a 300ms silence threshold. Speech transcription happens locally without transmitting audio bytes to third parties.
+- **Mouth (Streaming Neural TTS):** Dual-tier synthesis engine. Edge TTS (`es-CO-SalomeNeural`) provides ultra-natural Spanish voice synthesis, with automatic, transparent failover to local Kokoro ONNX on network dropouts. Sentence-level early chunking (`min_first_chars=12`) plays the first spoken sentence while subsequent tokens are still streaming from the LLM.
+- **Hands (OS Reflexes):** Real-time execution tags parsed from conversational streams:
+  - Audio: `wpctl` (volume adjustment, muting, query default sink).
+  - Media: `playerctl` (play, pause, next track, current metadata).
+  - Wayland Window Management: `hyprctl` (launch apps, switch workspaces, manage windows).
+  - System Telemetry: direct inspection of `/proc` and `free` (load averages, memory pressure).
+- **Eyes (On-Demand Perception):** RAM-only Wayland screen capture via `grim -` and sanitized clipboard capture via `wl-paste` without temporary files written to disk.
+
+---
+
+### It Lives as a Resident Daemon
+
+Jules operates as an always-on resident background service (`JulesDaemon`):
+
+- **Zero Cold-Start:** Whisper models, VAD detectors, and audio streams remain warm in RAM.
+- **UNIX Domain Socket IPC:** Inter-process communication through `/run/user/$UID/jules.sock` with atomic state emission at `/run/user/$UID/jules.state`.
+- **Global Hotkey:** Triggered across the desktop via `SUPER + J` in Hyprland using an ultra-fast socket client (`~/.local/bin/jules-listen`, < 20ms invocation), completely decoupled from terminal windows.
+
+---
+
 ### It Has a Personality
 
 Jules is calm, intelligent, analytical, technically competent. It doesn't hallucinate confidence it doesn't have. It doesn't pad responses. It doesn't pretend to be human.
@@ -166,26 +192,30 @@ Post-Processing
 | Layer | Technology | Why |
 |---|---|---|
 | Language | Python 3.11+ | Native async, ML ecosystem |
-| CLI | Click + asyncio | Phase 1: pure terminal, no HTTP server |
+| CLI & Daemon | Click + asyncio | Pure terminal + background resident UNIX daemon |
+| Speech-to-Text | faster-whisper INT8 | 100% local, warm resident inference in RAM |
+| Voice Activity Detection | Silero VAD | 300ms silence threshold, zero cloud dependence |
+| Text-to-Speech | Edge TTS + Kokoro ONNX | Cloud neural quality + resilient offline local fallback |
+| OS Reflexes | PipeWire (`wpctl`), MPRIS (`playerctl`), Hyprland (`hyprctl`) | Real-time system control without extra services |
+| IPC & State | UNIX Domain Sockets | Secure `/run/user/$UID/jules.sock` with atomic permissions |
 | Vector DB | LanceDB | Episodic embeddings, semantic retrieval |
-| Relational DB | SQLite → PostgreSQL | Local-first; migrate only when scale demands |
+| Relational DB | SQLite -> PostgreSQL | Local-first; migrate only when scale demands |
 | Migrations | Alembic | Versioned schema from day one |
 | Local inference | Ollama + Llama 3.2 1B | Identity, routing, scoring — zero external quota |
-| Provider 1 | Antigravity CLI | Google Gemini, Claude, GPT via subprocess |
-| Provider 2 | OpenCode CLI | GPT, Codex, Deepseek via subprocess |
-| Desktop app (Phase 2) | Tauri + SvelteKit | Lightweight overlay — CLI stays primary |
+| Cloud Providers | Google GenAI / OpenRouter / Anthropic | High-speed reasoning with zero thinking delay |
+| Desktop Hotkey | Hyprland + standalone micro-client | Sub-20ms instant trigger decoupled from terminal |
 
 ---
 
 ## Build Status
 
 ```
-Phase 1 — Core
+Phase 1 — Core Architecture
   [x] Module 0   — Project structure + virtualenv
   [x] Module 1   — Sanitizer
   [x] Module 2   — Data models
   [x] Module 3   — Ollama provider
-  [x] Module 4   — External providers (Antigravity + OpenCode)
+  [x] Module 4   — External providers (Google GenAI + OpenCode)
   [x] Module 5   — Quota-aware router
   [x] Module 6   — Memory engine (SQLite + LanceDB + Scoring)
   [x] Module 7   — Context intent detector
@@ -195,45 +225,40 @@ Phase 1 — Core
   [x] Module 11  — Main CLI
   [x] Module 12  — OpenAI auth via WebSockets
 
-Phase 1.5  — Rust/Ratatui TUI migration   (planned)
-Phase 2    — Expansion                    (planned)
-Phase 3    — Adaptive Intelligence        (planned)
-Phase 4    — Autonomy                     (planned)
+Phase 2 — Living OS & Jarvis Architecture
+  [x] Phase 2.1  — Real-time atomic daemon state publisher (/run/user/$UID/jules.state)
+  [x] Phase 2.2  — UNIX Domain Socket IPC (/run/user/$UID/jules.sock)
+  [x] Phase 2.3  — Resident JulesDaemon service and systemd generator
+  [x] Phase 3.1  — Asynchronous shell event hooks for fish/bash/zsh
+  [x] Phase 3.2  — InitiativeEngine (friction detection, cooldown registry)
+  [x] Phase 4.1  — AudioListener with resident Silero VAD (300ms window)
+  [x] Phase 4.2  — LocalTranscriber with warm faster-whisper INT8
+  [x] Phase 4.3  — Dual-tier VoiceSpeaker (Edge TTS + Kokoro ONNX) and SentenceStreamChunker
+  [x] Phase 5.1  — Wayland RAM-only screen capture (grim) and sanitized clipboard (wl-paste)
+  [x] Phase 7.1  — Native OS tools: PipeWire volume (wpctl), media (playerctl), Hyprland (hyprctl)
+  [x] Global Hotkey — Standalone socket trigger script bound to SUPER + J
 ```
 
-**120 tests passing** across all completed modules. Every module is tested before the next one starts. No red test goes to commit.
-
----
-
-## `jules doctor`
-
-Jules verifies its own environment on startup:
-
-```
-jules doctor
-──────────────────────────────────────────────
-✓ Ollama          active · llama3.2:1b available
-✓ Antigravity     available in PATH
-✓ OpenCode        available in PATH
-✓ LanceDB         vectors OK
-✓ SQLite          migrations up to date (rev: a3f9c1)
-✗ inotify         8192 watches — recommended ≥65536
-✓ Virtualenv      active (.venv)
-✓ ~/.jules/       write permissions OK
-⚠ Scoring         insufficient data to evaluate health
-✓ Shell           fish detected — hooks at conf.d/jules.fish
-──────────────────────────────────────────────
-1 problem detected. Jules is operating in partial mode.
-```
-
-Doctor never blocks startup. It reports, warns, and lets you decide.
+**406 tests passing** across all modules (`pytest tests/unit/`). Every module is tested before the next one starts. No red test goes to commit.
 
 ---
 
 ## Commands
 
 ```bash
-# Direct query
+# Resident daemon management
+jules daemon start
+jules daemon status
+jules daemon stop
+jules daemon install    # Installs systemd --user service
+
+# Conversational voice loop (terminal interface)
+jules voice
+
+# Global Desktop Hotkey (Hyprland / Wayland)
+# Press SUPER + J to trigger resident voice interaction instantly
+
+# Direct query via CLI
 jules "how does Python's GIL interact with asyncio?"
 
 # Force a specific model
