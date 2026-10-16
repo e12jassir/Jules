@@ -361,6 +361,8 @@ def voice(once: bool, socket_path: str | None) -> None:
         click.echo(f"🎙️  Modo Voz Activado (VAD + Whisper INT8 + {backend_label}).")
         click.echo("Habla cuando quieras (detecta silencio automático). Presiona Ctrl+C para salir.\n")
 
+        chat_history: list[tuple[str, str]] = []
+
         while True:
             click.echo("👂 Escuchando...")
             audio_bytes = await listener.record_phrase()
@@ -382,15 +384,27 @@ def voice(once: bool, socket_path: str | None) -> None:
 
             click.echo("🌹 Jules: ", nl=False)
 
+            assistant_parts: list[str] = []
+
             async def _token_generator():
-                async for chunk in client.stream_query(text=user_text, session_id="voice_session"):
+                async for chunk in client.stream_query(
+                    text=user_text,
+                    session_id="voice_session",
+                    chat_history=chat_history[-10:],
+                ):
                     if isinstance(chunk, ContentEvent):
                         click.echo(chunk.content, nl=False)
+                        assistant_parts.append(chunk.content)
                         yield chunk.content
 
             sentence_stream = chunker.stream(_token_generator())
             await speaker.speak_stream(sentence_stream)
             click.echo("\n")
+
+            assistant_reply = "".join(assistant_parts).strip()
+            if assistant_reply:
+                chat_history.append(("user", user_text))
+                chat_history.append(("assistant", assistant_reply))
 
             if once:
                 break

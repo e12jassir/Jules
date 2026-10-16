@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any, AsyncIterator
 from uuid import uuid4
 
@@ -166,6 +167,35 @@ class ChatEngine:
                     "- Tono natural, inteligente, cómplice y fresco de tú a tú, sin rodeos ni formalismos de bot."
                 )
 
+                try:
+                    from jules.platform.os_tools import get_system_status
+                    sys_status = await asyncio.wait_for(get_system_status(gate=self.permission_gate), timeout=0.2)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Could not fetch system status for voice snapshot: %s", exc)
+                    sys_status = {}
+
+                ram_info = sys_status.get("ram", {})
+                ram_summary = ram_info.get("summary", "desconocida")
+                vol_summary = sys_status.get("volume", "desconocido")
+                track = sys_status.get("media_track") or "Ninguna"
+                win = sys_status.get("active_window", {})
+                win_desc = f"{win.get('title', '')} ({win.get('class', '')})".strip() or "Ninguna"
+
+                snapshot_block = (
+                    f"\n\n[ESTADO ACTUAL DEL SISTEMA]\n"
+                    f"- Memoria RAM: {ram_summary}\n"
+                    f"- Volumen actual: {vol_summary}\n"
+                    f"- Pista multimedia activa: {track}\n"
+                    f"- Ventana activa: {win_desc}\n\n"
+                    "Tienes brazos y control del sistema. Si el usuario te pide cambiar el volumen, controlar la música, abrir una app o inspeccionar el sistema, incluye la acción en tu respuesta usando la sintaxis:\n"
+                    "[ACTION: set_volume(30)]\n"
+                    "[ACTION: media_control(\"next\")]\n"
+                    "[ACTION: media_control(\"pause\")]\n"
+                    "[ACTION: open_app(\"firefox\")]\n"
+                    "Acompaña la acción con una frase corta y natural confirmando la acción."
+                )
+                personality += snapshot_block
+
             prompt = compose_prompt(
                 personality=personality,
                 message=user_input,
@@ -182,7 +212,50 @@ class ChatEngine:
                 shell=built_context.shell,
             )
 
-            # Step 5: Streaming from router with fallback support
+            # Step 5: Streaming from router with fallback support and real-time action tag parsing
+            action_pattern = re.compile(r"\[ACTION:\s*([a-zA-Z_0-9]+)\((.*?)\)\s*\]")
+            pending_buffer = ""
+
+            async def _process_chunk_text(text: str) -> AsyncIterator[ContentEvent]:
+                nonlocal pending_buffer
+                pending_buffer += text
+
+                while pending_buffer:
+                    match = action_pattern.search(pending_buffer)
+                    if match:
+                        start_idx, end_idx = match.span()
+                        text_before = pending_buffer[:start_idx]
+                        if text_before:
+                            response_parts.append(text_before)
+                            yield ContentEvent(content=text_before)
+
+                        act_name = match.group(1)
+                        act_args = match.group(2)
+                        await self._execute_action_tag(act_name, act_args)
+
+                        remainder = pending_buffer[end_idx:]
+                        if not text_before or text_before.endswith(" "):
+                            remainder = remainder.lstrip()
+                        pending_buffer = remainder
+                        continue
+
+                    bracket_idx = pending_buffer.rfind("[")
+                    if bracket_idx != -1:
+                        tail = pending_buffer[bracket_idx:]
+                        if "[ACTION:".startswith(tail) or tail.startswith("[ACTION:"):
+                            if len(tail) < 200:
+                                text_to_emit = pending_buffer[:bracket_idx]
+                                if text_to_emit:
+                                    response_parts.append(text_to_emit)
+                                    yield ContentEvent(content=text_to_emit)
+                                pending_buffer = tail
+                                break
+
+                    if pending_buffer:
+                        response_parts.append(pending_buffer)
+                        yield ContentEvent(content=pending_buffer)
+                        pending_buffer = ""
+
             async for item in self.router.stream_with_fallback(
                 prompt,
                 memory_context,  # type: ignore[arg-type]
@@ -202,9 +275,30 @@ class ChatEngine:
                     event = event_raw
 
                 if isinstance(event, ContentEvent):
-                    response_parts.append(event.content)
+                    async for clean_event in _process_chunk_text(event.content):
+                        yield clean_event
+                else:
+                    yield event
 
-                yield event
+            if pending_buffer:
+                match = action_pattern.search(pending_buffer)
+                if match:
+                    start_idx, end_idx = match.span()
+                    text_before = pending_buffer[:start_idx]
+                    if text_before:
+                        response_parts.append(text_before)
+                        yield ContentEvent(content=text_before)
+                    await self._execute_action_tag(match.group(1), match.group(2))
+                    remainder = pending_buffer[end_idx:]
+                    if not text_before or text_before.endswith(" "):
+                        remainder = remainder.lstrip()
+                    if remainder:
+                        response_parts.append(remainder)
+                        yield ContentEvent(content=remainder)
+                else:
+                    response_parts.append(pending_buffer)
+                    yield ContentEvent(content=pending_buffer)
+                pending_buffer = ""
 
             turn_success = True
 
@@ -212,7 +306,7 @@ class ChatEngine:
             # Step 6: Query lifecycle teardown & zero-latency background persistence
             self.memory_engine.end_active_query()
 
-            full_response = "".join(response_parts)
+            full_response = "".join(response_parts).strip()
             if turn_success and full_response:
                 if isinstance(chat_history, list):
                     chat_history.append(("user", user_input))
@@ -238,6 +332,31 @@ class ChatEngine:
                         "Response contains sensitive patterns, suppressed from memory persistence: %s",
                         safe_response.reason,
                     )
+
+    async def _execute_action_tag(self, action_name: str, args_str: str) -> None:
+        """Parse and execute an action tag via jules.platform.os_tools."""
+        try:
+            from jules.platform.os_tools import (
+                get_system_status,
+                media_control,
+                open_app,
+                set_volume,
+            )
+
+            clean_arg = args_str.strip().strip("'\"")
+            name = action_name.strip()
+            if name == "set_volume":
+                await set_volume(clean_arg, gate=self.permission_gate)
+            elif name == "media_control":
+                await media_control(clean_arg, gate=self.permission_gate)
+            elif name == "open_app":
+                await open_app(clean_arg, gate=self.permission_gate)
+            elif name == "get_system_status":
+                await get_system_status(gate=self.permission_gate)
+            else:
+                logger.warning("Unknown OS action requested: %s(%s)", name, args_str)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed executing OS action %s(%s): %s", action_name, args_str, exc)
 
     async def _persist_turn_background(
         self,

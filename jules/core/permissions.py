@@ -66,6 +66,10 @@ _REQUIRED_DEFAULTS: tuple[str, ...] = (
     r"^(?:pacman|yay)",
 )
 
+_SAFE_DEFAULTS: tuple[str, ...] = (
+    r"^(?:wpctl|playerctl|hyprctl|xdg-open)\b",
+)
+
 
 def _compile(patterns: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
     """Precompiles regular expression strings into Pattern objects."""
@@ -339,7 +343,7 @@ class PermissionGate:
         required_patterns = (*_REQUIRED_DEFAULTS, *config.required_patterns) if config.require_confirmation_packages else tuple(config.required_patterns)
         self._required: tuple[re.Pattern[str], ...] = _compile(required_patterns)
         
-        self._safe: tuple[re.Pattern[str], ...] = _compile(tuple(config.safe_patterns))
+        self._safe: tuple[re.Pattern[str], ...] = _compile((*_SAFE_DEFAULTS, *config.safe_patterns))
 
     def classify(self, action: Action, target: str, cwd: str = "/") -> PermissionClassification:
         """Pure, side-effect-free action classification. Precedence: Prohibited > Required > Safe."""

@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from jules.core.chat_engine import ChatEngine, compose_prompt
@@ -469,4 +469,160 @@ async def test_voice_session_appends_conversational_directive():
     ]
     prompt_normal = captured_prompts["normal"]
     assert "[MODO CONVERSACIÓN POR VOZ EN TIEMPO REAL]" not in prompt_normal
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_action_parsing_and_execution() -> None:
+    """Action tags [ACTION: ...] are parsed, executed in real-time and stripped from ContentEvents."""
+    provider = MagicMock()
+    provider.name = "ollama"
+
+    router = MagicMock()
+    router.route = AsyncMock(return_value=(provider, "llama3.2:1b"))
+
+    async def fake_stream_with_actions(prompt, context, task, user_override=None):
+        yield ContentEvent(content="[ACTION: set_volume(30)] Bajando el volumen."), "llama3.2:1b", "ollama"
+        # Split action across chunks
+        yield ContentEvent(content=" Cambiando canción [ACT"), "llama3.2:1b", "ollama"
+        yield ContentEvent(content="ION: media_control(\"next\")] y pausando [ACT"), "llama3.2:1b", "ollama"
+        yield ContentEvent(content="ION: media_control(\"pause\")] Listo."), "llama3.2:1b", "ollama"
+
+    router.stream_with_fallback = fake_stream_with_actions
+
+    memory_engine = MagicMock()
+    memory_engine.start_active_query = MagicMock()
+    memory_engine.end_active_query = MagicMock()
+    memory_engine.retrieve_async = AsyncMock(return_value=[])
+    memory_engine.persist_async = AsyncMock()
+
+    personality_loader = MagicMock()
+    personality_loader.load.return_value = "Soy Jules."
+
+    mock_sanitizer = MagicMock()
+    mock_sanitizer.check.return_value = SanitizeResult(is_safe=True, reason=None)
+
+    engine = ChatEngine(
+        router=router,
+        memory_engine=memory_engine,
+        personality_loader=personality_loader,
+        sanitizer=mock_sanitizer,
+    )
+
+    with patch("jules.platform.os_tools.set_volume", new_callable=AsyncMock) as mock_set_vol, \
+         patch("jules.platform.os_tools.media_control", new_callable=AsyncMock) as mock_media_ctrl:
+
+        mock_set_vol.return_value = "Volumen ok"
+        mock_media_ctrl.return_value = "Media ok"
+
+        session_ctx = CoreSessionContext(cwd="/workspace")
+        chat_history: list[tuple[str, str]] = []
+
+        events = [
+            e
+            async for e in engine.stream_turn(
+                user_input="Baja el volumen y cambia la música",
+                session_id="voice_session",
+                session_ctx=session_ctx,
+                chat_history=chat_history,
+            )
+        ]
+
+        # Verify action executions
+        mock_set_vol.assert_awaited_once_with("30", gate=None)
+        assert mock_media_ctrl.await_count == 2
+        mock_media_ctrl.assert_any_await("next", gate=None)
+        mock_media_ctrl.assert_any_await("pause", gate=None)
+
+        # Verify no [ACTION: ...] leaked to ContentEvents
+        content_text = "".join(e.content for e in events if isinstance(e, ContentEvent))
+        assert "[ACTION:" not in content_text
+        assert "Bajando el volumen." in content_text
+        assert "Cambiando canción " in content_text
+        assert " y pausando " in content_text
+        assert " Listo." in content_text
+
+
+@pytest.mark.asyncio
+async def test_voice_turn_chat_history_preservation_and_system_snapshot() -> None:
+    """Voice turn preserves chat_history and includes dynamic system snapshot with action instructions."""
+    provider = MagicMock()
+    provider.name = "ollama"
+
+    router = MagicMock()
+    router.route = AsyncMock(return_value=(provider, "llama3.2:1b"))
+
+    captured_prompt = None
+
+    async def fake_stream(prompt, context, task, user_override=None):
+        nonlocal captured_prompt
+        captured_prompt = prompt
+        yield ContentEvent(content="[ACTION: open_app(\"firefox\")] Abriendo el navegador."), "llama3.2:1b", "ollama"
+
+    router.stream_with_fallback = fake_stream
+
+    memory_engine = MagicMock()
+    memory_engine.start_active_query = MagicMock()
+    memory_engine.end_active_query = MagicMock()
+    memory_engine.retrieve_async = AsyncMock(return_value=[])
+    memory_engine.persist_async = AsyncMock()
+
+    personality_loader = MagicMock()
+    personality_loader.load.return_value = "Soy Jules."
+
+    mock_sanitizer = MagicMock()
+    mock_sanitizer.check.return_value = SanitizeResult(is_safe=True, reason=None)
+
+    engine = ChatEngine(
+        router=router,
+        memory_engine=memory_engine,
+        personality_loader=personality_loader,
+        sanitizer=mock_sanitizer,
+    )
+
+    mock_status = {
+        "ram": {"summary": "8.0GB / 16.0GB (50%)"},
+        "volume": "60%",
+        "media_track": "Queen - Bohemian Rhapsody",
+        "active_window": {"title": "Kitty Terminal", "class": "kitty"},
+    }
+
+    with patch("jules.platform.os_tools.get_system_status", new_callable=AsyncMock, return_value=mock_status), \
+         patch("jules.platform.os_tools.open_app", new_callable=AsyncMock, return_value="App ok") as mock_open:
+
+        session_ctx = CoreSessionContext(cwd="/workspace")
+        chat_history: list[tuple[str, str]] = [("user", "Hola Jules"), ("jules", "Hola Esteban!")]
+
+        events = [
+            e
+            async for e in engine.stream_turn(
+                user_input="Abre firefox por favor",
+                session_id="voice_session",
+                session_ctx=session_ctx,
+                chat_history=chat_history,
+            )
+        ]
+
+        # Check prompt snapshot & action instructions
+        assert captured_prompt is not None
+        assert "[ESTADO ACTUAL DEL SISTEMA]" in captured_prompt
+        assert "8.0GB / 16.0GB (50%)" in captured_prompt
+        assert "60%" in captured_prompt
+        assert "Queen - Bohemian Rhapsody" in captured_prompt
+        assert "Kitty Terminal (kitty)" in captured_prompt
+        assert "Tienes brazos y control del sistema" in captured_prompt
+        assert '[ACTION: set_volume(30)]' in captured_prompt
+        assert '[ACTION: open_app("firefox")]' in captured_prompt
+
+        # Check chat history from prior turn was included in prompt
+        assert "User: Hola Jules" in captured_prompt
+        assert "Jules: Hola Esteban!" in captured_prompt
+
+        # Check new turn was accumulated in chat_history
+        assert len(chat_history) == 4
+        assert chat_history[-2] == ("user", "Abre firefox por favor")
+        assert chat_history[-1] == ("jules", "Abriendo el navegador.")
+        assert "[ACTION:" not in chat_history[-1][1]
+
+        # Check action was executed
+        mock_open.assert_awaited_once_with("firefox", gate=None)
 
