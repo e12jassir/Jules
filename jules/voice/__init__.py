@@ -10,12 +10,25 @@ from jules.voice.listener import (
     BargeInEvent,
     VADDetector,
 )
+from jules.voice.transcriber import (
+    AudioFormatError,
+    LocalTranscriber,
+    ModelLoadError,
+    TranscriberError,
+    TranscriptionResult,
+)
 
 __all__ = [
+    "AudioFormatError",
     "AudioHardwareUnavailableError",
     "AudioListener",
     "BargeInCallback",
     "BargeInDetected",
     "BargeInEvent",
+    "LocalTranscriber",
+    "ModelLoadError",
+    "TranscriberError",
+    "TranscriptionResult",
     "VADDetector",
 ]
+

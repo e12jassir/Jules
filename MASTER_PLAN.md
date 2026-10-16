@@ -180,7 +180,7 @@ jules/
   2. Cuando se activa por Push-to-Talk (`jules-listen` -> `{"op": "voice_ptt_toggle"}`) o por Wake Word, cambiar `StatePublisher` a `LISTENING` y grabar hasta detectar 600ms de silencio continuo post-habla.
   3. Si el usuario empieza a hablar mientras `StatePublisher` está en `SPEAKING`, emitir inmediatamente el evento `BargeInDetected` para callar el altavoz en < 50ms.
 
-#### Tarea 4.2: Transcripción Ultrarrápida (`jules/voice/transcriber.py`)
+#### Tarea 4.2: [x] Transcripción Ultrarrápida (`jules/voice/transcriber.py`)
 - **QUÉ hacer:** Implementar `LocalTranscriber` usando `faster-whisper` (`base` o `small` con `compute_type="int8"`).
 - **CÓMO hacerlo:**
   1. Mantener el modelo pre-cargado en memoria dentro del daemon para evitar el costo de carga en frío.
