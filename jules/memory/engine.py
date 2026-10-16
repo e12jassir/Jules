@@ -34,6 +34,7 @@ class MemoryEngine:
         self._background_tasks: set[asyncio.Task] = set()
         self.persistence_delay_seconds: float = 5.0
         self._query_idle_event: asyncio.Event | None = None
+        self._rebuild_lock = asyncio.Lock()
 
     @property
     def query_idle_event(self) -> asyncio.Event:
@@ -44,7 +45,7 @@ class MemoryEngine:
 
     def _dummy_vector(self) -> list[float]:
         # Fallback cuando embedding_provider no está disponible.
-        # Dimensión: 2048 (llama3.2:1b). Retrieval será temporal, no semántico.
+        # Dimensión: 768 (nomic-embed-text). Retrieval será temporal, no semántico.
         return [0.0] * self.episodic.vector_dimension
 
     async def _get_vector(self, text: str) -> list[float]:
@@ -152,3 +153,25 @@ class MemoryEngine:
         vector = await self._get_vector(query)
         ids = await self.episodic.retrieve_async(vector, limit)
         return await self.persistent.get_many_async(ids)
+
+    async def rebuild_vector_index_if_needed(self) -> int:
+        """
+        Reconstruct LanceDB vector index from SQLite truth if dimensions mismatched
+        or index rebuild was marked necessary.
+        """
+        async with self._rebuild_lock:
+            await asyncio.to_thread(self.episodic._ensure_table)
+            if not getattr(self.episodic, "needs_rebuild", False):
+                return 0
+
+            episodes = await self.persistent.list_all_episodes_async()
+            rebuilt_count = 0
+            for episode in episodes:
+                text = f"{episode.problem or ''} {episode.solution or ''}".strip()
+                vector = await self._get_vector(text)
+                await self.episodic.store_async(episode, vector)
+                rebuilt_count += 1
+
+            self.episodic.needs_rebuild = False
+            return rebuilt_count
+

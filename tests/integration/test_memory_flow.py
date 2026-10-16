@@ -145,3 +145,66 @@ async def test_retrieve_returns_persisted_episode(tmp_path):
     )
 
     await engine.persistent.engine.dispose()
+
+
+async def test_rebuild_vector_index_if_needed_restores_vectors_from_sqlite(tmp_path):
+    """
+    Valida que ante un cambio de modelo/dimensión de embeddings:
+    1. LanceDB detecta el mismatch y se recrea con la nueva dimensión (needs_rebuild = True)
+    2. rebuild_vector_index_if_needed lee todos los episodios de SQLite
+    3. Regenera los embeddings con la nueva dimensión e indexa en LanceDB sin pérdida de datos.
+    """
+    db_url = f"sqlite+aiosqlite:///{tmp_path}/memory.sqlite3"
+    lancedb_path = str(tmp_path / "vectors")
+
+    scoring_provider = AsyncMock()
+    scoring_provider.generate_text = AsyncMock(return_value="SCORE: 0.9")
+
+    # Paso 1: Crear engine con dimensión 4 (simulando modelo anterior)
+    episodes = [
+        make_episode(f"ep-{i}") for i in range(3)
+    ]
+    old_engine = build_engine(db_url, lancedb_path, scoring_provider, vector_dimension=4)
+    old_embedding_mock = AsyncMock()
+    old_embedding_mock.embed = AsyncMock(return_value=[0.1, 0.2, 0.3, 0.4])
+    old_engine.embedding_provider = old_embedding_mock
+    old_engine.persistence_delay_seconds = 0.0
+    await _init_db(old_engine)
+
+    for ep in episodes:
+        await old_engine.persist_async(ep)
+
+    import asyncio
+    for _ in range(30):
+        if not old_engine._background_tasks:
+            break
+        await asyncio.sleep(0.05)
+
+    # Validar que list_all_episodes_async retorna los 3
+    all_sqlite_episodes = await old_engine.persistent.list_all_episodes_async()
+    assert len(all_sqlite_episodes) == 3
+    await old_engine.persistent.engine.dispose()
+
+    # Paso 2: Nuevo engine con dimensión 3 (simulando nomic-embed-text / nuevo modelo)
+    new_embedding_mock = AsyncMock()
+    new_embedding_mock.embed = AsyncMock(return_value=[0.7, 0.8, 0.9])
+    new_engine = build_engine(db_url, lancedb_path, scoring_provider, vector_dimension=3)
+    new_engine.embedding_provider = new_embedding_mock
+
+    # Al ejecutar rebuild_vector_index_if_needed:
+    # LanceDB abre la tabla, detecta mismatch (4 != 3), la recrea, needs_rebuild = True
+    # Reindexa los 3 episodios con el nuevo vector de 3 dims
+    rebuilt_count = await new_engine.rebuild_vector_index_if_needed()
+    assert rebuilt_count == 3
+    assert new_engine.episodic.needs_rebuild is False
+
+    # Validar que retrieve_async ahora funciona y devuelve los episodios desde LanceDB
+    retrieved = await new_engine.retrieve_async("query", limit=5)
+    retrieved_ids = {ep.id for ep in retrieved}
+    assert {ep.id for ep in episodes}.issubset(retrieved_ids)
+
+    # Segundo llamado a rebuild no debe hacer nada
+    assert await new_engine.rebuild_vector_index_if_needed() == 0
+
+    await new_engine.persistent.engine.dispose()
+

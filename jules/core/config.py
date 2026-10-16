@@ -63,11 +63,18 @@ class PermissionsConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryConfig:
+    embedding_model: str = "nomic-embed-text"
+    embedding_dimension: int = 768
+
+
+@dataclass(frozen=True, slots=True)
 class JulesConfig:
     routing: RoutingConfig
     providers: ProviderConfig
     doctor: DoctorConfig
     permissions: PermissionsConfig
+    memory: MemoryConfig = MemoryConfig()
 
 
 def default_config_paths() -> tuple[Path, ...]:
@@ -105,6 +112,7 @@ def _parse_config(raw: dict[str, object], config_path: Path) -> JulesConfig:
     providers_raw = _optional_table(raw, "providers")
     doctor_raw = _optional_table(raw, "doctor")
     permissions_raw = _optional_table(raw, "permissions")
+    memory_raw = _optional_table(raw, "memory")
 
     tiers = {
         name: _parse_tier(name, value, config_path)
@@ -128,6 +136,16 @@ def _parse_config(raw: dict[str, object], config_path: Path) -> JulesConfig:
         providers=_parse_providers(providers_raw),
         doctor=_parse_doctor(doctor_raw, config_path),
         permissions=_parse_permissions(permissions_raw, config_path),
+        memory=_parse_memory(memory_raw, config_path),
+    )
+
+
+def _parse_memory(raw: dict[str, object], config_path: Path) -> MemoryConfig:
+    embedding_model = _optional_str(raw.get("embedding_model"), config_path, "memory.embedding_model") or "nomic-embed-text"
+    embedding_dimension = _optional_int(raw.get("embedding_dimension"), 768, config_path, "memory.embedding_dimension")
+    return MemoryConfig(
+        embedding_model=embedding_model,
+        embedding_dimension=embedding_dimension,
     )
 
 

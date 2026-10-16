@@ -26,7 +26,7 @@ def test_init_defers_lancedb_connection(tmp_path, monkeypatch):
 
 def test_open_or_create_table_handles_list_tables_response(tmp_path, monkeypatch):
     table = MagicMock()
-    table.schema.field.return_value.type.list_size = 2048
+    table.schema.field.return_value.type.list_size = 768
     db = Mock()
     db.list_tables.return_value = ["episodes_vector"]
     db.open_table.return_value = table
@@ -122,3 +122,46 @@ async def test_store_and_retrieve_use_thread_offloading(temp_episodic, monkeypat
 
     assert result == ["threaded"]
     assert calls == ["_store", "_retrieve"]
+
+
+def test_dimension_mismatch_drops_and_recreates_table(tmp_path, monkeypatch):
+    table_old = MagicMock()
+    table_old.schema.field.return_value.type.list_size = 2048
+    table_new = MagicMock()
+    table_new.schema.field.return_value.type.list_size = 768
+
+    db = Mock()
+    db.list_tables.return_value = ["episodes_vector"]
+    db.open_table.return_value = table_old
+    db.create_table.return_value = table_new
+    monkeypatch.setattr("jules.memory.episodic.lancedb.connect", Mock(return_value=db))
+
+    memory = EpisodicMemory(db_path=str(tmp_path), vector_dimension=768)
+    assert memory.needs_rebuild is False
+
+    result = memory._open_or_create_table()
+
+    db.drop_table.assert_called_once_with("episodes_vector")
+    db.create_table.assert_called_once()
+    assert memory.needs_rebuild is True
+    assert result is table_new
+
+
+async def test_dimension_mismatch_real_lancedb_drops_and_recreates(tmp_path):
+    # Create with dimension 4
+    mem4 = EpisodicMemory(db_path=str(tmp_path), vector_dimension=4)
+    ep1 = make_episode("ep-4dim", datetime.now(timezone.utc))
+    await mem4.store_async(ep1, [1.0, 0.0, 0.0, 0.0])
+
+    # Open with dimension 3 on same DB path
+    mem3 = EpisodicMemory(db_path=str(tmp_path), vector_dimension=3)
+    assert mem3.needs_rebuild is False
+
+    # Storing or retrieving triggers _open_or_create_table which drops 4-dim table
+    ep2 = make_episode("ep-3dim", datetime.now(timezone.utc))
+    await mem3.store_async(ep2, [0.0, 1.0, 0.0])
+
+    assert mem3.needs_rebuild is True
+    res = await mem3.retrieve_async([0.0, 1.0, 0.0], limit=1)
+    assert res == ["ep-3dim"]
+

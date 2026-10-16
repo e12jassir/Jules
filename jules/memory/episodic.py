@@ -10,7 +10,7 @@ import pyarrow as pa
 from jules.memory.models import Episode
 
 DEFAULT_TABLE_NAME = "episodes_vector"
-DEFAULT_VECTOR_DIMENSION = 2048  # llama3.2:1b via Ollama /api/embed
+DEFAULT_VECTOR_DIMENSION = 768  # nomic-embed-text via Ollama /api/embed
 TIME_DECAY_FACTOR = 1e-9
 
 
@@ -24,6 +24,7 @@ class EpisodicMemory:
         self.db_path = str(db_path)
         self.table_name = table_name
         self.vector_dimension = vector_dimension
+        self.needs_rebuild: bool = False
         self._table = None
         self._table_lock = threading.Lock()
 
@@ -35,11 +36,10 @@ class EpisodicMemory:
             table = db.open_table(self.table_name)
             existing_dim = table.schema.field("vector").type.list_size
             if existing_dim != self.vector_dimension:
-                raise ValueError(
-                    f"Table '{self.table_name}' has vector dimension {existing_dim}, "
-                    f"but expected {self.vector_dimension}. Embedding model mismatch."
-                )
-            return table
+                db.drop_table(self.table_name)
+                self.needs_rebuild = True
+            else:
+                return table
 
         schema = pa.schema(
             [
@@ -50,16 +50,19 @@ class EpisodicMemory:
         )
         return db.create_table(self.table_name, schema=schema)
 
+    def _ensure_table(self):
+        with self._table_lock:
+            if self._table is None:
+                self._table = self._open_or_create_table()
+            return self._table
+
     def _validate_vector(self, vector: list[float]) -> None:
         if len(vector) != self.vector_dimension:
             raise ValueError(f"Vector dimension must be {self.vector_dimension}, got {len(vector)}")
 
     def _store(self, episode_id: str, vector: list[float], timestamp: float) -> None:
         self._validate_vector(vector)
-        with self._table_lock:
-            if self._table is None:
-                self._table = self._open_or_create_table()
-            table = self._table
+        table = self._ensure_table()
         assert table is not None
         if len(table) > 0:
             try:
@@ -76,10 +79,7 @@ class EpisodicMemory:
         if limit <= 0:
             return []
 
-        with self._table_lock:
-            if self._table is None:
-                self._table = self._open_or_create_table()
-            table = self._table
+        table = self._ensure_table()
         assert table is not None
 
         if len(table) == 0:

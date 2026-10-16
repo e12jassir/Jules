@@ -86,5 +86,11 @@ class PersistentMemory:
 
         async with self.session() as session:
             result = await session.execute(select(EpisodeORM).where(EpisodeORM.id.in_(ids)))
-            episodes_by_id = {episode.id: episode.to_dataclass() for episode in result.scalars()}
+            episodes_by_id = {episode.id: episode.to_dataclass() for episode in result.scalars().unique()}
             return [episodes_by_id[episode_id] for episode_id in ids if episode_id in episodes_by_id]
+
+    async def list_all_episodes_async(self) -> list[Episode]:
+        async with self.session() as session:
+            result = await session.execute(select(EpisodeORM))
+            return [orm.to_dataclass() for orm in result.scalars().unique()]
+

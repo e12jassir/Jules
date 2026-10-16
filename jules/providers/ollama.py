@@ -25,7 +25,14 @@ class OllamaProvider:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.default_model = default_model
-        self.embedding_model = embedding_model or default_model
+        if embedding_model is not None:
+            self.embedding_model = embedding_model
+        else:
+            try:
+                from jules.core.config import load_config
+                self.embedding_model = load_config().memory.embedding_model
+            except Exception:
+                self.embedding_model = "nomic-embed-text"
         self.timeout_seconds = timeout_seconds
         self._session: aiohttp.ClientSession | None = None
 
