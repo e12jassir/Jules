@@ -45,7 +45,9 @@ impl<'a> Widget for BottomBar<'a> {
                 Span::raw("  "),
                 Span::styled(
                     spinner,
-                    Style::default().fg(self.theme.accent()).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(self.theme.accent())
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
             ];
@@ -82,7 +84,11 @@ impl<'a> Widget for BottomBar<'a> {
         if !self.sidebar_visible {
             let right_text = format!("• Jules {}", self.version);
             let total_width = area.width as usize;
-            let left_len = if self.is_streaming { 25 } else { self.cwd.chars().count() + 2 };
+            let left_len = if self.is_streaming {
+                25
+            } else {
+                self.cwd.chars().count() + 2
+            };
             let right_len = right_text.chars().count();
 
             let pad = total_width

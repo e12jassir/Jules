@@ -2,6 +2,8 @@
 //! Data below is hardcoded to mirror jules_tui_mockup.html exactly, so we can
 //! validate visual fidelity in Ratatui before wiring the real Python backend.
 
+use crate::selector::{ActiveSelector, SelectorState, SessionsSelectorState};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Home,
@@ -42,6 +44,36 @@ pub struct DoctorCheck {
     pub status: DoctorStatus,
     pub name: String,
     pub message: String,
+}
+
+#[derive(Default)]
+struct CommandOverlayVisibility {
+    dismissed: bool,
+}
+
+impl CommandOverlayVisibility {
+    fn dismiss(&mut self) {
+        self.dismissed = true;
+    }
+
+    fn reopen(&mut self) {
+        self.dismissed = false;
+    }
+
+    fn reopen_after_input_change(&mut self) {
+        self.reopen();
+    }
+
+    fn matching_commands(&self, input: &str) -> Vec<&'static crate::commands::SlashCommand> {
+        if self.dismissed {
+            return Vec::new();
+        }
+
+        match crate::commands::slash_query(input) {
+            Some(query) => crate::commands::matching_commands(query),
+            None => Vec::new(),
+        }
+    }
 }
 
 pub struct AppState {
@@ -110,39 +142,23 @@ pub struct AppState {
     /// ChatMessage per chunk.
     pending_jules_message: Option<usize>,
 
-    /// Currently highlighted index into the command overlay's match list
-    /// (see `commands.rs`). `None` when the overlay isn't showing — i.e.
-    /// the input doesn't start with `/`, or it has a space (past the
-    /// command name into arguments).
+    /// Currently highlighted index into the command overlay's visible match list.
     pub command_overlay_selected: Option<usize>,
+    /// Tracks an explicit Esc dismissal independently from the input text.
+    command_overlay_visibility: CommandOverlayVisibility,
 
-    /// `true` while the `/themes` picker overlay is open — a small popup
-    /// listing all themes so the user can pick one directly, instead of
-    /// only cycling with ctrl+y (user request, 2026-07-21).
-    pub theme_overlay_visible: bool,
-    /// Highlighted index into `palette::ALL_THEMES` while the picker is
-    /// open.
-    pub theme_overlay_selected: usize,
-    /// `true` while the `/models` picker overlay is open — provider-
-    /// grouped model list with a free-text filter, mirroring OpenCode's
-    /// own model select popup (user request, 2026-07-21: recreate that
-    /// picker for Jules' `/models` command).
-    pub models_overlay_visible: bool,
-    /// Highlighted index into the current `models::filtered_rows(query)`
-    /// result while the picker is open.
-    pub models_overlay_selected: usize,
-    /// Free-text filter typed while the picker is open — matched against
-    /// both model and provider names (see `models::filtered_rows`).
-    pub models_overlay_query: String,
-    pub provider_overlay_visible: bool,
+    /// The single selector/modal currently receiving interactive input.
+    /// `None` means normal chat input owns the keyboard.
+    pub active_selector: Option<ActiveSelector>,
+    pub theme_selector: SelectorState,
+    pub models_selector: SelectorState,
     pub provider_overlay_selected: usize,
     pub provider_overlay_sub_menu: bool,
     pub provider_overlay_action_selected: usize,
     pub provider_overlay_input_mode: bool,
     pub provider_overlay_key_input: String,
     pub provider_overlay_status_msg: Option<String>,
-    pub sessions_overlay_visible: bool,
-    pub sessions_overlay_selected: usize,
+    pub sessions_selector: SessionsSelectorState,
     pub sessions_list: Vec<crate::sessions::SessionItem>,
     /// Animation tick counter for UI animations (e.g. streaming loading bar).
     pub anim_tick: usize,
@@ -151,8 +167,38 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn selector_is_active(&self, selector: ActiveSelector) -> bool {
+        self.active_selector == Some(selector)
+    }
+
+    fn activate_selector(&mut self, selector: ActiveSelector) {
+        self.active_selector = Some(selector);
+    }
+
+    fn close_selector(&mut self, selector: ActiveSelector) {
+        if self.selector_is_active(selector) {
+            self.active_selector = None;
+        }
+    }
+
     pub fn is_streaming(&self) -> bool {
         self.is_generating || self.pending_jules_message.is_some()
+    }
+
+    /// Close the slash-command palette while preserving the current input.
+    pub fn dismiss_command_overlay(&mut self) {
+        self.command_overlay_selected = None;
+        self.command_overlay_visibility.dismiss();
+    }
+
+    /// Reopen a previously dismissed palette without changing the input.
+    pub fn reopen_command_overlay(&mut self) {
+        self.command_overlay_visibility.reopen();
+    }
+
+    fn command_overlay_input_changed(&mut self) {
+        self.command_overlay_selected = None;
+        self.command_overlay_visibility.reopen_after_input_change();
     }
     /// Where to find the Python venv interpreter that hosts the real Jules
     /// backend. Resolved relative to the **running executable's location**
@@ -255,20 +301,17 @@ impl AppState {
             backend_error,
             pending_jules_message: None,
             command_overlay_selected: None,
-            theme_overlay_visible: false,
-            theme_overlay_selected: 0,
-            models_overlay_visible: false,
-            models_overlay_selected: 0,
-            models_overlay_query: String::new(),
-            provider_overlay_visible: false,
+            command_overlay_visibility: CommandOverlayVisibility::default(),
+            active_selector: None,
+            theme_selector: SelectorState::default(),
+            models_selector: SelectorState::default(),
             provider_overlay_selected: 0,
             provider_overlay_sub_menu: false,
             provider_overlay_action_selected: 0,
             provider_overlay_input_mode: false,
             provider_overlay_key_input: String::new(),
             provider_overlay_status_msg: None,
-            sessions_overlay_visible: false,
-            sessions_overlay_selected: 0,
+            sessions_selector: SessionsSelectorState::default(),
             sessions_list: Vec::new(),
             anim_tick: 0,
             is_generating: false,
@@ -353,7 +396,11 @@ impl AppState {
         self.ctx_used_pct = ((approx_tokens as f32 / 200_000.0) * 100.0).min(100.0) as u8;
         self.ctx_quota_provider = self.active_provider.clone();
 
-        let user_msg_count = self.messages.iter().filter(|m| matches!(m.role, Role::User)).count() as u32;
+        let user_msg_count = self
+            .messages
+            .iter()
+            .filter(|m| matches!(m.role, Role::User))
+            .count() as u32;
         self.mem_episodes = user_msg_count;
         if user_msg_count > 0 {
             self.mem_top_match_pct = 95;
@@ -525,13 +572,18 @@ impl AppState {
                         let updated_at = extract_json_str(chunk, "updated_at").unwrap_or_default();
                         items.push(crate::sessions::SessionItem {
                             id: sid,
-                            title: if title.is_empty() { "Nueva Sesión".to_string() } else { title },
+                            title: if title.is_empty() {
+                                "Nueva Sesión".to_string()
+                            } else {
+                                title
+                            },
                             count,
                             updated_at,
                         });
                     }
                 }
                 self.sessions_list = items;
+                self.sessions_selector.set_sessions(&self.sessions_list);
             }
             BackendEvent::LoadedSession(json_str) => {
                 self.messages.clear();
@@ -540,7 +592,11 @@ impl AppState {
                     let role_str = extract_json_str(msg_chunk, "role").unwrap_or_default();
                     let content = extract_json_str(msg_chunk, "content").unwrap_or_default();
                     if !content.is_empty() {
-                        let role = if role_str == "user" { Role::User } else { Role::Jules };
+                        let role = if role_str == "user" {
+                            Role::User
+                        } else {
+                            Role::Jules
+                        };
                         let who = if role == Role::User { "tú" } else { "jules" };
                         self.messages.push(ChatMessage {
                             role,
@@ -551,14 +607,12 @@ impl AppState {
                         });
                     }
                 }
-                self.sessions_overlay_visible = false;
+                self.close_selector(ActiveSelector::Sessions);
                 self.screen = Screen::Chat;
             }
             BackendEvent::DeletedSession(sid) => {
                 self.sessions_list.retain(|s| s.id != sid);
-                if self.sessions_overlay_selected >= self.sessions_list.len() && !self.sessions_list.is_empty() {
-                    self.sessions_overlay_selected = self.sessions_list.len() - 1;
-                }
+                self.sessions_selector.deleted_session(&self.sessions_list);
             }
             BackendEvent::Thinking(chunk) => {
                 self.is_generating = true;
@@ -587,7 +641,12 @@ impl AppState {
                     let source = if !self.doctor_buffer.is_empty() {
                         let buf = std::mem::take(&mut self.doctor_buffer);
                         parse_doctor_output(&buf)
-                    } else if let Some(msg) = self.messages.iter().rev().find(|m| matches!(m.role, Role::Jules)) {
+                    } else if let Some(msg) = self
+                        .messages
+                        .iter()
+                        .rev()
+                        .find(|m| matches!(m.role, Role::Jules))
+                    {
                         parse_doctor_output(&msg.body.clone())
                     } else {
                         Vec::new()
@@ -598,6 +657,8 @@ impl AppState {
             }
             BackendEvent::Error(message) => {
                 self.is_generating = false;
+                self.sessions_selector
+                    .fail_pending(format!("Backend error: {message}"), &self.sessions_list);
                 self.messages.push(ChatMessage {
                     role: Role::Jules,
                     who: "jules",
@@ -609,6 +670,8 @@ impl AppState {
             }
             BackendEvent::Disconnected => {
                 self.is_generating = false;
+                self.sessions_selector
+                    .fail_pending("Backend disconnected.", &self.sessions_list);
                 self.backend = None;
                 self.backend_error = Some("el backend se desconectó".to_string());
                 self.messages.push(ChatMessage {
@@ -626,7 +689,7 @@ impl AppState {
     pub fn insert_char(&mut self, c: char) {
         self.input.insert(self.cursor_pos, c);
         self.cursor_pos += c.len_utf8();
-        self.command_overlay_selected = None;
+        self.command_overlay_input_changed();
     }
 
     pub fn backspace(&mut self) {
@@ -639,16 +702,15 @@ impl AppState {
         }
         self.input.remove(idx);
         self.cursor_pos = idx;
-        self.command_overlay_selected = None;
+        self.command_overlay_input_changed();
     }
 
     /// Commands matching the current input, or empty if the overlay
-    /// shouldn't be showing (input isn't a bare `/command` in progress).
+    /// shouldn't be showing (input isn't a bare `/command` in progress or
+    /// the user dismissed it with Esc).
     pub fn command_overlay_matches(&self) -> Vec<&'static crate::commands::SlashCommand> {
-        match crate::commands::slash_query(&self.input) {
-            Some(query) => crate::commands::matching_commands(query),
-            None => Vec::new(),
-        }
+        self.command_overlay_visibility
+            .matching_commands(&self.input)
     }
 
     pub fn command_overlay_move(&mut self, delta: i32) {
@@ -658,7 +720,10 @@ impl AppState {
             return;
         }
         let len = matches.len() as i32;
-        let current = self.command_overlay_selected.map(|i| i as i32).unwrap_or(-1);
+        let current = self
+            .command_overlay_selected
+            .map(|i| i as i32)
+            .unwrap_or(-1);
         let next = ((current + delta) % len + len) % len;
         self.command_overlay_selected = Some(next as usize);
     }
@@ -672,11 +737,14 @@ impl AppState {
         if matches.is_empty() {
             return;
         }
-        let idx = self.command_overlay_selected.unwrap_or(0).min(matches.len() - 1);
+        let idx = self
+            .command_overlay_selected
+            .unwrap_or(0)
+            .min(matches.len() - 1);
         let name = matches[idx].name;
         self.input = format!("/{name} ");
         self.cursor_pos = self.input.len();
-        self.command_overlay_selected = None;
+        self.command_overlay_input_changed();
     }
 
     pub fn move_cursor_left(&mut self) {
@@ -713,71 +781,58 @@ impl AppState {
         self.theme = self.theme.next();
     }
 
-    /// Open the `/themes` picker overlay, pre-selecting the currently
-    /// active theme so the user sees where they are in the list.
+    /// Open the `/themes` picker and pre-select the active theme.
     pub fn open_theme_picker(&mut self) {
-        self.theme_overlay_selected = crate::palette::ALL_THEMES
+        self.theme_selector.reset();
+        self.theme_selector.selected = crate::palette::ALL_THEMES
             .iter()
-            .position(|t| *t == self.theme)
+            .position(|theme| *theme == self.theme)
             .unwrap_or(0);
-        self.theme_overlay_visible = true;
+        self.activate_selector(ActiveSelector::Themes);
     }
 
     pub fn close_theme_picker(&mut self) {
-        self.theme_overlay_visible = false;
+        self.close_selector(ActiveSelector::Themes);
     }
 
     pub fn theme_picker_move(&mut self, delta: i32) {
-        if !self.theme_overlay_visible {
+        if !self.selector_is_active(ActiveSelector::Themes) {
             return;
         }
-        let len = crate::palette::ALL_THEMES.len() as i32;
-        let current = self.theme_overlay_selected as i32;
-        let next = ((current + delta) % len + len) % len;
-        self.theme_overlay_selected = next as usize;
+        self.theme_selector
+            .move_selection(delta, crate::palette::ALL_THEMES.len());
     }
 
     /// Apply the highlighted theme and close the picker.
     pub fn theme_picker_accept(&mut self) {
-        if let Some(theme) = crate::palette::ALL_THEMES.get(self.theme_overlay_selected) {
+        if let Some(theme) = crate::palette::ALL_THEMES.get(self.theme_selector.selected) {
             self.theme = *theme;
         }
-        self.theme_overlay_visible = false;
+        self.close_selector(ActiveSelector::Themes);
     }
 
-    /// Open the `/models` picker overlay, resetting the filter and
-    /// pre-selecting the first row (there's no cheap reverse lookup from
-    /// `active_model`/`active_provider` into the flattened row list, and
-    /// unlike themes there's no small fixed enum to search — matches
-    /// OpenCode's own popup, which also opens with the first row
-    /// highlighted rather than the active model).
+    /// Open the `/models` picker with a fresh reusable selector state.
     pub fn open_models_picker(&mut self) {
-        self.models_overlay_query.clear();
-        self.models_overlay_selected = 0;
-        self.models_overlay_visible = true;
+        self.models_selector.reset();
+        self.activate_selector(ActiveSelector::Models);
     }
 
     pub fn close_models_picker(&mut self) {
-        self.models_overlay_visible = false;
+        self.close_selector(ActiveSelector::Models);
     }
 
     pub fn models_picker_move(&mut self, delta: i32) {
-        if !self.models_overlay_visible {
+        if !self.selector_is_active(ActiveSelector::Models) {
             return;
         }
-        let len = crate::models::filtered_rows(&self.models_overlay_query).len() as i32;
-        if len == 0 {
-            return;
-        }
-        let current = self.models_overlay_selected as i32;
-        let next = ((current + delta) % len + len) % len;
-        self.models_overlay_selected = next as usize;
+        let rows = crate::models::filtered_rows(&self.models_selector.query);
+        self.models_selector.move_selection(delta, rows.len());
     }
 
     /// Apply the highlighted model/provider pair and close the picker.
     pub fn models_picker_accept(&mut self) {
-        let rows = crate::models::filtered_rows(&self.models_overlay_query);
-        if let Some(row) = rows.get(self.models_overlay_selected) {
+        let rows = crate::models::filtered_rows(&self.models_selector.query);
+        if let Some(row) = rows.get(self.models_selector.selected) {
             self.active_model = row.model.name.to_string();
             self.active_provider = row.provider.to_string();
             self.ctx_quota_provider = row.provider.to_string();
@@ -787,20 +842,19 @@ impl AppState {
                 let _ = backend.send_command("model", &[model_full_name]);
             }
         }
-        self.models_overlay_visible = false;
+        self.close_selector(ActiveSelector::Models);
     }
 
-    /// Append a character to the picker's free-text filter, resetting the
-    /// highlighted row back to the top of the new (smaller) result set —
-    /// mirrors typing into OpenCode's own model search box.
     pub fn models_picker_type(&mut self, c: char) {
-        self.models_overlay_query.push(c);
-        self.models_overlay_selected = 0;
+        let mut query = self.models_selector.query.clone();
+        query.push(c);
+        self.models_selector.set_query(query);
     }
 
     pub fn models_picker_backspace(&mut self) {
-        self.models_overlay_query.pop();
-        self.models_overlay_selected = 0;
+        let mut query = self.models_selector.query.clone();
+        query.pop();
+        self.models_selector.set_query(query);
     }
 
     pub fn open_provider_picker(&mut self) {
@@ -810,7 +864,7 @@ impl AppState {
         self.provider_overlay_input_mode = false;
         self.provider_overlay_key_input.clear();
         self.provider_overlay_status_msg = None;
-        self.provider_overlay_visible = true;
+        self.activate_selector(ActiveSelector::Providers);
     }
 
     pub fn close_provider_picker(&mut self) {
@@ -820,12 +874,12 @@ impl AppState {
         } else if self.provider_overlay_sub_menu {
             self.provider_overlay_sub_menu = false;
         } else {
-            self.provider_overlay_visible = false;
+            self.close_selector(ActiveSelector::Providers);
         }
     }
 
     pub fn provider_picker_move(&mut self, delta: i32) {
-        if !self.provider_overlay_visible || self.provider_overlay_input_mode {
+        if !self.selector_is_active(ActiveSelector::Providers) || self.provider_overlay_input_mode {
             return;
         }
         if self.provider_overlay_sub_menu {
@@ -845,7 +899,7 @@ impl AppState {
     }
 
     pub fn provider_picker_accept(&mut self) {
-        if !self.provider_overlay_visible {
+        if !self.selector_is_active(ActiveSelector::Providers) {
             return;
         }
         let providers = crate::providers::PROVIDERS;
@@ -884,7 +938,7 @@ impl AppState {
                     }
                     self.provider_overlay_status_msg =
                         Some(format!("✓ Proveedor {} activado", item.name));
-                    self.provider_overlay_visible = false;
+                    self.close_selector(ActiveSelector::Providers);
                 }
                 1 => {
                     if item.auth_kind == crate::providers::AuthKind::ApiKey {
@@ -923,50 +977,137 @@ impl AppState {
     }
 
     pub fn open_sessions_picker(&mut self) {
-        self.sessions_overlay_selected = 0;
-        self.sessions_overlay_visible = true;
-        if let Some(backend) = self.backend.as_mut() {
-            let _ = backend.send_command("sessions_json", &[]);
-        }
-    }
-
-    pub fn close_sessions_picker(&mut self) {
-        self.sessions_overlay_visible = false;
-    }
-
-    pub fn sessions_picker_move(&mut self, delta: i32) {
-        if !self.sessions_overlay_visible {
+        if !self.sessions_selector.begin_loading() {
             return;
         }
-        let len = self.sessions_list.len() as i32;
-        if len == 0 {
-            return;
-        }
-        let current = self.sessions_overlay_selected as i32;
-        let next = ((current + delta) % len + len) % len;
-        self.sessions_overlay_selected = next as usize;
-    }
+        self.sessions_list.clear();
+        self.activate_selector(ActiveSelector::Sessions);
 
-    pub fn sessions_picker_accept(&mut self) {
-        if !self.sessions_overlay_visible {
-            return;
-        }
-        if let Some(item) = self.sessions_list.get(self.sessions_overlay_selected) {
-            let sid = item.id.clone();
-            if let Some(backend) = self.backend.as_mut() {
-                let _ = backend.send_command("load_session", &[sid]);
+        match self.backend.as_mut() {
+            Some(backend) => {
+                if let Err(error) = backend.send_command("sessions_json", &[]) {
+                    self.sessions_selector.failed(
+                        format!("Could not load sessions: {error}"),
+                        &self.sessions_list,
+                    );
+                }
+            }
+            None => {
+                self.sessions_selector
+                    .failed("Backend unavailable.", &self.sessions_list);
             }
         }
     }
 
-    pub fn sessions_picker_delete(&mut self) {
-        if !self.sessions_overlay_visible {
+    /// Close only the sessions UI. A pending NDJSON operation remains in
+    /// flight and continues to hold the session selector state lock.
+    pub fn close_sessions_picker(&mut self) {
+        self.close_selector(ActiveSelector::Sessions);
+    }
+
+    pub fn sessions_picker_escape(&mut self) {
+        if !self.selector_is_active(ActiveSelector::Sessions) {
             return;
         }
-        if let Some(item) = self.sessions_list.get(self.sessions_overlay_selected) {
-            let sid = item.id.clone();
-            if let Some(backend) = self.backend.as_mut() {
-                let _ = backend.send_command("delete_session", &[sid]);
+        if self.sessions_selector.confirming_delete.is_some()
+            && self.sessions_selector.cancel_delete()
+        {
+            return;
+        }
+        self.close_sessions_picker();
+    }
+
+    pub fn filtered_sessions(&self) -> Vec<&crate::sessions::SessionItem> {
+        self.sessions_selector
+            .filtered_indices(&self.sessions_list)
+            .into_iter()
+            .filter_map(|index| self.sessions_list.get(index))
+            .collect()
+    }
+
+    pub fn sessions_picker_move(&mut self, delta: i32) {
+        if !self.selector_is_active(ActiveSelector::Sessions) {
+            return;
+        }
+        self.sessions_selector
+            .move_selection(delta, &self.sessions_list);
+    }
+
+    pub fn sessions_picker_type(&mut self, c: char) {
+        if !self.selector_is_active(ActiveSelector::Sessions) {
+            return;
+        }
+        let mut query = self.sessions_selector.selection.query.clone();
+        query.push(c);
+        self.sessions_selector.set_query(query);
+    }
+
+    pub fn sessions_picker_backspace(&mut self) {
+        if !self.selector_is_active(ActiveSelector::Sessions) {
+            return;
+        }
+        let mut query = self.sessions_selector.selection.query.clone();
+        query.pop();
+        self.sessions_selector.set_query(query);
+    }
+
+    pub fn sessions_picker_accept(&mut self) {
+        if !self.selector_is_active(ActiveSelector::Sessions) {
+            return;
+        }
+        let Some(session_id) = self
+            .sessions_selector
+            .selected_session_id(&self.sessions_list)
+            .map(str::to_string)
+        else {
+            return;
+        };
+        if !self.sessions_selector.begin_loading_selected_session() {
+            return;
+        }
+
+        match self.backend.as_mut() {
+            Some(backend) => {
+                if let Err(error) = backend.send_command("load_session", &[session_id]) {
+                    self.sessions_selector.failed(
+                        format!("Could not load session: {error}"),
+                        &self.sessions_list,
+                    );
+                }
+            }
+            None => {
+                self.sessions_selector
+                    .failed("Backend unavailable.", &self.sessions_list);
+            }
+        }
+    }
+
+    pub fn sessions_picker_request_delete(&mut self) {
+        if self.selector_is_active(ActiveSelector::Sessions) {
+            self.sessions_selector.request_delete(&self.sessions_list);
+        }
+    }
+
+    pub fn sessions_picker_confirm_delete(&mut self) {
+        if !self.selector_is_active(ActiveSelector::Sessions) {
+            return;
+        }
+        let Some(session_id) = self.sessions_selector.begin_delete() else {
+            return;
+        };
+
+        match self.backend.as_mut() {
+            Some(backend) => {
+                if let Err(error) = backend.send_command("delete_session", &[session_id]) {
+                    self.sessions_selector.failed(
+                        format!("Could not delete session: {error}"),
+                        &self.sessions_list,
+                    );
+                }
+            }
+            None => {
+                self.sessions_selector
+                    .failed("Backend unavailable.", &self.sessions_list);
             }
         }
     }
@@ -1033,12 +1174,19 @@ fn parse_doctor_output(text: &str) -> Vec<DoctorCheck> {
         };
         let rest = rest.trim_start_matches([' ', ':']);
         let (name, message) = if let Some(colon) = rest.find(':') {
-            (rest[..colon].trim().to_string(), rest[colon + 1..].trim().to_string())
+            (
+                rest[..colon].trim().to_string(),
+                rest[colon + 1..].trim().to_string(),
+            )
         } else {
             (rest.trim().to_string(), String::new())
         };
         if !name.is_empty() {
-            checks.push(DoctorCheck { status, name, message });
+            checks.push(DoctorCheck {
+                status,
+                name,
+                message,
+            });
         }
     }
     checks
@@ -1102,6 +1250,29 @@ fn extract_json_num(json: &str, key: &str) -> Option<usize> {
     let after = &json[pos + needle.len()..];
     let colon = after.find(':')?;
     let val_part = after[colon + 1..].trim_start();
-    let num_str: String = val_part.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let num_str: String = val_part
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     num_str.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommandOverlayVisibility;
+
+    #[test]
+    fn dismissed_command_overlay_reopens_after_input_edit() {
+        let input_before_edit = "/mod";
+        let input_after_edit = "/mode";
+        let mut visibility = CommandOverlayVisibility::default();
+
+        assert!(!visibility.matching_commands(input_before_edit).is_empty());
+
+        visibility.dismiss();
+        assert!(visibility.matching_commands(input_before_edit).is_empty());
+
+        visibility.reopen_after_input_change();
+        assert!(!visibility.matching_commands(input_after_edit).is_empty());
+    }
 }

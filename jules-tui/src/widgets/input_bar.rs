@@ -48,7 +48,8 @@ const PROMPT_PREFIX_WIDTH: u16 = 2; // "› " — prompt_char + space
 
 #[cfg(test)]
 mod tests {
-    use super::wrapped_input_rows;
+    use super::{draw_command_overlay, wrapped_input_rows};
+    use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
     #[test]
     fn empty_input_is_one_row() {
@@ -69,6 +70,43 @@ mod tests {
     #[test]
     fn zero_width_never_panics() {
         assert_eq!(wrapped_input_rows("anything", 0), 1);
+    }
+
+    #[test]
+    fn command_palette_renders_visible_menu_text() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+        let matches = crate::commands::matching_commands("mod");
+
+        terminal
+            .draw(|frame| {
+                let viewport = frame.area();
+                draw_command_overlay(
+                    viewport,
+                    Rect {
+                        x: 4,
+                        y: 20,
+                        width: 60,
+                        height: 3,
+                    },
+                    frame.buffer_mut(),
+                    &matches,
+                    Some(0),
+                    "mod",
+                    crate::palette::Theme::System,
+                );
+            })
+            .expect("palette draw");
+
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(content.contains("Commands"));
+        assert!(content.contains("/mod"));
+        assert!(content.contains("Enter run"));
     }
 }
 
@@ -94,19 +132,23 @@ impl<'a> InputBar<'a> {
     pub fn get_cursor_position(&self, area: Rect) -> (u16, u16) {
         let available = area.width.saturating_sub(PROMPT_PREFIX_WIDTH).max(1) as usize;
         if !self.input.is_empty() {
-            let cursor_chars = self.input[..self.cursor_pos.min(self.input.len())].chars().count();
+            let cursor_chars = self.input[..self.cursor_pos.min(self.input.len())]
+                .chars()
+                .count();
             let row = (cursor_chars / available) as u16;
             let col = (cursor_chars % available) as u16;
-            (
-                area.x + PROMPT_PREFIX_WIDTH + col,
-                area.y + row,
-            )
+            (area.x + PROMPT_PREFIX_WIDTH + col, area.y + row)
         } else {
             (area.x + PROMPT_PREFIX_WIDTH, area.y)
         }
     }
 
-    pub fn render_themed(self, area: Rect, buf: &mut ratatui::buffer::Buffer, theme: palette::Theme) {
+    pub fn render_themed(
+        self,
+        area: Rect,
+        buf: &mut ratatui::buffer::Buffer,
+        theme: palette::Theme,
+    ) {
         let available = area.width.saturating_sub(PROMPT_PREFIX_WIDTH).max(1);
         let text_rows = wrapped_input_rows(self.input, available);
 
@@ -127,15 +169,31 @@ impl<'a> InputBar<'a> {
                 Span::styled(self.placeholder, Style::default().fg(theme.faint())),
             ]);
             Paragraph::new(line).render(
-                Rect { x: prompt_area.x, y: prompt_area.y, width: prompt_area.width, height: 1 },
+                Rect {
+                    x: prompt_area.x,
+                    y: prompt_area.y,
+                    width: prompt_area.width,
+                    height: 1,
+                },
                 buf,
             );
         } else {
             // First row carries the prompt prefix; subsequent wrapped rows
             // are indented to align under the text (not under the prompt
             // char), matching how most terminal multi-line inputs behave.
-            Paragraph::new(Span::styled(prefix.clone(), Style::default().fg(theme.amber())))
-                .render(Rect { x: prompt_area.x, y: prompt_area.y, width: PROMPT_PREFIX_WIDTH, height: 1 }, buf);
+            Paragraph::new(Span::styled(
+                prefix.clone(),
+                Style::default().fg(theme.amber()),
+            ))
+            .render(
+                Rect {
+                    x: prompt_area.x,
+                    y: prompt_area.y,
+                    width: PROMPT_PREFIX_WIDTH,
+                    height: 1,
+                },
+                buf,
+            );
             let text_area = Rect {
                 x: prompt_area.x + PROMPT_PREFIX_WIDTH,
                 y: prompt_area.y,
@@ -152,12 +210,16 @@ impl<'a> InputBar<'a> {
         // above), so the cursor tracks correctly across multiple rows.
         if !self.input.is_empty() {
             let text_width = prompt_area.width.saturating_sub(PROMPT_PREFIX_WIDTH).max(1) as usize;
-            let cursor_chars = self.input[..self.cursor_pos.min(self.input.len())].chars().count();
+            let cursor_chars = self.input[..self.cursor_pos.min(self.input.len())]
+                .chars()
+                .count();
             let row = (cursor_chars / text_width) as u16;
             let col = (cursor_chars % text_width) as u16;
             let cursor_x = prompt_area.x + PROMPT_PREFIX_WIDTH + col;
             let cursor_y = prompt_area.y + row;
-            if cursor_x < prompt_area.x + prompt_area.width && cursor_y < prompt_area.y + prompt_area.height {
+            if cursor_x < prompt_area.x + prompt_area.width
+                && cursor_y < prompt_area.y + prompt_area.height
+            {
                 if let Some(cell) = buf.cell_mut((cursor_x, cursor_y)) {
                     cell.set_style(Style::default().bg(theme.accent()).fg(theme.void()));
                 }
@@ -223,7 +285,11 @@ pub fn bordered_block(theme: palette::Theme) -> Block<'static> {
         .padding(ratatui::widgets::Padding::new(2, 2, 1, 0))
 }
 
-pub fn draw_left_accent_bar(outer_area: Rect, buf: &mut ratatui::buffer::Buffer, theme: palette::Theme) {
+pub fn draw_left_accent_bar(
+    outer_area: Rect,
+    buf: &mut ratatui::buffer::Buffer,
+    theme: palette::Theme,
+) {
     if outer_area.width == 0 || outer_area.x == 0 {
         return;
     }
@@ -244,7 +310,11 @@ pub fn draw_left_accent_bar(outer_area: Rect, buf: &mut ratatui::buffer::Buffer,
     }
 }
 
-pub fn draw_panel_half_extension(outer_area: Rect, buf: &mut ratatui::buffer::Buffer, theme: palette::Theme) {
+pub fn draw_panel_half_extension(
+    outer_area: Rect,
+    buf: &mut ratatui::buffer::Buffer,
+    theme: palette::Theme,
+) {
     if outer_area.width == 0 || outer_area.height == 0 {
         return;
     }
@@ -262,105 +332,144 @@ pub fn draw_panel_half_extension(outer_area: Rect, buf: &mut ratatui::buffer::Bu
     }
 }
 
-
-
-/// Slash command overlay: a small popup listing commands matching what
-/// the user has typed after `/`, drawn just above the input panel (user
-/// request, 2026-07-19 — ported from the Python/Textual prototype's
-/// `#cmd-overlay`, which is now obsolete). `selected` highlights one row
-/// for keyboard navigation (Up/Down to move, Tab/Enter to accept).
+/// Slash command palette anchored above the input panel. It deliberately
+/// paints an opaque surface even in the System theme so it reads as an
+/// interactive menu rather than text floating over the chat.
 pub fn draw_command_overlay(
-    area: Rect,
+    viewport: Rect,
+    anchor: Rect,
     buf: &mut ratatui::buffer::Buffer,
     matches: &[&crate::commands::SlashCommand],
     selected: Option<usize>,
+    query: &str,
     theme: palette::Theme,
 ) {
-    use ratatui::widgets::{List, ListItem, ListState};
+    use ratatui::widgets::{Borders, List, ListItem, ListState};
 
-    if matches.is_empty() || area.height == 0 || area.width == 0 {
+    let available_height = anchor.y.saturating_sub(viewport.y);
+    if matches.is_empty() || anchor.width < 16 || available_height < 2 {
         return;
     }
 
-    // Solid background fill — paint every cell explicitly with a space so
-    // that whatever was rendered underneath (chat log, ASCII art, etc.)
-    // is guaranteed to be overwritten before the list items are drawn.
-    let bg = theme.field_bg().unwrap_or(ratatui::style::Color::Reset);
-    let fill_style = Style::default().bg(bg);
-    for row_y in area.y..area.y + area.height {
-        for col_x in area.x..area.x + area.width {
-            if let Some(cell) = buf.cell_mut((col_x, row_y)) {
-                cell.set_symbol(" ");
-                cell.set_style(fill_style);
+    let bg = theme.panel_bg().unwrap_or(theme.void());
+    let fill = |area: Rect, buf: &mut ratatui::buffer::Buffer| {
+        let fill_style = Style::default().bg(bg).fg(theme.text());
+        for row_y in area.y..area.y + area.height {
+            for col_x in area.x..area.x + area.width {
+                if let Some(cell) = buf.cell_mut((col_x, row_y)) {
+                    cell.set_symbol(" ");
+                    cell.set_style(fill_style);
+                }
             }
         }
-    }
-
-    // ┃ accent borders drawn OUTSIDE the background rect — same pattern
-    // as draw_left_accent_bar — so the left border lands at the same
-    // column as the input panel's accent bar (area.x - 1).
-    // The border cells include `bg` in their style to avoid a color
-    // discontinuity where the fill meets the ┃.
-    let border_style = Style::default().fg(theme.faint());
-    let buf_width = buf.area().width;
-    let buf_height = buf.area().height;
-    for row_y in area.y..area.y + area.height {
-        // Left border — one column to the left of the fill area.
-        if area.x > 0 {
-            if let Some(cell) = buf.cell_mut((area.x - 1, row_y)) {
-                cell.set_symbol("┃");
-                cell.set_style(border_style);
-            }
-        }
-        // Right border — one column past the right edge of the fill area.
-        let right_x = area.x + area.width;
-        if right_x < buf_width {
-            if let Some(cell) = buf.cell_mut((right_x, row_y)) {
-                cell.set_symbol("┃");
-                cell.set_style(border_style);
-            }
-        }
-        let _ = buf_height; // suppress unused warning
-    }
-
-    // Inner content area: 1 col gap on each side (the ┃ is already
-    // outside the fill rect) and 1 row of vertical padding top/bottom.
-    if area.width < 4 || area.height < 3 {
-        return;
-    }
-    let inner = Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
     };
 
-    let item_style = Style::default().bg(bg);
+    // A two-line fallback is intentionally complete rather than a clipped
+    // menu: it identifies the active palette and its currently valid keys.
+    if available_height < 5 {
+        let compact_area = Rect {
+            x: anchor.x,
+            y: anchor.y.saturating_sub(2),
+            width: anchor.width,
+            height: 2,
+        };
+        fill(compact_area, buf);
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " Commands ",
+                Style::default()
+                    .fg(theme.accent())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("/{}", query), Style::default().fg(theme.text())),
+        ]))
+        .render(
+            Rect {
+                height: 1,
+                ..compact_area
+            },
+            buf,
+        );
+        Paragraph::new(Line::from(Span::styled(
+            "Enter run · Tab complete · Esc close",
+            Style::default().fg(theme.faint()),
+        )))
+        .render(
+            Rect {
+                y: compact_area.y + 1,
+                height: 1,
+                ..compact_area
+            },
+            buf,
+        );
+        return;
+    }
+
+    let desired_height = (matches.len().min(5) as u16).saturating_add(4);
+    let height = desired_height.min(available_height);
+    let popup_area = Rect {
+        x: anchor.x,
+        y: anchor.y.saturating_sub(height),
+        width: anchor.width,
+        height,
+    };
+    fill(popup_area, buf);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent()).bg(bg))
+        .style(Style::default().fg(theme.text()).bg(bg))
+        .title(Span::styled(
+            " Commands ",
+            Style::default()
+                .fg(theme.amber())
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(popup_area);
+    block.render(popup_area, buf);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    Paragraph::new(Line::from(vec![
+        Span::styled("Query ", Style::default().fg(theme.faint())),
+        Span::styled(format!("/{}", query), Style::default().fg(theme.text())),
+    ]))
+    .render(rows[0], buf);
+
     let items: Vec<ListItem> = matches
         .iter()
-        .map(|cmd| {
+        .map(|command| {
             ListItem::new(Line::from(vec![
-                Span::styled(format!("/{:<12}", cmd.name), Style::default().fg(theme.amber())),
-                Span::styled(cmd.description, Style::default().fg(theme.faint())),
+                Span::styled(
+                    format!(" /{:<12}", command.name),
+                    Style::default().fg(theme.amber()),
+                ),
+                Span::styled(command.description, Style::default().fg(theme.faint())),
             ]))
-            .style(item_style)
         })
         .collect();
-
-    // Highlight: slightly lighter background + bold text so the selected
-    // row is clearly distinct without losing the amber command name color.
-    let highlight_bg = theme.panel_bg().unwrap_or(theme.void());
     let list = List::new(items)
         .style(Style::default().bg(bg))
         .highlight_style(
             Style::default()
                 .fg(theme.text())
-                .add_modifier(Modifier::BOLD)
-                .bg(highlight_bg),
-        );
-
+                .bg(theme.field_bg().unwrap_or(theme.void()))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("›");
     let mut list_state = ListState::default();
     list_state.select(selected.or(Some(0)));
+    ratatui::widgets::StatefulWidget::render(list, rows[1], buf, &mut list_state);
 
-    ratatui::widgets::StatefulWidget::render(list, inner, buf, &mut list_state);
+    Paragraph::new(Line::from(Span::styled(
+        "Enter run · Tab complete · ↑/↓ select · Esc close",
+        Style::default().fg(theme.faint()),
+    )))
+    .render(rows[2], buf);
 }

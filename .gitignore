@@ -17,3 +17,10 @@ build/
 *.egg-info/
 scratch/
 scripts/
+
+# Rust build artifacts
+target/
+**/*.class
+
+**/target/
+

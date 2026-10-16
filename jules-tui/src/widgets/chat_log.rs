@@ -92,7 +92,13 @@ impl<'a> Widget for ChatLog<'a> {
                 height: msg_height,
             };
 
-            render_message(msg, msg_draw_area, &mut temp_buf, self.thinking_expanded, self.theme);
+            render_message(
+                msg,
+                msg_draw_area,
+                &mut temp_buf,
+                self.thinking_expanded,
+                self.theme,
+            );
 
             let screen_y = area.y as i64 + (msg_top - viewport_top);
 
@@ -259,19 +265,25 @@ fn parse_markdown_lines(text: &str, theme: palette::Theme) -> Vec<Line<'static>>
             let content = &line[4..];
             result.push(Line::from(Span::styled(
                 format!("### {}", content),
-                Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent())
+                    .add_modifier(Modifier::BOLD),
             )));
         } else if line.starts_with("## ") {
             let content = &line[3..];
             result.push(Line::from(Span::styled(
                 format!("## {}", content),
-                Style::default().fg(theme.amber()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.amber())
+                    .add_modifier(Modifier::BOLD),
             )));
         } else if line.starts_with("# ") {
             let content = &line[2..];
             result.push(Line::from(Span::styled(
                 format!("# {}", content),
-                Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent())
+                    .add_modifier(Modifier::BOLD),
             )));
         } else if line.starts_with("- ") || line.starts_with("* ") {
             let content = &line[2..];
@@ -284,7 +296,12 @@ fn parse_markdown_lines(text: &str, theme: palette::Theme) -> Vec<Line<'static>>
             let eq = &trimmed[2..trimmed.len() - 2];
             result.push(Line::from(vec![
                 Span::styled("  ", Style::default()),
-                Span::styled(eq.trim().to_string(), Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    eq.trim().to_string(),
+                    Style::default()
+                        .fg(theme.accent())
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]));
         } else {
             let spans = parse_inline_markdown(line, theme);
@@ -293,7 +310,10 @@ fn parse_markdown_lines(text: &str, theme: palette::Theme) -> Vec<Line<'static>>
     }
 
     if result.is_empty() {
-        result.push(Line::from(Span::styled("", Style::default().fg(theme.text()))));
+        result.push(Line::from(Span::styled(
+            "",
+            Style::default().fg(theme.text()),
+        )));
     }
 
     result
@@ -325,7 +345,10 @@ fn parse_inline_markdown(line: &str, theme: palette::Theme) -> Vec<Span<'static>
     }
 
     if spans.is_empty() {
-        spans.push(Span::styled(line.to_string(), Style::default().fg(theme.text())));
+        spans.push(Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.text()),
+        ));
     }
 
     spans
@@ -345,7 +368,9 @@ fn parse_bold_and_italic(text: &str, theme: palette::Theme) -> Vec<Span<'static>
                 let bold_text = &after_first[..end];
                 spans.push(Span::styled(
                     bold_text.to_string(),
-                    Style::default().fg(theme.text()).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.text())
+                        .add_modifier(Modifier::BOLD),
                 ));
                 remaining = &after_first[end + 2..];
             } else {
@@ -368,22 +393,33 @@ fn parse_italic(text: &str, theme: palette::Theme) -> Vec<Span<'static>> {
     while !remaining.is_empty() {
         if let Some(start) = remaining.find('*') {
             if start > 0 {
-                spans.push(Span::styled(remaining[..start].to_string(), Style::default().fg(theme.text())));
+                spans.push(Span::styled(
+                    remaining[..start].to_string(),
+                    Style::default().fg(theme.text()),
+                ));
             }
             let after = &remaining[start + 1..];
             if let Some(end) = after.find('*') {
                 let italic_text = &after[..end];
                 spans.push(Span::styled(
                     italic_text.to_string(),
-                    Style::default().fg(theme.text()).add_modifier(Modifier::ITALIC),
+                    Style::default()
+                        .fg(theme.text())
+                        .add_modifier(Modifier::ITALIC),
                 ));
                 remaining = &after[end + 1..];
             } else {
-                spans.push(Span::styled(remaining[start..].to_string(), Style::default().fg(theme.text())));
+                spans.push(Span::styled(
+                    remaining[start..].to_string(),
+                    Style::default().fg(theme.text()),
+                ));
                 break;
             }
         } else {
-            spans.push(Span::styled(remaining.to_string(), Style::default().fg(theme.text())));
+            spans.push(Span::styled(
+                remaining.to_string(),
+                Style::default().fg(theme.text()),
+            ));
             break;
         }
     }
@@ -408,7 +444,12 @@ fn wrapped_height(text: &str, width: u16) -> u16 {
     (total_rows as u16).max(1)
 }
 
-fn message_height(msg: &ChatMessage, width: u16, thinking_expanded: bool, theme: palette::Theme) -> u16 {
+fn message_height(
+    msg: &ChatMessage,
+    width: u16,
+    thinking_expanded: bool,
+    theme: palette::Theme,
+) -> u16 {
     // User message panels are fixed at 3 rows (blank / message centered /
     // blank), per user decision (2026-07-18) — matches the reference
     // screenshot regardless of message length. Jules' replies keep the

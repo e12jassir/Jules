@@ -18,7 +18,9 @@ use ratatui::{
 use crate::app::{AppState, Screen};
 use crate::palette;
 use crate::widgets::chat_log::ChatLog;
-use crate::widgets::input_bar::{bordered_block, draw_command_overlay, draw_left_accent_bar, draw_panel_half_extension, InputBar};
+use crate::widgets::input_bar::{
+    bordered_block, draw_command_overlay, draw_left_accent_bar, draw_panel_half_extension, InputBar,
+};
 use crate::widgets::sidebar::Sidebar;
 use crate::widgets::status_bar::BottomBar;
 
@@ -50,21 +52,14 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         rows[1],
     );
 
-    if state.theme_overlay_visible {
+    if let Some(selector) = state.active_selector {
         dim_backdrop(frame.buffer_mut(), area, state.theme);
-        draw_theme_picker(frame, area, state);
-    }
-    if state.models_overlay_visible {
-        dim_backdrop(frame.buffer_mut(), area, state.theme);
-        draw_models_picker(frame, area, state);
-    }
-    if state.provider_overlay_visible {
-        dim_backdrop(frame.buffer_mut(), area, state.theme);
-        draw_provider_picker(frame, area, state);
-    }
-    if state.sessions_overlay_visible {
-        dim_backdrop(frame.buffer_mut(), area, state.theme);
-        draw_sessions_picker(frame, area, state);
+        match selector {
+            crate::selector::ActiveSelector::Themes => draw_theme_picker(frame, area, state),
+            crate::selector::ActiveSelector::Models => draw_models_picker(frame, area, state),
+            crate::selector::ActiveSelector::Providers => draw_provider_picker(frame, area, state),
+            crate::selector::ActiveSelector::Sessions => draw_sessions_picker(frame, area, state),
+        }
     }
 }
 
@@ -155,7 +150,7 @@ fn draw_theme_picker(frame: &mut Frame, area: Rect, state: &AppState) {
             .bg(theme.field_bg().unwrap_or(theme.void())),
     );
     let mut list_state = ListState::default();
-    list_state.select(Some(state.theme_overlay_selected));
+    list_state.select(Some(state.theme_selector.selected));
     ratatui::widgets::StatefulWidget::render(list, inner, frame.buffer_mut(), &mut list_state);
 }
 
@@ -167,7 +162,7 @@ fn draw_models_picker(frame: &mut Frame, area: Rect, state: &AppState) {
     use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
     let theme = state.theme;
-    let rows = filtered_rows(&state.models_overlay_query);
+    let rows = filtered_rows(&state.models_selector.query);
 
     let popup_width = 60.min(area.width.saturating_sub(2));
     let popup_height = 25.min(area.height.saturating_sub(2));
@@ -233,20 +228,34 @@ fn draw_models_picker(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     let footer_area = chunks[5];
 
-    // 4. Header: "Select model" on left, "esc" on right
-    let gap_title = (header_area.width as usize).saturating_sub(15);
+    // Header: title, live result count, and the real close key.
+    let count_label = format!("{} matches", rows.len());
+    let header_used = "Models".len() + count_label.len() + "Esc close".len() + 2;
+    let header_gap = (header_area.width as usize)
+        .saturating_sub(header_used)
+        .max(1);
     Paragraph::new(Line::from(vec![
-        Span::styled("Select model", Style::default().fg(theme.text()).add_modifier(Modifier::BOLD)),
-        Span::raw(" ".repeat(gap_title)),
-        Span::styled("esc", Style::default().fg(theme.faint())),
+        Span::styled(
+            "Models",
+            Style::default()
+                .fg(theme.text())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(count_label, Style::default().fg(theme.faint())),
+        Span::raw(" ".repeat(header_gap)),
+        Span::styled("Esc close", Style::default().fg(theme.faint())),
     ]))
     .render(header_area, buf);
 
     // 5. Search bar with subtle highlighted background and 1-space margin
-    let search_placeholder = if state.models_overlay_query.is_empty() {
+    let search_placeholder = if state.models_selector.query.is_empty() {
         Span::styled(" Search", Style::default().fg(theme.faint()))
     } else {
-        Span::styled(format!(" {}▏", state.models_overlay_query), Style::default().fg(theme.text()))
+        Span::styled(
+            format!(" {}▏", state.models_selector.query),
+            Style::default().fg(theme.text()),
+        )
     };
 
     let search_fill = Style::default().bg(highlight_bg);
@@ -262,11 +271,14 @@ fn draw_models_picker(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut selectable_item_visual_indices: Vec<usize> = Vec::new();
 
-    if state.models_overlay_query.is_empty() && !state.active_model.is_empty() {
+    if state.models_selector.query.is_empty() && !state.active_model.is_empty() {
         // Recent Section
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(" Recent", Style::default().fg(theme.faint()).add_modifier(Modifier::BOLD)),
-        ])));
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            " Recent",
+            Style::default()
+                .fg(theme.faint())
+                .add_modifier(Modifier::BOLD),
+        )])));
         let active_icon = get_provider_icon(&state.active_provider);
         let active_left = format!(" ● {} {}", active_icon, state.active_model);
         let active_provider = format!(" {}", state.active_provider);
@@ -279,16 +291,22 @@ fn draw_models_picker(frame: &mut Frame, area: Rect, state: &AppState) {
             .max(1);
 
         let active_line = Line::from(vec![
-            Span::styled(active_left, Style::default().fg(theme.text()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                active_left,
+                Style::default()
+                    .fg(theme.text())
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(active_provider, Style::default().fg(theme.faint())),
             Span::raw(" ".repeat(gap)),
             Span::styled(free_tag, Style::default().fg(theme.faint())),
             Span::raw(" "),
         ]);
         items.push(ListItem::new(active_line));
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(" ───────────────────────────────────────────", Style::default().fg(theme.faint())),
-        ])));
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            " ───────────────────────────────────────────",
+            Style::default().fg(theme.faint()),
+        )])));
     }
 
     let mut current_provider = "";
@@ -298,15 +316,16 @@ fn draw_models_picker(frame: &mut Frame, area: Rect, state: &AppState) {
                 items.push(ListItem::new(Line::from(""))); // Blank line space between provider groups
             }
             current_provider = row.provider;
-            items.push(ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!(" {} {}", row.icon, row.provider),
-                    Style::default().fg(theme.faint()).add_modifier(Modifier::BOLD),
-                ),
-            ])));
+            items.push(ListItem::new(Line::from(vec![Span::styled(
+                format!(" {} {}", row.icon, row.provider),
+                Style::default()
+                    .fg(theme.faint())
+                    .add_modifier(Modifier::BOLD),
+            )])));
         }
 
-        let is_active = row.model.name == state.active_model && row.provider == state.active_provider;
+        let is_active =
+            row.model.name == state.active_model && row.provider == state.active_provider;
         let marker = if is_active { "● " } else { "  " };
         let free_text = if row.model.free { "Free" } else { "" };
         let model_left = format!(" {marker}{}", row.model.name);
@@ -328,9 +347,10 @@ fn draw_models_picker(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 
     if rows.is_empty() {
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(" No models found", Style::default().fg(theme.faint())),
-        ])));
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            " No models found",
+            Style::default().fg(theme.faint()),
+        )])));
     }
 
     // 7. Render List with full-row bar highlight matching the / command overlay
@@ -345,25 +365,43 @@ fn draw_models_picker(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let mut list_state = ListState::default();
     if !selectable_item_visual_indices.is_empty() {
-        let sel = state.models_overlay_selected.min(selectable_item_visual_indices.len() - 1);
+        let sel = state
+            .models_selector
+            .selected
+            .min(selectable_item_visual_indices.len() - 1);
         list_state.select(Some(selectable_item_visual_indices[sel]));
     }
 
     ratatui::widgets::StatefulWidget::render(list, list_area, buf, &mut list_state);
 
-    // 8. Footer navigation matching exact OpenCode mockup
+    // Footer only advertises keys handled by `handle_key_models_overlay`.
     let footer_text = Line::from(vec![
-        Span::styled("Connect provider ", Style::default().fg(theme.faint())),
-        Span::styled("ctrl+a", Style::default().fg(theme.text())),
-        Span::raw("   "),
-        Span::styled("Favorite ", Style::default().fg(theme.faint())),
-        Span::styled("ctrl+f", Style::default().fg(theme.text())),
+        Span::styled(
+            "↑/↓ ",
+            Style::default()
+                .fg(theme.amber())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Navigate  •  ", Style::default().fg(theme.faint())),
+        Span::styled(
+            "Enter ",
+            Style::default()
+                .fg(theme.good())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Select  •  ", Style::default().fg(theme.faint())),
+        Span::styled(
+            "Esc ",
+            Style::default()
+                .fg(theme.amber())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("Close", Style::default().fg(theme.faint())),
     ]);
     Paragraph::new(footer_text)
         .alignment(Alignment::Center)
         .render(footer_area, buf);
 }
-
 
 fn draw_home(frame: &mut Frame, area: Rect, state: &AppState) {
     // Mirrors #home .home-center: vertically centered logo + input box + tip.
@@ -399,7 +437,9 @@ fn draw_home(frame: &mut Frame, area: Rect, state: &AppState) {
         };
         Paragraph::new(Line::from(Span::styled(
             *line,
-            Style::default().fg(ratatui::style::Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(ratatui::style::Color::White)
+                .add_modifier(Modifier::BOLD),
         )))
         .alignment(Alignment::Center)
         .render(line_area, frame.buffer_mut());
@@ -439,18 +479,14 @@ fn draw_home(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let matches = state.command_overlay_matches();
     if !matches.is_empty() {
-        let overlay_height = (matches.len() as u16 + 2).min(12);
-        let overlay_area = Rect {
-            x: box_area.x,
-            y: box_area.y.saturating_sub(overlay_height),
-            width: box_area.width,
-            height: overlay_height,
-        };
+        let query = crate::commands::slash_query(&state.input).unwrap_or_default();
         draw_command_overlay(
-            overlay_area,
+            area,
+            box_area,
             frame.buffer_mut(),
             &matches,
             state.command_overlay_selected,
+            query,
             state.theme,
         );
     }
@@ -462,7 +498,12 @@ fn draw_home(frame: &mut Frame, area: Rect, state: &AppState) {
         height: tip_height,
     };
     let tip_line = Line::from(vec![
-        Span::styled("Tip", Style::default().fg(state.theme.warn()).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Tip",
+            Style::default()
+                .fg(state.theme.warn())
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             " run jules doctor the first time to check your environment",
             Style::default().fg(state.theme.faint()),
@@ -506,7 +547,7 @@ fn draw_chat(frame: &mut Frame, area: Rect, state: &AppState) {
     let main_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),    // Chat thread log
+            Constraint::Min(1),                     // Chat thread log
             Constraint::Length(input_panel_height), // input bar panel
             Constraint::Length(1), // 1 blank line below input panel (shifts panel 1 line up)
         ])
@@ -516,7 +557,12 @@ fn draw_chat(frame: &mut Frame, area: Rect, state: &AppState) {
     let thread_inner = thread_block.inner(main_rows[0]);
     frame.render_widget(thread_block, main_rows[0]);
     frame.render_widget(
-        ChatLog::new(&state.messages, state.thinking_expanded, state.theme, state.scroll_offset),
+        ChatLog::new(
+            &state.messages,
+            state.thinking_expanded,
+            state.theme,
+            state.scroll_offset,
+        ),
         thread_inner,
     );
 
@@ -527,7 +573,6 @@ fn draw_chat(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(input_block, main_rows[1]);
     draw_left_accent_bar(main_rows[1], frame.buffer_mut(), state.theme);
     draw_panel_half_extension(main_rows[1], frame.buffer_mut(), state.theme);
-
 
     let input_bar = InputBar {
         input: &state.input,
@@ -544,23 +589,17 @@ fn draw_chat(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let matches = state.command_overlay_matches();
     if !matches.is_empty() {
-        let overlay_height = (matches.len() as u16 + 2).min(12);
-        let overlay_area = Rect {
-            x: main_rows[1].x,
-            y: main_rows[1].y.saturating_sub(overlay_height),
-            width: main_rows[1].width,
-            height: overlay_height,
-        };
+        let query = crate::commands::slash_query(&state.input).unwrap_or_default();
         draw_command_overlay(
-            overlay_area,
+            area,
+            main_rows[1],
             frame.buffer_mut(),
             &matches,
             state.command_overlay_selected,
+            query,
             state.theme,
         );
     }
-
-
 
     if state.sidebar_visible {
         let mut sidebar_style = Style::default();
@@ -744,26 +783,58 @@ fn draw_provider_picker(frame: &mut Frame, area: Rect, state: &AppState) {
 
             let header_y = inner_area.y + 2;
             let header_line = Line::from(vec![
-                Span::styled(format!("{} ", item.icon), Style::default().fg(theme.amber())),
-                Span::styled(format!("Opciones para: {}", item.name), Style::default().fg(theme.text()).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{} ", item.icon),
+                    Style::default().fg(theme.amber()),
+                ),
+                Span::styled(
+                    format!("Opciones para: {}", item.name),
+                    Style::default()
+                        .fg(theme.text())
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]);
             Paragraph::new(header_line).render(
-                Rect { x: inner_area.x, y: header_y, width: inner_area.width, height: 1 },
+                Rect {
+                    x: inner_area.x,
+                    y: header_y,
+                    width: inner_area.width,
+                    height: 1,
+                },
                 buf,
             );
 
             let status_y = header_y + 1;
             let status_text = match item.auth_kind {
-                AuthKind::ApiKey => if is_configured {
-                    Span::styled("Estado: ✓ API Key Vinculada", Style::default().fg(theme.good()))
-                } else {
-                    Span::styled("Estado: ○ Sin API Key Vinculada", Style::default().fg(theme.amber()))
-                },
-                AuthKind::OAuth => Span::styled("Estado: ⚡ OAuth Login", Style::default().fg(theme.accent())),
-                AuthKind::None => Span::styled("Estado: ● Proveedor Libre / Local", Style::default().fg(theme.faint())),
+                AuthKind::ApiKey => {
+                    if is_configured {
+                        Span::styled(
+                            "Estado: ✓ API Key Vinculada",
+                            Style::default().fg(theme.good()),
+                        )
+                    } else {
+                        Span::styled(
+                            "Estado: ○ Sin API Key Vinculada",
+                            Style::default().fg(theme.amber()),
+                        )
+                    }
+                }
+                AuthKind::OAuth => Span::styled(
+                    "Estado: ⚡ OAuth Login",
+                    Style::default().fg(theme.accent()),
+                ),
+                AuthKind::None => Span::styled(
+                    "Estado: ● Proveedor Libre / Local",
+                    Style::default().fg(theme.faint()),
+                ),
             };
             Paragraph::new(Line::from(status_text)).render(
-                Rect { x: inner_area.x, y: status_y, width: inner_area.width, height: 1 },
+                Rect {
+                    x: inner_area.x,
+                    y: status_y,
+                    width: inner_area.width,
+                    height: 1,
+                },
                 buf,
             );
 
@@ -778,18 +849,32 @@ fn draw_provider_picker(frame: &mut Frame, area: Rect, state: &AppState) {
             let action_items = vec![
                 ListItem::new(Line::from(vec![
                     Span::styled("  1. ", Style::default().fg(theme.amber())),
-                    Span::styled("Activar como proveedor principal", Style::default().fg(theme.text())),
+                    Span::styled(
+                        "Activar como proveedor principal",
+                        Style::default().fg(theme.text()),
+                    ),
                 ])),
                 ListItem::new(Line::from(vec![
                     Span::styled("  2. ", Style::default().fg(theme.amber())),
                     Span::styled(
-                        if is_configured { "Modificar API Key guardada" } else { "Vincular / Agregar API Key" },
+                        if is_configured {
+                            "Modificar API Key guardada"
+                        } else {
+                            "Vincular / Agregar API Key"
+                        },
                         Style::default().fg(theme.text()),
                     ),
                 ])),
                 ListItem::new(Line::from(vec![
                     Span::styled("  3. ", Style::default().fg(theme.amber())),
-                    Span::styled("Borrar API Key vinculada", Style::default().fg(if is_configured { theme.text() } else { theme.dim() })),
+                    Span::styled(
+                        "Borrar API Key vinculada",
+                        Style::default().fg(if is_configured {
+                            theme.text()
+                        } else {
+                            theme.dim()
+                        }),
+                    ),
                 ])),
             ];
 
@@ -806,15 +891,35 @@ fn draw_provider_picker(frame: &mut Frame, area: Rect, state: &AppState) {
 
             let footer_y = inner_area.y + inner_area.height.saturating_sub(1);
             let footer = Line::from(vec![
-                Span::styled("↑/↓ ", Style::default().fg(theme.amber()).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "↑/↓ ",
+                    Style::default()
+                        .fg(theme.amber())
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Elegir acción  •  ", Style::default().fg(theme.faint())),
-                Span::styled("Enter ", Style::default().fg(theme.amber()).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Enter ",
+                    Style::default()
+                        .fg(theme.amber())
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Confirmar  •  ", Style::default().fg(theme.faint())),
-                Span::styled("Esc ", Style::default().fg(theme.amber()).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Esc ",
+                    Style::default()
+                        .fg(theme.amber())
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("Volver a lista", Style::default().fg(theme.faint())),
             ]);
             Paragraph::new(footer).render(
-                Rect { x: inner_area.x, y: footer_y, width: inner_area.width, height: 1 },
+                Rect {
+                    x: inner_area.x,
+                    y: footer_y,
+                    width: inner_area.width,
+                    height: 1,
+                },
                 buf,
             );
         }
@@ -836,7 +941,12 @@ fn draw_provider_picker(frame: &mut Frame, area: Rect, state: &AppState) {
             let is_active = state.active_provider.eq_ignore_ascii_case(item.id);
 
             let active_tag = if is_active {
-                Span::styled(" [ACTIVO]", Style::default().fg(theme.amber()).add_modifier(Modifier::BOLD))
+                Span::styled(
+                    " [ACTIVO]",
+                    Style::default()
+                        .fg(theme.amber())
+                        .add_modifier(Modifier::BOLD),
+                )
             } else {
                 Span::raw("")
             };
@@ -846,10 +956,7 @@ fn draw_provider_picker(frame: &mut Frame, area: Rect, state: &AppState) {
                     if is_configured {
                         Span::styled(" [✓ VINCULADA]", Style::default().fg(theme.good()))
                     } else {
-                        Span::styled(
-                            " [○ NO VINCULADA]",
-                            Style::default().fg(theme.amber()),
-                        )
+                        Span::styled(" [○ NO VINCULADA]", Style::default().fg(theme.amber()))
                     }
                 }
                 AuthKind::OAuth => Span::styled(" [⚡ OAUTH]", Style::default().fg(theme.accent())),
@@ -857,7 +964,10 @@ fn draw_provider_picker(frame: &mut Frame, area: Rect, state: &AppState) {
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{} ", item.icon), Style::default().fg(theme.amber())),
+                Span::styled(
+                    format!("{} ", item.icon),
+                    Style::default().fg(theme.amber()),
+                ),
                 Span::styled(
                     format!("{:<18}", item.name),
                     Style::default()
@@ -951,12 +1061,12 @@ fn draw_provider_picker(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_sessions_picker(frame: &mut Frame, area: Rect, state: &AppState) {
+    use crate::selector::SessionsStatus;
     use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
     let theme = state.theme;
     let popup_width = 76.min(area.width.saturating_sub(2));
     let popup_height = 24.min(area.height.saturating_sub(2));
-
     let popup_area = Rect {
         x: area.x + (area.width.saturating_sub(popup_width)) / 2,
         y: area.y + (area.height.saturating_sub(popup_height)) / 2,
@@ -967,14 +1077,20 @@ fn draw_sessions_picker(frame: &mut Frame, area: Rect, state: &AppState) {
     let bg = theme.panel_bg().unwrap_or(theme.void());
     let highlight_bg = theme.field_bg().unwrap_or(theme.void());
     let buf = frame.buffer_mut();
-
     let fill_style = Style::default().bg(bg).fg(theme.text());
     for row_y in popup_area.y..popup_area.y + popup_area.height {
         for col_x in popup_area.x..popup_area.x + popup_area.width {
             if let Some(cell) = buf.cell_mut((col_x, row_y)) {
+                cell.set_symbol(" ");
                 cell.set_style(fill_style);
             }
         }
+    }
+
+    // A narrow terminal still receives a safe painted surface, without
+    // calculating borders or inner rectangles that could underflow.
+    if popup_area.width < 16 || popup_area.height < 9 {
+        return;
     }
 
     for row_y in popup_area.y..popup_area.y + popup_area.height {
@@ -994,14 +1110,24 @@ fn draw_sessions_picker(frame: &mut Frame, area: Rect, state: &AppState) {
         width: popup_area.width.saturating_sub(4),
         height: popup_area.height.saturating_sub(2),
     };
-
-    let title_line = Line::from(vec![Span::styled(
-        "Historial de Sesiones Guardadas",
-        Style::default()
-            .fg(theme.amber())
-            .add_modifier(Modifier::BOLD),
-    )]);
-    Paragraph::new(title_line).render(
+    let sessions = state.filtered_sessions();
+    let count_label = format!("{} shown", sessions.len());
+    let header_gap = (inner_area.width as usize)
+        .saturating_sub("Sessions".len() + count_label.len() + "Esc close".len() + 2)
+        .max(1);
+    Paragraph::new(Line::from(vec![
+        Span::styled(
+            "Sessions",
+            Style::default()
+                .fg(theme.amber())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(count_label, Style::default().fg(theme.faint())),
+        Span::raw(" ".repeat(header_gap)),
+        Span::styled("Esc close", Style::default().fg(theme.faint())),
+    ]))
+    .render(
         Rect {
             x: inner_area.x,
             y: inner_area.y,
@@ -1011,59 +1137,158 @@ fn draw_sessions_picker(frame: &mut Frame, area: Rect, state: &AppState) {
         buf,
     );
 
-    if state.sessions_list.is_empty() {
-        let msg = Line::from(Span::styled(
-            "No hay sesiones guardadas en el historial.",
-            Style::default().fg(theme.dim()),
-        ));
-        Paragraph::new(msg).render(
+    let query_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y + 2,
+        width: inner_area.width,
+        height: 1,
+    };
+    Block::default()
+        .style(Style::default().bg(highlight_bg))
+        .render(query_area, buf);
+    let query_text = if state.sessions_selector.selection.query.is_empty() {
+        " Search title or ID".to_string()
+    } else {
+        format!(" {}▏", state.sessions_selector.selection.query)
+    };
+    Paragraph::new(Line::from(Span::styled(
+        query_text,
+        Style::default().fg(if state.sessions_selector.selection.query.is_empty() {
+            theme.faint()
+        } else {
+            theme.text()
+        }),
+    )))
+    .render(query_area, buf);
+
+    let status = match state.sessions_selector.status {
+        SessionsStatus::Idle => "",
+        SessionsStatus::Loading => "Loading sessions...",
+        SessionsStatus::Ready => "",
+        SessionsStatus::Empty => "No saved sessions.",
+        SessionsStatus::LoadingSession => "Loading selected session...",
+        SessionsStatus::Deleting => "Deleting session...",
+    };
+    let status_text = state
+        .sessions_selector
+        .feedback
+        .as_deref()
+        .unwrap_or(status);
+    if !status_text.is_empty() {
+        Paragraph::new(Line::from(Span::styled(
+            status_text,
+            Style::default().fg(
+                if matches!(
+                    state.sessions_selector.status,
+                    SessionsStatus::Loading
+                        | SessionsStatus::LoadingSession
+                        | SessionsStatus::Deleting
+                ) {
+                    theme.amber()
+                } else {
+                    theme.faint()
+                },
+            ),
+        )))
+        .render(
             Rect {
                 x: inner_area.x,
-                y: inner_area.y + 4,
+                y: inner_area.y + 3,
                 width: inner_area.width,
                 height: 1,
             },
             buf,
         );
-    } else {
-        let list_area = Rect {
-            x: inner_area.x,
-            y: inner_area.y + 2,
-            width: inner_area.width,
-            height: inner_area.height.saturating_sub(4),
-        };
+    }
 
-        let items: Vec<ListItem> = state
+    let list_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y + 5,
+        width: inner_area.width,
+        height: inner_area.height.saturating_sub(7),
+    };
+
+    if let Some(session_id) = state.sessions_selector.confirming_delete.as_deref() {
+        let title = state
             .sessions_list
             .iter()
+            .find(|item| item.id == session_id)
+            .map(|item| item.title.as_str())
+            .unwrap_or(session_id);
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "Delete this saved session?",
+                Style::default()
+                    .fg(theme.warn())
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                truncate_picker_text(title, list_area.width.saturating_sub(1) as usize),
+                Style::default().fg(theme.text()),
+            )),
+            Line::from(vec![
+                Span::styled(
+                    "Enter ",
+                    Style::default()
+                        .fg(theme.warn())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("Confirm  •  ", Style::default().fg(theme.faint())),
+                Span::styled(
+                    "Esc ",
+                    Style::default()
+                        .fg(theme.amber())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("Cancel", Style::default().fg(theme.faint())),
+            ]),
+        ])
+        .render(list_area, buf);
+        return;
+    }
+
+    if sessions.is_empty() {
+        let empty_text = if state.sessions_selector.selection.query.is_empty() {
+            "No saved sessions."
+        } else {
+            "No sessions match this filter."
+        };
+        Paragraph::new(Line::from(Span::styled(
+            empty_text,
+            Style::default().fg(theme.dim()),
+        )))
+        .render(list_area, buf);
+    } else {
+        let items: Vec<ListItem> = sessions
+            .iter()
             .map(|item| {
-                let meta_str = format!(" [{} msgs • {}]", item.count, item.updated_at);
+                let meta = format!(" [{} msgs • {}]", item.count, item.id);
+                let title_width =
+                    (list_area.width as usize).saturating_sub(meta.chars().count() + 3);
+                let title = truncate_picker_text(&item.title, title_width.max(1));
                 ListItem::new(Line::from(vec![
                     Span::styled("💬 ", Style::default().fg(theme.amber())),
                     Span::styled(
-                        format!("{:<40}", item.title),
+                        title,
                         Style::default()
                             .fg(theme.text())
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(meta_str, Style::default().fg(theme.faint())),
+                    Span::styled(meta, Style::default().fg(theme.faint())),
                 ]))
             })
             .collect();
-
         let list = List::new(items).highlight_style(
             Style::default()
                 .fg(theme.text())
                 .bg(highlight_bg)
                 .add_modifier(Modifier::BOLD),
         );
-
         let mut list_state = ListState::default();
-        list_state.select(Some(state.sessions_overlay_selected));
+        list_state.select(Some(state.sessions_selector.selection.selected));
         ratatui::widgets::StatefulWidget::render(list, list_area, buf, &mut list_state);
     }
 
-    let footer_y = inner_area.y + inner_area.height.saturating_sub(1);
     let footer = Line::from(vec![
         Span::styled(
             "↑/↓ ",
@@ -1071,36 +1296,53 @@ fn draw_sessions_picker(frame: &mut Frame, area: Rect, state: &AppState) {
                 .fg(theme.amber())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("Navegar  •  ", Style::default().fg(theme.faint())),
+        Span::styled("Navigate  •  ", Style::default().fg(theme.faint())),
         Span::styled(
             "Enter ",
             Style::default()
                 .fg(theme.good())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("Restaurar Sesión  •  ", Style::default().fg(theme.faint())),
+        Span::styled("Load  •  ", Style::default().fg(theme.faint())),
         Span::styled(
             "d/Del ",
             Style::default()
-                .fg(theme.amber())
+                .fg(theme.warn())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("Borrar  •  ", Style::default().fg(theme.faint())),
+        Span::styled("Delete  •  ", Style::default().fg(theme.faint())),
         Span::styled(
             "Esc ",
             Style::default()
                 .fg(theme.amber())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("Cerrar", Style::default().fg(theme.faint())),
+        Span::styled(
+            if state.sessions_selector.is_pending() {
+                "Close (continues)"
+            } else {
+                "Close"
+            },
+            Style::default().fg(theme.faint()),
+        ),
     ]);
     Paragraph::new(footer).render(
         Rect {
             x: inner_area.x,
-            y: footer_y,
+            y: inner_area.y + inner_area.height.saturating_sub(1),
             width: inner_area.width,
             height: 1,
         },
         buf,
     );
+}
+
+fn truncate_picker_text(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    if width <= 1 {
+        return "…".to_string();
+    }
+    format!("{}…", text.chars().take(width - 1).collect::<String>())
 }

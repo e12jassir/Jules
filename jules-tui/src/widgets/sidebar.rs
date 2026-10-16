@@ -31,7 +31,12 @@ fn panel_title(title: &str, theme: palette::Theme) -> Line<'static> {
 fn kv_line(label: &str, value: String, _width: u16, theme: palette::Theme) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{label} "), Style::default().fg(theme.dim())),
-        Span::styled(value, Style::default().fg(theme.text()).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            value,
+            Style::default()
+                .fg(theme.text())
+                .add_modifier(Modifier::BOLD),
+        ),
     ])
 }
 
@@ -44,8 +49,16 @@ impl<'a> Widget for Sidebar<'a> {
         let doctor_content_rows = if s.doctor_running || s.doctor_checks.is_empty() {
             1u16 // "checking..." or "run /doctor to check"
         } else {
-            let issues = s.doctor_checks.iter().filter(|c| c.status != DoctorStatus::Pass).count();
-            if issues == 0 { 1 } else { issues.min(10) as u16 }
+            let issues = s
+                .doctor_checks
+                .iter()
+                .filter(|c| c.status != DoctorStatus::Pass)
+                .count();
+            if issues == 0 {
+                1
+            } else {
+                issues.min(10) as u16
+            }
         };
         let doctor_height = 2 + doctor_content_rows; // title + blank + rows
 
@@ -70,8 +83,18 @@ impl<'a> Widget for Sidebar<'a> {
         let ctx_lines = vec![
             panel_title("CONTEXTO", self.theme),
             Line::default(),
-            kv_line("tokens", format!("{}", s.ctx_tokens), area.width, self.theme),
-            kv_line("used", format!("{}%", s.ctx_used_pct), area.width, self.theme),
+            kv_line(
+                "tokens",
+                format!("{}", s.ctx_tokens),
+                area.width,
+                self.theme,
+            ),
+            kv_line(
+                "used",
+                format!("{}%", s.ctx_used_pct),
+                area.width,
+                self.theme,
+            ),
             kv_line(
                 "quota",
                 format!("{} {}%", s.ctx_quota_provider, s.ctx_quota_pct),
@@ -93,11 +116,12 @@ impl<'a> Widget for Sidebar<'a> {
             Line::default(),
             kv_line("active", s.active_model.clone(), area.width, self.theme),
         ];
-        let mode_line = if let (RoutingMode::Auto, Some(reason)) = (s.routing_mode, &s.routing_reason) {
-            format!("{} — {}", mode_str, reason)
-        } else {
-            mode_str.to_string()
-        };
+        let mode_line =
+            if let (RoutingMode::Auto, Some(reason)) = (s.routing_mode, &s.routing_reason) {
+                format!("{} — {}", mode_str, reason)
+            } else {
+                mode_str.to_string()
+            };
         router_lines.push(kv_line("mode", mode_line, area.width, self.theme));
         Paragraph::new(router_lines)
             .wrap(Wrap { trim: true })
@@ -107,9 +131,17 @@ impl<'a> Widget for Sidebar<'a> {
         let mem_lines = vec![
             panel_title("MEMORIA", self.theme),
             Line::default(),
-            kv_line("episodes", format!("{} retrieved", s.mem_episodes), area.width, self.theme),
+            kv_line(
+                "episodes",
+                format!("{} retrieved", s.mem_episodes),
+                area.width,
+                self.theme,
+            ),
             Line::from(Span::styled(
-                format!("top match {}% — {}", s.mem_top_match_pct, s.mem_top_match_note),
+                format!(
+                    "top match {}% — {}",
+                    s.mem_top_match_pct, s.mem_top_match_note
+                ),
                 Style::default().fg(self.theme.faint()),
             )),
         ];
@@ -118,10 +150,7 @@ impl<'a> Widget for Sidebar<'a> {
             .render(rows[5], buf);
 
         // ── DOCTOR ───────────────────────────────────────────────────────
-        let mut doctor_lines: Vec<Line> = vec![
-            panel_title("DOCTOR", self.theme),
-            Line::default(),
-        ];
+        let mut doctor_lines: Vec<Line> = vec![panel_title("DOCTOR", self.theme), Line::default()];
 
         if s.doctor_running {
             // Auto-run in progress on startup.

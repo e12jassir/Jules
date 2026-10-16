@@ -5,6 +5,7 @@ mod commands;
 mod models;
 mod palette;
 mod providers;
+mod selector;
 mod sessions;
 mod ui;
 mod widgets;
@@ -13,7 +14,10 @@ use std::io;
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -31,7 +35,11 @@ fn main() -> io::Result<()> {
     let result = run(&mut terminal);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
 
     result
@@ -117,41 +125,41 @@ fn handle_key(state: &mut AppState, code: KeyCode, modifiers: KeyModifiers) {
     }
 }
 
+fn handle_command_overlay_key(state: &mut AppState, code: KeyCode) -> bool {
+    if state.command_overlay_matches().is_empty() {
+        return false;
+    }
+
+    match code {
+        KeyCode::Up => state.command_overlay_move(-1),
+        KeyCode::Down => state.command_overlay_move(1),
+        KeyCode::Tab => match crate::commands::slash_palette_action(
+            &state.input,
+            crate::commands::SlashPaletteKey::Tab,
+        ) {
+            crate::commands::SlashPaletteAction::Complete => state.command_overlay_accept(),
+            crate::commands::SlashPaletteAction::Dispatch => unreachable!("Tab always completes"),
+        },
+        KeyCode::Enter => match crate::commands::slash_palette_action(
+            &state.input,
+            crate::commands::SlashPaletteKey::Enter,
+        ) {
+            crate::commands::SlashPaletteAction::Dispatch => state.submit_input(),
+            crate::commands::SlashPaletteAction::Complete => state.command_overlay_accept(),
+        },
+        KeyCode::Esc => state.dismiss_command_overlay(),
+        _ => return false,
+    }
+    true
+}
+
 fn handle_key_home(state: &mut AppState, code: KeyCode) {
-    if state.provider_overlay_visible {
-        handle_key_provider_overlay(state, code);
-        return;
-    }
-    if state.models_overlay_visible {
-        handle_key_models_overlay(state, code);
-        return;
-    }
-    if state.theme_overlay_visible {
-        handle_key_theme_overlay(state, code);
+    if handle_active_selector(state, code) {
         return;
     }
 
-    let matches = state.command_overlay_matches();
-    if !matches.is_empty() {
-        match code {
-            KeyCode::Up => {
-                state.command_overlay_move(-1);
-                return;
-            }
-            KeyCode::Down => {
-                state.command_overlay_move(1);
-                return;
-            }
-            KeyCode::Tab | KeyCode::Enter => {
-                state.command_overlay_accept();
-                return;
-            }
-            KeyCode::Esc => {
-                state.command_overlay_selected = None;
-                return;
-            }
-            _ => {}
-        }
+    if handle_command_overlay_key(state, code) {
+        return;
     }
 
     match code {
@@ -179,44 +187,12 @@ fn handle_key_home(state: &mut AppState, code: KeyCode) {
 }
 
 fn handle_key_chat(state: &mut AppState, code: KeyCode) {
-    if state.sessions_overlay_visible {
-        handle_key_sessions_overlay(state, code);
-        return;
-    }
-    if state.provider_overlay_visible {
-        handle_key_provider_overlay(state, code);
-        return;
-    }
-    if state.models_overlay_visible {
-        handle_key_models_overlay(state, code);
-        return;
-    }
-    if state.theme_overlay_visible {
-        handle_key_theme_overlay(state, code);
+    if handle_active_selector(state, code) {
         return;
     }
 
-    let matches = state.command_overlay_matches();
-    if !matches.is_empty() {
-        match code {
-            KeyCode::Up => {
-                state.command_overlay_move(-1);
-                return;
-            }
-            KeyCode::Down => {
-                state.command_overlay_move(1);
-                return;
-            }
-            KeyCode::Tab | KeyCode::Enter => {
-                state.command_overlay_accept();
-                return;
-            }
-            KeyCode::Esc => {
-                state.command_overlay_selected = None;
-                return;
-            }
-            _ => {}
-        }
+    if handle_command_overlay_key(state, code) {
+        return;
     }
 
     match code {
@@ -245,6 +221,17 @@ fn handle_key_chat(state: &mut AppState, code: KeyCode) {
         }
         _ => {}
     }
+}
+
+fn handle_active_selector(state: &mut AppState, code: KeyCode) -> bool {
+    match state.active_selector {
+        Some(selector::ActiveSelector::Themes) => handle_key_theme_overlay(state, code),
+        Some(selector::ActiveSelector::Models) => handle_key_models_overlay(state, code),
+        Some(selector::ActiveSelector::Providers) => handle_key_provider_overlay(state, code),
+        Some(selector::ActiveSelector::Sessions) => handle_key_sessions_overlay(state, code),
+        None => return false,
+    }
+    true
 }
 
 fn handle_key_theme_overlay(state: &mut AppState, code: KeyCode) {
@@ -300,18 +287,26 @@ fn handle_key_models_overlay(state: &mut AppState, code: KeyCode) {
 }
 
 fn handle_mouse(state: &mut AppState, event: MouseEvent) {
-    if state.models_overlay_visible {
-        match event.kind {
-            MouseEventKind::ScrollUp => state.models_picker_move(-1),
-            MouseEventKind::ScrollDown => state.models_picker_move(1),
-            _ => {}
-        }
-        return;
-    }
-    if state.theme_overlay_visible {
-        match event.kind {
-            MouseEventKind::ScrollUp => state.theme_picker_move(-1),
-            MouseEventKind::ScrollDown => state.theme_picker_move(1),
+    if let Some(selector) = state.active_selector {
+        match (selector, event.kind) {
+            (selector::ActiveSelector::Models, MouseEventKind::ScrollUp) => {
+                state.models_picker_move(-1)
+            }
+            (selector::ActiveSelector::Models, MouseEventKind::ScrollDown) => {
+                state.models_picker_move(1)
+            }
+            (selector::ActiveSelector::Themes, MouseEventKind::ScrollUp) => {
+                state.theme_picker_move(-1)
+            }
+            (selector::ActiveSelector::Themes, MouseEventKind::ScrollDown) => {
+                state.theme_picker_move(1)
+            }
+            (selector::ActiveSelector::Sessions, MouseEventKind::ScrollUp) => {
+                state.sessions_picker_move(-1)
+            }
+            (selector::ActiveSelector::Sessions, MouseEventKind::ScrollDown) => {
+                state.sessions_picker_move(1)
+            }
             _ => {}
         }
         return;
@@ -329,12 +324,31 @@ fn handle_mouse(state: &mut AppState, event: MouseEvent) {
 }
 
 fn handle_key_sessions_overlay(state: &mut AppState, code: KeyCode) {
+    // Closing the popup is always safe: it only hides the UI and never
+    // cancels the NDJSON request that may already be in flight.
+    if code == KeyCode::Esc {
+        state.sessions_picker_escape();
+        return;
+    }
+
+    if state.sessions_selector.is_pending() {
+        return;
+    }
+
+    if state.sessions_selector.confirming_delete.is_some() {
+        if code == KeyCode::Enter {
+            state.sessions_picker_confirm_delete();
+        }
+        return;
+    }
+
     match code {
         KeyCode::Up => state.sessions_picker_move(-1),
         KeyCode::Down => state.sessions_picker_move(1),
         KeyCode::Enter => state.sessions_picker_accept(),
-        KeyCode::Char('d') | KeyCode::Delete => state.sessions_picker_delete(),
-        KeyCode::Esc => state.close_sessions_picker(),
+        KeyCode::Char('d') | KeyCode::Delete => state.sessions_picker_request_delete(),
+        KeyCode::Char(c) => state.sessions_picker_type(c),
+        KeyCode::Backspace => state.sessions_picker_backspace(),
         _ => {}
     }
 }

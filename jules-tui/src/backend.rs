@@ -15,7 +15,10 @@ use std::thread;
 /// defined in `jules/cli/protocol.py`.
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
-    Status { provider: String, model: String },
+    Status {
+        provider: String,
+        model: String,
+    },
     Thinking(String),
     ContentChunk(String),
     Done,
@@ -78,7 +81,10 @@ impl BackendClient {
         // arbitrary untrusted structure, but quotes/backslashes/newlines
         // must still be escaped to keep the line valid NDJSON.
         let escaped = escape_json_string(content);
-        writeln!(self.stdin, "{{\"type\":\"user_message\",\"content\":\"{escaped}\"}}")?;
+        writeln!(
+            self.stdin,
+            "{{\"type\":\"user_message\",\"content\":\"{escaped}\"}}"
+        )?;
         self.stdin.flush()
     }
 
@@ -135,18 +141,22 @@ fn parse_event(line: &str) -> BackendEvent {
             provider: extract_string_field(line, "provider").unwrap_or_default(),
             model: extract_string_field(line, "model").unwrap_or_default(),
         },
-        Some("thinking") => BackendEvent::Thinking(extract_string_field(line, "content").unwrap_or_default()),
+        Some("thinking") => {
+            BackendEvent::Thinking(extract_string_field(line, "content").unwrap_or_default())
+        }
         Some("content_chunk") => {
             BackendEvent::ContentChunk(extract_string_field(line, "content").unwrap_or_default())
         }
         Some("done") => BackendEvent::Done,
         Some("sessions_json") => BackendEvent::SessionsJson(line.to_string()),
         Some("loaded_session") => BackendEvent::LoadedSession(line.to_string()),
-        Some("deleted_session") => {
-            BackendEvent::DeletedSession(extract_string_field(line, "session_id").unwrap_or_default())
-        }
+        Some("deleted_session") => BackendEvent::DeletedSession(
+            extract_string_field(line, "session_id").unwrap_or_default(),
+        ),
         Some("tool_status") => BackendEvent::Thinking(String::new()),
-        Some("error") => BackendEvent::Error(extract_string_field(line, "message").unwrap_or_default()),
+        Some("error") => {
+            BackendEvent::Error(extract_string_field(line, "message").unwrap_or_default())
+        }
         _ => BackendEvent::Error(format!("unrecognized backend line: {line}")),
     }
 }
@@ -215,7 +225,8 @@ mod tests {
 
     #[test]
     fn test_parse_event_status_and_done() {
-        let line_status = r#"{"type": "status", "provider": "opencode", "model": "deepseek-v4-flash-free"}"#;
+        let line_status =
+            r#"{"type": "status", "provider": "opencode", "model": "deepseek-v4-flash-free"}"#;
         match parse_event(line_status) {
             BackendEvent::Status { provider, model } => {
                 assert_eq!(provider, "opencode");

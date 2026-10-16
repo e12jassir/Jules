@@ -108,7 +108,10 @@ pub fn is_key_configured(env_var: &str) -> bool {
     if env_var.is_empty() {
         return false;
     }
-    if env::var(env_var).map(|v| !v.trim().is_empty()).unwrap_or(false) {
+    if env::var(env_var)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+    {
         return true;
     }
     let path = get_env_file_path();
