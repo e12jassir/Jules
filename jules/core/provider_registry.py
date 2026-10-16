@@ -113,6 +113,9 @@ class ProviderRegistry:
     def _is_enabled(self, provider_id: str) -> bool:
         return bool(self._all_models_for_provider(provider_id))
 
+    def all_models_for_provider(self, provider_id: str) -> tuple[str, ...]:
+        return self._all_models_for_provider(provider_id)
+
     def _all_models_for_provider(self, provider_id: str) -> tuple[str, ...]:
         seen: set[str] = set()
         models: list[str] = []

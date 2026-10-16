@@ -118,3 +118,21 @@ async def test_get_many_async_returns_existing_episodes_in_requested_order():
         assert episodes == [second, first]
     finally:
         await temp_db.engine.dispose()
+
+
+def test_init_db_creates_tables(tmp_path):
+    import sqlite3
+    from jules.memory.persistent import init_db
+
+    db_file = tmp_path / "test_memory.sqlite3"
+    init_db(db_file)
+
+    assert db_file.exists()
+    conn = sqlite3.connect(str(db_file))
+    try:
+        tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        assert "episodes" in tables
+        assert "session_contexts" in tables
+        assert "chat_history" in tables
+    finally:
+        conn.close()

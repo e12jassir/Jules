@@ -97,3 +97,10 @@ def test_provider_registry_marks_unconfigured_provider_as_disabled(tmp_path: Pat
 
     assert catalog["openrouter"].enabled is False
     assert catalog["openrouter"].model_ids == ()
+
+
+def test_all_models_for_provider_returns_all_tier_models(tmp_path: Path) -> None:
+    registry = ProviderRegistry(load_config(_config_path(tmp_path)))
+    models = registry.all_models_for_provider("openai_oauth")
+
+    assert models == ("gpt-5-mini", "gpt-5")

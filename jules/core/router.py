@@ -241,7 +241,7 @@ class CognitiveRouter:
                         async for token in fallback_provider.stream(prompt, context, fallback_model):
                             yield token, fallback_model, fallback_provider.name
                     return
-                except (ProviderError, ValueError, NotImplementedError) as fallback_exc:
+                except (ProviderError, ValueError, NotImplementedError, OAuthError) as fallback_exc:
                     last_exc = fallback_exc
 
             raise ProviderError(f"All providers in fallback chain failed. Last error: {last_exc}") from last_exc

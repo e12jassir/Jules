@@ -2,12 +2,26 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import create_engine, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from jules.memory.models import Episode, EpisodeORM
 
 DEFAULT_SQLITE_PATH = Path.home() / ".jules" / "memory.sqlite3"
+
+
+def init_db(database_path: str | Path = DEFAULT_SQLITE_PATH) -> None:
+    """Initialize the SQLite database with base schema synchronously."""
+    from jules.memory.models import Base
+    import jules.models.chat_history  # noqa: F401
+
+    path = Path(database_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    engine = create_engine(f"sqlite:///{path}", future=True)
+    try:
+        Base.metadata.create_all(bind=engine)
+    finally:
+        engine.dispose()
 
 
 def build_sqlite_async_url(database_path: str | Path = DEFAULT_SQLITE_PATH) -> str:

@@ -619,3 +619,53 @@ timeout_seconds = 60
     assert provider.name == "openrouter"
     assert model == "openrouter/google/gemini-2.5-flash"
 
+
+@pytest.mark.asyncio
+async def test_stream_with_fallback_catches_oauth_error_in_chain(
+    tmp_path: Path,
+    context: SessionContext,
+) -> None:
+    from jules.auth.base import OAuthError
+
+    cfg_path = write_config(tmp_path, fallback_chain='["primary", "openai_oauth", "ollama"]')
+
+    class StreamerProvider:
+        def __init__(self, name: str, error: Exception | None = None, response: str = "ok") -> None:
+            self.name = name
+            self.error = error
+            self.response = response
+
+        async def stream(self, prompt: str, ctx: list, model: str):
+            if self.error is not None:
+                raise self.error
+            yield self.response
+
+    primary = StreamerProvider("antigravity", error=OAuthError("primary token expired"))
+    openai_oauth = StreamerProvider("openai_oauth", error=OAuthError("oauth failed in fallback"))
+    ollama = StreamerProvider("ollama", response="ollama stream fallback success")
+
+    router = make_router(cfg_path, antigravity=primary, openai_oauth=openai_oauth, ollama=ollama)
+
+    tokens = []
+    async for token, model, provider_name in router.stream_with_fallback("test", context, TaskType.QUICK):
+        tokens.append((token, provider_name))
+
+    assert tokens == [("ollama stream fallback success", "ollama")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_override_matches_catalog_via_all_models_for_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    router = make_router(write_config(tmp_path))
+    # Ensure line 277 (registry.all_models_for_provider) is exercised even if _configured_models is bypassed
+    async def empty_configured_models():
+        return ()
+
+    monkeypatch.setattr(router, "_configured_models", empty_configured_models)
+
+    provider, model = await router.route(TaskType.QUICK, user_override="gpt-5")
+    assert provider.name == "openai_oauth"
+    assert model == "gpt-5"
+
