@@ -443,6 +443,7 @@ class SentenceStreamChunker:
 
     Accumulates tokens until at least `min_chars` (default 40) characters have
     been accumulated AND a sentence delimiter (.?!:\n) is reached.
+    The first sentence uses `min_first_chars` (default 20) to minimize initial TTFA.
     """
 
     DEFAULT_DELIMITERS_REGEX: Pattern[str] = re.compile(r"([.?!:\n]+)")
@@ -451,8 +452,11 @@ class SentenceStreamChunker:
         self,
         min_chars: int = 40,
         delimiters_pattern: Pattern[str] | str | None = None,
+        min_first_chars: int = 20,
     ) -> None:
         self.min_chars = min_chars
+        self.min_first_chars = min(min_first_chars, min_chars)
+        self._is_first_sentence: bool = True
         if delimiters_pattern is None:
             self._pattern = self.DEFAULT_DELIMITERS_REGEX
         elif isinstance(delimiters_pattern, str):
@@ -474,9 +478,10 @@ class SentenceStreamChunker:
         sentences: list[str] = []
 
         while True:
+            threshold = self.min_first_chars if self._is_first_sentence else self.min_chars
             match_found = None
             for match in self._pattern.finditer(self._buffer):
-                if match.end() >= self.min_chars:
+                if match.end() >= threshold:
                     match_found = match
                     break
 
@@ -488,6 +493,7 @@ class SentenceStreamChunker:
             self._buffer = self._buffer[cut_idx:].lstrip()
             if sentence:
                 sentences.append(sentence)
+                self._is_first_sentence = False
 
         return sentences
 
@@ -495,6 +501,7 @@ class SentenceStreamChunker:
         """Flush remaining buffered text as the final sentence."""
         leftover = self._buffer.strip()
         self._buffer = ""
+        self._is_first_sentence = True
         if leftover:
             return [leftover]
         return []
@@ -502,6 +509,7 @@ class SentenceStreamChunker:
     def reset(self) -> None:
         """Clear any buffered text."""
         self._buffer = ""
+        self._is_first_sentence = True
 
     async def stream(
         self, async_iterator: AsyncIterator[str] | AsyncIterable[str]
@@ -625,10 +633,13 @@ class VoiceSpeaker:
         self.sample_rate = getattr(self.backend, "sample_rate", sample_rate)
 
         self._sentence_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._audio_queue: asyncio.Queue[tuple[np.ndarray, int]] = asyncio.Queue()
         self._is_speaking: bool = False
         self._stop_event = threading.Event()
         self._stop_async_event: asyncio.Event | None = None
         self._active_streams: int = 0
+        self._synthesis_task: asyncio.Task[None] | None = None
+        self._playback_task: asyncio.Task[None] | None = None
         self._worker_task: asyncio.Task[None] | None = None
         self._current_playback_task: asyncio.Task[None] | None = None
         self._closed: bool = False
@@ -678,11 +689,11 @@ class VoiceSpeaker:
 
     @property
     def queue_size(self) -> int:
-        """Number of pending sentences waiting in the synthesis/playback queue."""
-        return self._sentence_queue.qsize()
+        """Number of pending sentences and audio buffers in the pipeline."""
+        return self._sentence_queue.qsize() + self._audio_queue.qsize()
 
     def _ensure_worker(self) -> None:
-        """Ensure the background playback worker task is active."""
+        """Ensure the background synthesis and playback worker tasks are active."""
         if self._closed:
             raise RuntimeError("VoiceSpeaker is closed.")
 
@@ -692,9 +703,12 @@ class VoiceSpeaker:
         except RuntimeError:
             loop = self._loop
 
-        if self._worker_task is None or self._worker_task.done():
-            if loop is not None:
-                self._worker_task = loop.create_task(self._worker_loop())
+        if loop is not None:
+            if self._synthesis_task is None or self._synthesis_task.done():
+                self._synthesis_task = loop.create_task(self._synthesis_loop())
+                self._worker_task = self._synthesis_task
+            if self._playback_task is None or self._playback_task.done():
+                self._playback_task = loop.create_task(self._playback_loop())
 
     async def _synthesize(self, sentence: str) -> tuple[np.ndarray, int]:
         """Synthesize text using the configured TTS backend in an async thread."""
@@ -738,8 +752,8 @@ class VoiceSpeaker:
 
         await asyncio.to_thread(_sync_write)
 
-    async def _worker_loop(self) -> None:
-        """Background worker that pulls sentences, synthesizes them, and plays audio."""
+    async def _synthesis_loop(self) -> None:
+        """Background worker that continuously pulls sentences and synthesizes audio."""
         while not self._closed:
             try:
                 sentence = await self._sentence_queue.get()
@@ -747,7 +761,10 @@ class VoiceSpeaker:
                 break
 
             if self._stop_event.is_set():
-                self._sentence_queue.task_done()
+                try:
+                    self._sentence_queue.task_done()
+                except ValueError:
+                    pass
                 continue
 
             try:
@@ -758,13 +775,57 @@ class VoiceSpeaker:
                         last_event="speaking",
                     )
 
-                # Synthesize text in background thread
                 samples, sr = await self._synthesize(sentence)
 
                 if self._stop_event.is_set() or len(samples) == 0:
                     continue
 
-                # Play audio
+                await self._audio_queue.put((samples, sr))
+            except Exception as exc:
+                logger.error("Error during TTS synthesis: %s", exc)
+            finally:
+                try:
+                    self._sentence_queue.task_done()
+                except ValueError:
+                    pass
+                if (
+                    self._sentence_queue.empty()
+                    and self._audio_queue.empty()
+                    and self._current_playback_task is None
+                    and self._active_streams == 0
+                    and not self._stop_event.is_set()
+                ):
+                    self._is_speaking = False
+                    if self.state_publisher is not None:
+                        self.state_publisher.update(
+                            state=DaemonState.IDLE,
+                            last_event="idle",
+                        )
+
+    async def _playback_loop(self) -> None:
+        """Background worker that continuously pulls audio buffers and plays them immediately."""
+        while not self._closed:
+            try:
+                item = await self._audio_queue.get()
+            except asyncio.CancelledError:
+                break
+
+            if self._stop_event.is_set():
+                try:
+                    self._audio_queue.task_done()
+                except ValueError:
+                    pass
+                continue
+
+            samples, sr = item
+            try:
+                self._is_speaking = True
+                if self.state_publisher is not None:
+                    self.state_publisher.update(
+                        state=DaemonState.SPEAKING,
+                        last_event="speaking",
+                    )
+
                 self._current_playback_task = asyncio.create_task(
                     self._play_samples(samples, sr)
                 )
@@ -775,11 +836,16 @@ class VoiceSpeaker:
                 finally:
                     self._current_playback_task = None
             except Exception as exc:
-                logger.error("Error during TTS synthesis or playback: %s", exc)
+                logger.error("Error during audio playback: %s", exc)
             finally:
-                self._sentence_queue.task_done()
+                try:
+                    self._audio_queue.task_done()
+                except ValueError:
+                    pass
                 if (
                     self._sentence_queue.empty()
+                    and self._audio_queue.empty()
+                    and self._current_playback_task is None
                     and self._active_streams == 0
                     and not self._stop_event.is_set()
                 ):
@@ -789,6 +855,10 @@ class VoiceSpeaker:
                             state=DaemonState.IDLE,
                             last_event="idle",
                         )
+
+    async def _worker_loop(self) -> None:
+        """Combined worker loop for backwards compatibility."""
+        await asyncio.gather(self._synthesis_loop(), self._playback_loop())
 
     async def speak_stream(self, sentences: AsyncIterable[str] | Iterable[str]) -> None:
         """Stream sentences to queue and wait until playback finishes or barge-in stops."""
@@ -816,12 +886,16 @@ class VoiceSpeaker:
                     if clean:
                         await self._sentence_queue.put(clean)
 
-            # Wait for either queue to finish or stop event to trigger
-            join_task = asyncio.create_task(self._sentence_queue.join())
+            # Wait for both queues to finish or stop event to trigger
+            async def _wait_queues() -> None:
+                await self._sentence_queue.join()
+                await self._audio_queue.join()
+
+            queues_task = asyncio.create_task(_wait_queues())
             stop_task = asyncio.create_task(self._stop_async_event.wait())
 
             done, pending = await asyncio.wait(
-                [join_task, stop_task],
+                [queues_task, stop_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for t in pending:
@@ -832,6 +906,8 @@ class VoiceSpeaker:
                 not self._stop_event.is_set()
                 and self._active_streams == 0
                 and self._sentence_queue.empty()
+                and self._audio_queue.empty()
+                and self._current_playback_task is None
             ):
                 self._is_speaking = False
                 if self.state_publisher is not None:
@@ -855,11 +931,19 @@ class VoiceSpeaker:
 
         self._is_speaking = False
 
-        # Drain pending queue
+        # Drain pending sentence queue
         while not self._sentence_queue.empty():
             try:
                 self._sentence_queue.get_nowait()
                 self._sentence_queue.task_done()
+            except (asyncio.QueueEmpty, ValueError):
+                break
+
+        # Drain pending audio queue
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+                self._audio_queue.task_done()
             except (asyncio.QueueEmpty, ValueError):
                 break
 
@@ -908,9 +992,13 @@ class VoiceSpeaker:
         listener.barge_in_callback = self.on_barge_in
 
     def close(self) -> None:
-        """Release audio resources and terminate worker task."""
+        """Release audio resources and terminate worker tasks."""
         self.stop()
         self._closed = True
+        if self._synthesis_task and not self._synthesis_task.done():
+            self._synthesis_task.cancel()
+        if self._playback_task and not self._playback_task.done():
+            self._playback_task.cancel()
         if self._worker_task and not self._worker_task.done():
             self._worker_task.cancel()
         if self._stream is not None:

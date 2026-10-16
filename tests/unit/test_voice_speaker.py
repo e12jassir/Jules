@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import subprocess
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
 
+from jules.daemon.state import DaemonState, StatePublisher
 from jules.voice.speaker import (
     BaseTTSBackend,
     EdgeTTSBackend,
@@ -18,6 +20,7 @@ from jules.voice.speaker import (
     FallbackTTSBackend,
     KokoroTTSBackend,
     MockTTSBackend,
+    SentenceStreamChunker,
     TTSModelError,
     VoiceSpeaker,
     _find_kokoro_model_files,
@@ -367,3 +370,164 @@ class TestVoiceSpeakerPriorityResolution:
 
         with patch("pathlib.Path.home", return_value=fake_home):
             assert load_configured_tts_backend() == "elevenlabs"
+
+
+# ---------------------------------------------------------------------------
+# (d) Tests for Low-Latency Pipelined Synthesis, Playback & Barge-in
+# ---------------------------------------------------------------------------
+
+
+class TestSentenceStreamChunkerFirstSentence:
+    """Tests verifying min_first_chars accelerates initial sentence emission."""
+
+    def test_min_first_chars_cuts_first_sentence_earlier(self) -> None:
+        """First sentence cuts at >= min_first_chars, while subsequent sentences require min_chars."""
+        chunker = SentenceStreamChunker(min_chars=40, min_first_chars=20)
+
+        # 14 chars with period: not emitted because < min_first_chars (20)
+        out1 = chunker.add_chunk("Hola Esteban. ")
+        assert out1 == []
+
+        # Additional 14 chars: total 28 chars >= min_first_chars (20) with delimiter
+        out2 = chunker.add_chunk("¿Cómo estás? ")
+        assert out2 == ["Hola Esteban. ¿Cómo estás?"]
+
+        # Second sentence is now subject to min_chars (40)
+        out3 = chunker.add_chunk("Muy bien! ")  # 10 chars < 40 -> not emitted
+        assert out3 == []
+
+        out4 = chunker.add_chunk("Aquí tienes el resumen completo del estado del sistema.")
+        assert len(out4) == 1
+        assert out4[0] == "Muy bien! Aquí tienes el resumen completo del estado del sistema."
+
+    def test_chunker_reset_restores_first_sentence_threshold(self) -> None:
+        """reset() restores _is_first_sentence to True for next turn."""
+        chunker = SentenceStreamChunker(min_chars=50, min_first_chars=20)
+        chunker.add_chunk("Primera oración de prueba completada.")
+        chunker.reset()
+
+        assert chunker._is_first_sentence is True
+        emitted = chunker.add_chunk("Nueva oración rápida! ")
+        assert emitted == ["Nueva oración rápida!"]
+
+
+class TestVoiceSpeakerPipelining:
+    """Tests verifying decoupled synthesis and playback pipelining."""
+
+    @pytest.mark.asyncio
+    async def test_pipelined_multi_sentence_stream_processes_smoothly(self) -> None:
+        """Pipelined synthesis and playback processes multi-sentence stream to completion."""
+        mock_stream = MagicMock()
+        mock_stream.active = True
+        backend = MockTTSBackend(audio_duration=0.02, simulate_delay=0.01)
+
+        speaker = VoiceSpeaker(
+            backend=backend,
+            stream_factory=lambda **_: mock_stream,
+        )
+
+        sentences = [
+            "Primera oración sintetizada y lista.",
+            "Segunda oración mientras la primera suena.",
+            "Tercera oración cerrando el flujo con cero latencia.",
+        ]
+
+        await speaker.speak_stream(sentences)
+
+        assert backend.history == sentences
+        assert speaker.queue_size == 0
+        assert not speaker.is_speaking
+        assert mock_stream.write.call_count >= len(sentences)
+
+        speaker.close()
+
+    @pytest.mark.asyncio
+    async def test_pipelining_concurrency_synthesis_ahead_of_playback(self) -> None:
+        """Synthesis of subsequent sentences happens concurrently while playback is active."""
+        mock_stream = MagicMock()
+        mock_stream.active = True
+
+        playback_started = asyncio.Event()
+        synthesis_completed_for_second = asyncio.Event()
+
+        class ConcurrencyTrackingBackend(BaseTTSBackend):
+            def __init__(self) -> None:
+                super().__init__(sample_rate=24000)
+                self.count = 0
+
+            def synthesize(self, text: str) -> tuple[np.ndarray, int]:
+                self.count += 1
+                if self.count == 2:
+                    synthesis_completed_for_second.set()
+                samples = np.zeros(2400, dtype=np.float32)
+                return samples, 24000
+
+        backend = ConcurrencyTrackingBackend()
+        speaker = VoiceSpeaker(
+            backend=backend,
+            stream_factory=lambda **_: mock_stream,
+        )
+
+        def slow_write(chunk: np.ndarray) -> None:
+            playback_started.set()
+            time.sleep(0.04)
+
+        mock_stream.write = slow_write
+
+        sentences = ["Primera oración en reproducción.", "Segunda oración pipelined."]
+        speak_task = asyncio.create_task(speaker.speak_stream(sentences))
+
+        await asyncio.wait_for(playback_started.wait(), timeout=1.0)
+        # Sentence 2 must synthesize even while sentence 1 write is ongoing
+        await asyncio.wait_for(synthesis_completed_for_second.wait(), timeout=1.0)
+
+        await speak_task
+        assert backend.count == 2
+        speaker.close()
+
+
+class TestVoiceSpeakerPipelinedBargeIn:
+    """Tests verifying sub-50ms barge-in interruption across decoupled queues."""
+
+    @pytest.mark.asyncio
+    async def test_instant_barge_in_drains_both_queues_under_50ms(
+        self, tmp_path: Path
+    ) -> None:
+        """Interruption immediately clears both sentence and audio queues and stops stream in <50ms."""
+        mock_stream = MagicMock()
+        mock_stream.active = True
+
+        state_file = tmp_path / "jules_pipelined_bargein.state"
+        publisher = StatePublisher(target_path=state_file, initial_state=DaemonState.IDLE)
+
+        backend = MockTTSBackend(audio_duration=0.5, simulate_delay=0.05)
+        speaker = VoiceSpeaker(
+            backend=backend,
+            state_publisher=publisher,
+            stream_factory=lambda **_: mock_stream,
+        )
+
+        sentences = [f"Oración en cola con índice {i} para barge-in." for i in range(10)]
+        speak_task = asyncio.create_task(speaker.speak_stream(sentences))
+
+        # Allow synthesis/playback to start
+        await asyncio.sleep(0.03)
+        assert speaker.is_speaking
+        assert publisher.get_current_state().state == DaemonState.SPEAKING
+
+        # Instant barge-in stop
+        t_start = time.perf_counter()
+        speaker.stop()
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+
+        assert elapsed_ms < 50.0, f"stop() took {elapsed_ms:.2f}ms, expected < 50ms"
+        assert speaker._sentence_queue.empty()
+        assert speaker._audio_queue.empty()
+        assert speaker.queue_size == 0
+        assert not speaker.is_speaking
+        assert publisher.get_current_state().state == DaemonState.IDLE
+        assert mock_stream.abort.called or mock_stream.stop.called
+
+        await asyncio.wait_for(speak_task, timeout=0.3)
+        speaker.close()
+

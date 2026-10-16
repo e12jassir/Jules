@@ -157,6 +157,15 @@ class ChatEngine:
                 )
                 return
 
+            if session_id == "voice_session" or session_id.startswith("voice"):
+                personality += (
+                    "\n\n[MODO CONVERSACIÓN POR VOZ EN TIEMPO REAL]\n"
+                    "- Estás conversando verbalmente por voz con Esteban.\n"
+                    "- Responde de forma concisa, fluida y directa: máximo 1 a 2 oraciones naturales (3 sólo si es estrictamente necesario).\n"
+                    "- Prohibido usar viñetas, listas, tablas, asteriscos, código o formato markdown.\n"
+                    "- Tono natural, inteligente, cómplice y fresco de tú a tú, sin rodeos ni formalismos de bot."
+                )
+
             prompt = compose_prompt(
                 personality=personality,
                 message=user_input,

@@ -372,3 +372,101 @@ def test_compose_prompt_formatting():
     assert "Relevant past context:\n- past question about time" in prompt
     assert "Conversation so far:\nUser: hi\nAssistant: hello" in prompt
     assert "User: What is the time?" in prompt
+
+
+@pytest.mark.asyncio
+async def test_voice_session_appends_conversational_directive():
+    """ChatEngine appends voice conversational directive when session_id is voice_session or starts with voice."""
+    provider = MagicMock()
+    provider.name = "ollama"
+
+    router = MagicMock()
+    router.route = AsyncMock(return_value=(provider, "llama3.2:1b"))
+
+    captured_prompts: dict[str, str] = {}
+
+    async def fake_stream(prompt, context, task, user_override=None):
+        yield ContentEvent(content="Hola Esteban."), "llama3.2:1b", "ollama"
+
+    router.stream_with_fallback = fake_stream
+
+    memory_engine = MagicMock()
+    memory_engine.start_active_query = MagicMock()
+    memory_engine.end_active_query = MagicMock()
+    memory_engine.retrieve_async = AsyncMock(return_value=[])
+    memory_engine.persist_async = AsyncMock()
+
+    personality_loader = MagicMock()
+    personality_loader.load.return_value = "Soy Jules, tu asistente."
+
+    mock_sanitizer = MagicMock()
+    mock_sanitizer.check.return_value = SanitizeResult(is_safe=True, reason=None)
+
+    engine = ChatEngine(
+        router=router,
+        memory_engine=memory_engine,
+        personality_loader=personality_loader,
+        sanitizer=mock_sanitizer,
+    )
+
+    # 1. Test voice_session
+    async def capture_stream(prompt, context, task, user_override=None):
+        captured_prompts["voice_session"] = prompt
+        yield ContentEvent(content="Respuesta corta."), "llama3.2:1b", "ollama"
+
+    router.stream_with_fallback = capture_stream
+    session_ctx = CoreSessionContext(cwd="/workspace")
+
+    events = [
+        e
+        async for e in engine.stream_turn(
+            user_input="Hola Jules",
+            session_id="voice_session",
+            session_ctx=session_ctx,
+            chat_history=[],
+        )
+    ]
+    assert len(events) == 1
+    prompt_voice = captured_prompts["voice_session"]
+    assert "[MODO CONVERSACIÓN POR VOZ EN TIEMPO REAL]" in prompt_voice
+    assert "Estás conversando verbalmente por voz con Esteban." in prompt_voice
+    assert "máximo 1 a 2 oraciones naturales" in prompt_voice
+
+    # 2. Test session_id.startswith("voice")
+    async def capture_stream_prefix(prompt, context, task, user_override=None):
+        captured_prompts["voice_prefix"] = prompt
+        yield ContentEvent(content="Respuesta."), "llama3.2:1b", "ollama"
+
+    router.stream_with_fallback = capture_stream_prefix
+
+    events = [
+        e
+        async for e in engine.stream_turn(
+            user_input="Cómo va todo",
+            session_id="voice_chat_42",
+            session_ctx=session_ctx,
+            chat_history=[],
+        )
+    ]
+    prompt_prefix = captured_prompts["voice_prefix"]
+    assert "[MODO CONVERSACIÓN POR VOZ EN TIEMPO REAL]" in prompt_prefix
+
+    # 3. Test non-voice session
+    async def capture_stream_normal(prompt, context, task, user_override=None):
+        captured_prompts["normal"] = prompt
+        yield ContentEvent(content="Respuesta normal."), "llama3.2:1b", "ollama"
+
+    router.stream_with_fallback = capture_stream_normal
+
+    events = [
+        e
+        async for e in engine.stream_turn(
+            user_input="Hola texto",
+            session_id="cli_terminal_session",
+            session_ctx=session_ctx,
+            chat_history=[],
+        )
+    ]
+    prompt_normal = captured_prompts["normal"]
+    assert "[MODO CONVERSACIÓN POR VOZ EN TIEMPO REAL]" not in prompt_normal
+

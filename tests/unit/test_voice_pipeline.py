@@ -52,7 +52,7 @@ class TestSentenceStreamChunker:
 
     def test_chunker_accumulates_until_min_chars_and_delimiter(self) -> None:
         """Chunker should not emit until both min_chars threshold is met AND delimiter is found."""
-        chunker = SentenceStreamChunker(min_chars=40)
+        chunker = SentenceStreamChunker(min_chars=40, min_first_chars=40)
 
         # 14 chars with period: not emitted yet because len < 40
         out1 = chunker.add_chunk("Short phrase. ")
