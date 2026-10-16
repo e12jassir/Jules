@@ -404,7 +404,7 @@ class IPCClient:
     def __init__(
         self,
         socket_path: Path | str | None = None,
-        timeout: float = 5.0,
+        timeout: float = 60.0,
     ) -> None:
         self.socket_path = resolve_socket_path(socket_path)
         self.timeout = timeout

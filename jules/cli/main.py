@@ -308,5 +308,72 @@ def ask(text: str, session_id: str, socket_path: str | None) -> None:
         sys.exit(1)
 
 
+@cli.command(name="voice")  # type: ignore[attr-defined]
+@click.option("--once", is_flag=True, help="Grabar una sola frase y salir tras responder")
+@click.option("--socket", "socket_path", default=None, help="Ruta personalizada del socket IPC")
+def voice(once: bool, socket_path: str | None) -> None:
+    """Conversar por voz en tiempo real con Jules (VAD + Whisper + Streaming TTS)."""
+    from jules.daemon.ipc import IPCClient, IPCConnectionError
+    from jules.providers.base import ContentEvent
+    from jules.voice.listener import AudioListener
+    from jules.voice.speaker import SentenceStreamChunker, VoiceSpeaker
+    from jules.voice.transcriber import LocalTranscriber
+
+    client = IPCClient(socket_path=socket_path)
+
+    async def _run_voice():
+        listener = AudioListener()
+        transcriber = LocalTranscriber(model_size="base", compute_type="int8")
+        speaker = VoiceSpeaker()
+        speaker.connect_listener(listener)
+        chunker = SentenceStreamChunker()
+
+        click.echo("🎙️  Modo Voz Activado (VAD + Whisper INT8 + Streaming TTS).")
+        click.echo("Habla cuando quieras (detecta silencio automático). Presiona Ctrl+C para salir.\n")
+
+        while True:
+            click.echo("👂 Escuchando...")
+            audio_bytes = await listener.record_phrase()
+            if not audio_bytes or len(audio_bytes) < 8000:
+                continue
+
+            click.echo("🧠 Transcribiendo...")
+            res = await transcriber.transcribe(audio_bytes)
+            user_text = res.text.strip()
+            if not user_text:
+                continue
+
+            click.echo(f"👤 Tú: {user_text}")
+            if not res.is_safe:
+                click.echo(f"⚠️  [Sanitizer]: Bloqueado por seguridad ({res.reason}).")
+                continue
+
+            click.echo("🌹 Jules: ", nl=False)
+
+            async def _token_generator():
+                async for chunk in client.stream_query(text=user_text, session_id="voice_session"):
+                    if isinstance(chunk, ContentEvent):
+                        click.echo(chunk.content, nl=False)
+                        yield chunk.content
+
+            sentence_stream = chunker.stream(_token_generator())
+            await speaker.speak_stream(sentence_stream)
+            click.echo("\n")
+
+            if once:
+                break
+
+    try:
+        _run_async(_run_voice())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        click.echo("\nModo voz finalizado.")
+    except (IPCConnectionError, FileNotFoundError, ConnectionRefusedError, OSError):
+        click.echo(
+            "Daemon offline. Inicia el servicio con 'jules daemon start' antes de usar la voz.",
+            err=True,
+        )
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()  # type: ignore[call-arg]
