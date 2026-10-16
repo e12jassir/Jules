@@ -316,7 +316,12 @@ def voice(once: bool, socket_path: str | None) -> None:
     from jules.daemon.ipc import IPCClient, IPCConnectionError
     from jules.providers.base import ContentEvent
     from jules.voice.listener import AudioListener
-    from jules.voice.speaker import SentenceStreamChunker, VoiceSpeaker
+    from jules.voice.speaker import (
+        ElevenLabsTTSBackend,
+        KokoroTTSBackend,
+        SentenceStreamChunker,
+        VoiceSpeaker,
+    )
     from jules.voice.transcriber import LocalTranscriber
 
     client = IPCClient(socket_path=socket_path)
@@ -329,7 +334,16 @@ def voice(once: bool, socket_path: str | None) -> None:
         speaker.connect_listener(listener)
         chunker = SentenceStreamChunker()
 
-        click.echo("🎙️  Modo Voz Activado (VAD + Whisper INT8 + Kokoro Neural TTS).")
+        backend_label = (
+            "ElevenLabs Neural TTS"
+            if isinstance(speaker.backend, ElevenLabsTTSBackend)
+            else (
+                "Kokoro Neural TTS"
+                if isinstance(speaker.backend, KokoroTTSBackend)
+                else "TTS"
+            )
+        )
+        click.echo(f"🎙️  Modo Voz Activado (VAD + Whisper INT8 + {backend_label}).")
         click.echo("Habla cuando quieras (detecta silencio automático). Presiona Ctrl+C para salir.\n")
 
         while True:

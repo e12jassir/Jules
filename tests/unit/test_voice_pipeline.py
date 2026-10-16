@@ -15,9 +15,12 @@ from jules.daemon.state import DaemonState, StatePublisher
 from jules.voice.listener import AudioHardwareUnavailableError, AudioListener, BargeInEvent
 from jules.voice.speaker import (
     BaseTTSBackend,
+    ElevenLabsTTSBackend,
     MockTTSBackend,
     SentenceStreamChunker,
+    TTSModelError,
     VoiceSpeaker,
+    clean_markdown_for_speech,
 )
 
 
@@ -428,3 +431,141 @@ class TestVoiceSpeakerHardwareFallback:
         await speaker.speak("Headless speech synthesis test should succeed gracefully.")
         assert publisher.get_current_state().state == DaemonState.IDLE
         speaker.close()
+
+
+# ---------------------------------------------------------------------------
+# (e) Tests for Markdown Cleaning & ElevenLabs TTS Backend
+# ---------------------------------------------------------------------------
+
+
+class TestCleanMarkdownForSpeech:
+    """Tests for clean_markdown_for_speech removing markdown syntax before TTS."""
+
+    def test_strips_bold_and_italics(self) -> None:
+        raw = "Hola **Esteban**, esto es *importante* y __muy__ _relevante_."
+        cleaned = clean_markdown_for_speech(raw)
+        assert cleaned == "Hola Esteban, esto es importante y muy relevante."
+        assert "*" not in cleaned
+        assert "_" not in cleaned
+
+    def test_strips_code_blocks(self) -> None:
+        raw = "Aquí tienes el código:\n```python\nprint('hello world')\n```\nEso fue todo."
+        cleaned = clean_markdown_for_speech(raw)
+        assert "print" not in cleaned
+        assert "```" not in cleaned
+        assert cleaned == "Aquí tienes el código: Eso fue todo."
+
+    def test_strips_inline_code_markers_preserving_text(self) -> None:
+        raw = "Ejecuta el comando `git status` para verificar."
+        cleaned = clean_markdown_for_speech(raw)
+        assert cleaned == "Ejecuta el comando git status para verificar."
+        assert "`" not in cleaned
+
+    def test_strips_markdown_links_preserving_text(self) -> None:
+        raw = "Consulta la [documentación oficial](https://example.com/docs) ahora."
+        cleaned = clean_markdown_for_speech(raw)
+        assert cleaned == "Consulta la documentación oficial ahora."
+        assert "https://" not in cleaned
+
+    def test_strips_headers_bullets_and_quotes(self) -> None:
+        raw = "# Título Principal\n> Esta es una cita importante.\n- Primer item\n* Segundo item\n+ Tercer item"
+        cleaned = clean_markdown_for_speech(raw)
+        assert cleaned == "Título Principal Esta es una cita importante. Primer item Segundo item Tercer item"
+        assert "#" not in cleaned
+        assert ">" not in cleaned
+
+    def test_handles_empty_or_whitespace_text(self) -> None:
+        assert clean_markdown_for_speech("") == ""
+        assert clean_markdown_for_speech("   \n\t  ") == ""
+        assert clean_markdown_for_speech("****") == ""
+
+
+class TestElevenLabsTTSBackend:
+    """Tests for ElevenLabsTTSBackend loading, formatting, and synthesis."""
+
+    def test_load_api_key_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk_test_123456789")
+        backend = ElevenLabsTTSBackend()
+        assert backend.api_key == "sk_test_123456789"
+
+    def test_load_api_key_from_env_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        fake_home = tmp_path / "home"
+        jules_dir = fake_home / ".jules"
+        jules_dir.mkdir(parents=True)
+        env_file = jules_dir / ".env"
+        env_file.write_text('ELEVENLABS_API_KEY="sk_file_test_key_999"\n')
+
+        with patch("pathlib.Path.home", return_value=fake_home):
+            backend = ElevenLabsTTSBackend()
+            assert backend.api_key == "sk_file_test_key_999"
+
+    def test_missing_api_key_raises_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        fake_home = tmp_path / "home"
+        with patch("pathlib.Path.home", return_value=fake_home):
+            backend = ElevenLabsTTSBackend(api_key=None)
+            with pytest.raises(TTSModelError, match="ELEVENLABS_API_KEY not found"):
+                backend.synthesize("Hola mundo")
+
+    def test_synthesize_successful_pcm_conversion(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        backend = ElevenLabsTTSBackend(
+            api_key="sk_valid_key",
+            voice_id="test_voice_id",
+            model_id="eleven_multilingual_v2",
+        )
+
+        # Generate 100 samples of 16-bit PCM (200 bytes)
+        raw_pcm = (np.sin(np.linspace(0, 1, 100)) * 32767).astype(np.int16).tobytes()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = raw_pcm
+
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.post.return_value = mock_resp
+
+        with patch("httpx.Client", return_value=mock_client):
+            samples, sr = backend.synthesize("**Hola** mundo!")
+
+            assert sr == 24000
+            assert isinstance(samples, np.ndarray)
+            assert samples.dtype == np.float32
+            assert len(samples) == 100
+            assert np.max(np.abs(samples)) <= 1.0
+
+            # Verify request parameters
+            mock_client.post.assert_called_once()
+            call_args, call_kwargs = mock_client.post.call_args
+            assert "https://api.elevenlabs.io/v1/text-to-speech/test_voice_id?output_format=pcm_24000" in call_args[0]
+            assert call_kwargs["headers"]["xi-api-key"] == "sk_valid_key"
+            assert call_kwargs["json"]["text"] == "Hola mundo!"
+            assert call_kwargs["json"]["model_id"] == "eleven_multilingual_v2"
+
+    def test_synthesize_api_error_raises_tts_model_error(self) -> None:
+        backend = ElevenLabsTTSBackend(api_key="sk_invalid_key")
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = '{"detail": "Unauthorized"}'
+
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.post.return_value = mock_resp
+
+        with patch("httpx.Client", return_value=mock_client):
+            with pytest.raises(TTSModelError, match="ElevenLabs API error"):
+                backend.synthesize("Hola mundo")
+
+    @pytest.mark.asyncio
+    async def test_speaker_markdown_cleaner_integration(self, publisher: StatePublisher) -> None:
+        mock_backend = MockTTSBackend()
+        speaker = VoiceSpeaker(backend=mock_backend, state_publisher=publisher)
+
+        await speaker.speak("Este es un **texto con negrita** y `código`.")
+        speaker.close()
+
+        assert len(mock_backend.history) == 1
+        assert mock_backend.history[0] == "Este es un texto con negrita y código."
+

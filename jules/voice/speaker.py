@@ -12,6 +12,7 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterable
 import inspect
 import logging
+import os
 from pathlib import Path
 import re
 import threading
@@ -29,6 +30,36 @@ from jules.daemon.state import DaemonState, StatePublisher
 from jules.voice.listener import AudioHardwareUnavailableError, AudioListener, BargeInEvent
 
 logger = logging.getLogger(__name__)
+
+
+def clean_markdown_for_speech(text: str) -> str:
+    """Strip markdown formatting, code syntax, and symbols that sound unnatural when spoken."""
+    if not text:
+        return ""
+    # 1. Remove fenced code blocks ```...```
+    text = re.sub(r"```[\s\S]*?```", "", text)
+    # 2. Inline code `...` -> keep content
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    # 3. Markdown links [text](url) -> keep text
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # 4. Bold / Italics: **text**, *text*, __text__, _text_
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", text)
+    # 5. Headers: #, ##, ###
+    text = re.sub(r"^\s*#+\s*", "", text, flags=re.MULTILINE)
+    # 6. Blockquotes: >
+    text = re.sub(r"^\s*>\s*", "", text, flags=re.MULTILINE)
+    # 7. Unordered list bullets: - item, * item, + item
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    # 8. Strikethrough ~~text~~
+    text = re.sub(r"~~([^~]+)~~", r"\1", text)
+    # 9. Clean standalone formatting chars: leftover * or ` or # or ~ or _
+    text = re.sub(r"[*`#~_]", "", text)
+    # 10. Normalize whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 class SpeakerError(RuntimeError):
@@ -151,6 +182,83 @@ class PiperTTSBackend(BaseTTSBackend):
         return samples, self.sample_rate
 
 
+class ElevenLabsTTSBackend(BaseTTSBackend):
+    """Pluggable ElevenLabs neural speech synthesis backend using direct raw PCM streaming."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        voice_id: str | None = None,
+        model_id: str = "eleven_multilingual_v2",
+        sample_rate: int = 24000,
+        timeout_seconds: float = 15.0,
+    ) -> None:
+        super().__init__(sample_rate=sample_rate)
+        self.api_key = api_key or self.load_api_key()
+        self.voice_id = voice_id or os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
+        self.model_id = model_id
+        self.timeout_seconds = timeout_seconds
+
+    @staticmethod
+    def load_api_key() -> str | None:
+        """Load ElevenLabs API key from environment or ~/.jules/.env."""
+        key = os.environ.get("ELEVENLABS_API_KEY")
+        if key:
+            return key.strip().strip('"').strip("'")
+        env_file = Path.home() / ".jules" / ".env"
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("ELEVENLABS_API_KEY="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if val:
+                        return val
+        return None
+
+    def synthesize(self, text: str) -> tuple[np.ndarray, int]:
+        """Synthesize text into raw PCM samples via ElevenLabs REST API."""
+        if not self.api_key:
+            raise TTSModelError("ELEVENLABS_API_KEY not found in environment or ~/.jules/.env")
+
+        clean_text = clean_markdown_for_speech(text)
+        if not clean_text:
+            return np.zeros(0, dtype=np.float32), self.sample_rate
+
+        try:
+            import httpx
+        except ImportError as exc:
+            raise TTSModelError("httpx is required for ElevenLabsTTSBackend") from exc
+
+        url = (
+            f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}?output_format=pcm_24000"
+        )
+        headers = {
+            "xi-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "text": clean_text,
+            "model_id": self.model_id,
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout_seconds) as client:
+                response = client.post(url, headers=headers, json=payload)
+                if response.status_code != 200:
+                    raise TTSModelError(
+                        f"ElevenLabs API error ({response.status_code}): {response.text}"
+                    )
+                raw_pcm = response.content
+                samples = (
+                    np.frombuffer(raw_pcm, dtype=np.int16).astype(np.float32) / 32768.0
+                )
+                return samples, self.sample_rate
+        except Exception as exc:
+            if isinstance(exc, TTSModelError):
+                raise
+            raise TTSModelError(f"ElevenLabs synthesis request failed: {exc}") from exc
+
+
 class SentenceStreamChunker:
     """Chunker that accumulates streamed tokens into spoken sentences.
 
@@ -252,22 +360,33 @@ class VoiceSpeaker:
         self._loop = loop
 
         if backend is None:
-            kokoro_model = Path.home() / ".jules" / "models" / "kokoro" / "kokoro-v0_19.onnx"
-            kokoro_voices = Path.home() / ".jules" / "models" / "kokoro" / "voices.bin"
-            if kokoro_model.exists() and kokoro_voices.exists():
+            eleven_key = ElevenLabsTTSBackend.load_api_key()
+            if eleven_key:
                 try:
-                    self.backend = KokoroTTSBackend(
-                        model_path=kokoro_model,
-                        voices_path=kokoro_voices,
-                        voice="af_bella",
-                        lang="es",
-                        sample_rate=24000,
+                    self.backend = ElevenLabsTTSBackend(
+                        api_key=eleven_key,
+                        sample_rate=sample_rate,
                     )
                 except Exception as err:
-                    logger.warning("Failed to initialize KokoroTTSBackend, using mock: %s", err)
+                    logger.warning("Failed to initialize ElevenLabsTTSBackend: %s", err)
                     self.backend = MockTTSBackend(sample_rate=sample_rate)
             else:
-                self.backend = MockTTSBackend(sample_rate=sample_rate)
+                kokoro_model = Path.home() / ".jules" / "models" / "kokoro" / "kokoro-v0_19.onnx"
+                kokoro_voices = Path.home() / ".jules" / "models" / "kokoro" / "voices.bin"
+                if kokoro_model.exists() and kokoro_voices.exists():
+                    try:
+                        self.backend = KokoroTTSBackend(
+                            model_path=kokoro_model,
+                            voices_path=kokoro_voices,
+                            voice="af_bella",
+                            lang="es",
+                            sample_rate=24000,
+                        )
+                    except Exception as err:
+                        logger.warning("Failed to initialize KokoroTTSBackend, using mock: %s", err)
+                        self.backend = MockTTSBackend(sample_rate=sample_rate)
+                else:
+                    self.backend = MockTTSBackend(sample_rate=sample_rate)
         elif isinstance(backend, BaseTTSBackend):
             self.backend = backend
         elif callable(backend):
@@ -362,9 +481,13 @@ class VoiceSpeaker:
 
     async def _synthesize(self, sentence: str) -> tuple[np.ndarray, int]:
         """Synthesize text using the configured TTS backend in an async thread."""
+        clean_sentence = clean_markdown_for_speech(sentence)
+        if not clean_sentence:
+            return np.zeros(0, dtype=np.float32), self.sample_rate
+
         if inspect.iscoroutinefunction(self.backend.synthesize):
-            return await self.backend.synthesize(sentence)  # type: ignore
-        return await asyncio.to_thread(self.backend.synthesize, sentence)
+            return await self.backend.synthesize(clean_sentence)  # type: ignore
+        return await asyncio.to_thread(self.backend.synthesize, clean_sentence)
 
     async def _play_samples(self, samples: np.ndarray, sample_rate: int) -> None:
         """Play audio samples via sounddevice stream with chunked interrupt check."""
@@ -421,7 +544,7 @@ class VoiceSpeaker:
                 # Synthesize text in background thread
                 samples, sr = await self._synthesize(sentence)
 
-                if self._stop_event.is_set():
+                if self._stop_event.is_set() or len(samples) == 0:
                     continue
 
                 # Play audio
