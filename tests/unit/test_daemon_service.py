@@ -273,6 +273,31 @@ async def test_daemon_ipc_shell_event(tmp_path: Path) -> None:
         await daemon.stop()
 
 
+async def test_daemon_ipc_shell_event_wires_to_initiative_engine(tmp_path: Path) -> None:
+    """Test IPC shell_event forwards event data to InitiativeEngine."""
+    daemon = make_mock_daemon(tmp_path)
+    mock_initiative = AsyncMock()
+    daemon.initiative_engine = mock_initiative
+    await daemon.start()
+    try:
+        client = IPCClient(socket_path=daemon.socket_path)
+        resp = await client.send_shell_event(
+            phase="precmd",
+            cmd="pytest tests/",
+            exit_code=1,
+            cwd=str(tmp_path),
+        )
+        assert resp.get("status") == "ok"
+        mock_initiative.on_shell_event.assert_awaited_once_with(
+            cmd="pytest tests/",
+            exit_code=1,
+            cwd=str(tmp_path),
+            session_id="default",
+        )
+    finally:
+        await daemon.stop()
+
+
 # ---------------------------------------------------------------------------
 # 3. Signal Handling and Graceful Shutdown Tests
 # ---------------------------------------------------------------------------

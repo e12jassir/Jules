@@ -157,7 +157,7 @@ jules/
   3. Cuando el `IPCServer` reciba `shell_event`, pasar `cmd` por `Sanitizer.check()` antes de guardarlo en `SessionContext.recent_commands` y actualizar `SessionContext.last_exit_code`.
 - **POR QUÉ:** Hace que `ContextEngine._infer_intent()` (que hoy mira `last_exit_code != 0` para detectar "debugging") funcione con datos reales de tu trabajo en vivo.
 
-#### Tarea 3.2: Motor de Iniciativa Contextual (`jules/platform/initiative.py`)
+#### Tarea 3.2: [x] Motor de Iniciativa Contextual (`jules/platform/initiative.py`)
 - **QUÉ hacer:** Implementar las reglas de iniciativa proactiva definidas en `JULES.md` + detección de errores repetidos en terminal.
 - **CÓMO hacerlo:**
   1. Crear `InitiativeEngine` suscrito al `EventBus`.

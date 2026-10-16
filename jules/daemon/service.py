@@ -25,6 +25,7 @@ from jules.daemon.state import DaemonState, StatePublisher, resolve_state_path
 from jules.memory.engine import MemoryEngine
 from jules.memory.episodic import EpisodicMemory
 from jules.memory.persistent import PersistentMemory
+from jules.platform.initiative import InitiativeEngine
 from jules.platform.watcher import PlatformWatcher
 from jules.providers.base import ContentEvent, StreamEvent, ThoughtEvent
 from jules.sanitizer import Sanitizer
@@ -103,6 +104,7 @@ class JulesDaemon:
         state_path: Path | str | None = None,
         current_directory: str | None = None,
         sanitizer: type[Sanitizer] = Sanitizer,
+        initiative_engine: InitiativeEngine | None = None,
     ) -> None:
         self.socket_path = resolve_socket_path(socket_path)
         self.state_path = resolve_state_path(state_path)
@@ -154,6 +156,14 @@ class JulesDaemon:
         self.ipc_server = ipc_server or IPCServer(
             socket_path=self.socket_path,
             sanitizer=self.sanitizer,
+        )
+
+        # 6. Initiative Engine ("El Fantasma en la Shell")
+        self.initiative_engine = initiative_engine or InitiativeEngine(
+            event_bus=self.event_bus,
+            persistent_memory=self.persistent_memory,
+            episodic_memory=self.episodic_memory,
+            memory_engine=self.memory_engine,
         )
 
         # Wire IPC Server handlers
@@ -368,6 +378,21 @@ class JulesDaemon:
 
         if self.platform_watcher is not None and hasattr(self.platform_watcher, "on_directory_changed"):
             self.platform_watcher.on_directory_changed(cwd)
+
+        # Wire shell event to InitiativeEngine
+        if self.initiative_engine is not None and hasattr(self.initiative_engine, "on_shell_event"):
+            try:
+                session_id = data.get("session_id") or getattr(self.session_context, "session_id", "default")
+                res = self.initiative_engine.on_shell_event(
+                    cmd=cmd,
+                    exit_code=exit_code,
+                    cwd=cwd,
+                    session_id=session_id,
+                )
+                if isawaitable(res):
+                    await res
+            except Exception as exc:
+                logger.warning("InitiativeEngine on_shell_event error: %s", exc)
 
         self.state_publisher.update(
             last_event=f"shell_{phase}",

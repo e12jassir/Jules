@@ -19,6 +19,7 @@ class EventType(str, Enum):
     CODING_DETECTED = "coding_detected"
     IDLE_DETECTED = "idle_detected"
     SESSION_ENDED = "session_ended"
+    INITIATIVE_TRIGGERED = "initiative_triggered"
 
 
 EventHandler = Callable[[dict], None | Awaitable[None]]
