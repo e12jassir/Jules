@@ -90,8 +90,8 @@ Para la implementación línea por línea, contratos de clase, pruebas obligator
 ### Fase 4: Voz Local Full-Duplex (< 1.5s) y Barge-In
 - [x] **Tarea 4.1:** Captura de micrófono, VAD y Push-to-Talk en [`jules/voice/listener.py`](file:///home/e12jassir/Proyectos/Jules/jules/voice/listener.py).
 - [x] **Tarea 4.2:** Transcripción ultrarrápida local con `faster-whisper` en [`jules/voice/transcriber.py`](file:///home/e12jassir/Proyectos/Jules/jules/voice/transcriber.py).
-- [ ] **Tarea 4.3:** Síntesis por oraciones en streaming e interrupción en [`jules/voice/speaker.py`](file:///home/e12jassir/Proyectos/Jules/jules/voice/speaker.py).
-- [ ] **Tarea 4.3 Tests:** [`tests/unit/test_voice_pipeline.py`](file:///home/e12jassir/Proyectos/Jules/tests/unit/test_voice_pipeline.py) en verde.
+- [x] **Tarea 4.3:** Síntesis por oraciones en streaming e interrupción en [`jules/voice/speaker.py`](file:///home/e12jassir/Proyectos/Jules/jules/voice/speaker.py).
+- [x] **Tarea 4.3 Tests:** [`tests/unit/test_voice_pipeline.py`](file:///home/e12jassir/Proyectos/Jules/tests/unit/test_voice_pipeline.py) en verde.
 
 ### Fase 5: Visión, Portapapeles y Telemetría del OS
 - [ ] **Tarea 5.1:** Screenshot on-demand (`grim`/`maim`), portapapeles (`wl-paste`/`xclip`) y filtro `Sanitizer`.

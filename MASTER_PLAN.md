@@ -187,7 +187,7 @@ jules/
   2. Ejecutar la inferencia en `asyncio.to_thread` con `beam_size=1` y `vad_filter=True` para lograr transcripciones de clips de 3 segundos en < 350ms.
   3. Pasar el texto transcrito inmediatamente por `Sanitizer.check()` antes de enviarlo a `ChatEngine`.
 
-#### Tarea 4.3: Síntesis en Streaming por Oraciones e Interrupción (`jules/voice/speaker.py`)
+#### Tarea 4.3: [x] Síntesis en Streaming por Oraciones e Interrupción (`jules/voice/speaker.py`)
 - **QUÉ hacer:** Implementar `VoiceSpeaker` con `kokoro-onnx` o `piper-tts` y un acumulador de frases (`SentenceStreamChunker`).
 - **CÓMO hacerlo:**
   1. **El secreto de la latencia < 1.5s:** No esperar a que el LLM genere todo el párrafo. `SentenceStreamChunker` consume los `ContentEvent` que salen de `ChatEngine.stream_turn()`.

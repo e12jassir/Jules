@@ -10,6 +10,16 @@ from jules.voice.listener import (
     BargeInEvent,
     VADDetector,
 )
+from jules.voice.speaker import (
+    BaseTTSBackend,
+    KokoroTTSBackend,
+    MockTTSBackend,
+    PiperTTSBackend,
+    SentenceStreamChunker,
+    SpeakerError,
+    TTSModelError,
+    VoiceSpeaker,
+)
 from jules.voice.transcriber import (
     AudioFormatError,
     LocalTranscriber,
@@ -25,10 +35,18 @@ __all__ = [
     "BargeInCallback",
     "BargeInDetected",
     "BargeInEvent",
+    "BaseTTSBackend",
+    "KokoroTTSBackend",
     "LocalTranscriber",
+    "MockTTSBackend",
     "ModelLoadError",
+    "PiperTTSBackend",
+    "SentenceStreamChunker",
+    "SpeakerError",
+    "TTSModelError",
     "TranscriberError",
     "TranscriptionResult",
     "VADDetector",
+    "VoiceSpeaker",
 ]
 
