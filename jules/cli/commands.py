@@ -306,6 +306,7 @@ def _set_api_key(provider_name: str, key: str) -> str:
                 lines.append(line)
     lines.append(f"{var_name}={key}")
     env_path.write_text("\n".join(lines) + "\n")
+    env_path.chmod(0o600)
     return f"✓ API key para {provider_name} ({var_name}) guardada correctamente en ~/.jules/.env"
 
 

@@ -188,3 +188,70 @@ async def test_check_required_headless_failsafe_denies() -> None:
             mock_log.assert_called_once_with(Action.PACKAGE_OP, "/pacman -Syu", PermissionClassification.REQUIRED, "no_display_environment")
     finally:
         IS_BACKGROUND_TASK.reset(token)
+
+
+def test_classify_hyprctl_dispatch_exec_safe() -> None:
+    config = PermissionsConfig()
+    gate = PermissionGate(config)
+
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec firefox") == PermissionClassification.SAFE
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec alacritty") == PermissionClassification.SAFE
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec code /home/user/project") == PermissionClassification.SAFE
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl activewindow") == PermissionClassification.SAFE
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl monitors") == PermissionClassification.SAFE
+
+
+def test_classify_hyprctl_dispatch_exec_prohibited() -> None:
+    config = PermissionsConfig()
+    gate = PermissionGate(config)
+
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec rm -rf /") == PermissionClassification.PROHIBITED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec rm -rf /etc") == PermissionClassification.PROHIBITED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec bash -c 'rm -rf /'") == PermissionClassification.PROHIBITED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec dd if=/dev/zero of=/dev/sda") == PermissionClassification.PROHIBITED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec firefox; rm -rf /") == PermissionClassification.PROHIBITED
+
+
+def test_classify_hyprctl_dispatch_exec_required_dangerous_or_metachars() -> None:
+    config = PermissionsConfig()
+    gate = PermissionGate(config)
+
+    # Dangerous commands
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec rm file.txt") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec curl https://example.com") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec wget https://example.com") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec sh -c 'ls'") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec bash -c 'whoami'") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec sudo systemctl restart foo") == PermissionClassification.REQUIRED
+
+    # Shell metacharacters
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec firefox &") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec echo $VAR") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec app | grep test") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec app > /tmp/out") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec app < /tmp/in") == PermissionClassification.REQUIRED
+    assert gate.classify(Action.SHELL_COMMAND, "hyprctl dispatch exec") == PermissionClassification.REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_check_hyprctl_dispatch_exec_enforces_gate() -> None:
+    config = PermissionsConfig()
+    gate = PermissionGate(config)
+
+    # Prohibited raises PermissionDeniedError without prompting
+    with patch.object(gate, "_prompt_foreground", new_callable=AsyncMock) as mock_fore:
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await gate.check(Action.SHELL_COMMAND, "hyprctl dispatch exec rm -rf /")
+        assert exc_info.value.classification == PermissionClassification.PROHIBITED
+        mock_fore.assert_not_called()
+
+    # Dangerous requires authorization prompt
+    with patch.object(gate, "_prompt_foreground", new_callable=AsyncMock) as mock_fore:
+        mock_fore.return_value = True
+        await gate.check(Action.SHELL_COMMAND, "hyprctl dispatch exec curl http://example.com")
+        mock_fore.assert_awaited_once_with(Action.SHELL_COMMAND, "hyprctl dispatch exec curl http://example.com")
+
+    # Safe passes without prompt
+    with patch.object(gate, "_prompt_foreground", new_callable=AsyncMock) as mock_fore:
+        await gate.check(Action.SHELL_COMMAND, "hyprctl dispatch exec firefox")
+        mock_fore.assert_not_called()

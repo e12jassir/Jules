@@ -70,6 +70,15 @@ _SAFE_DEFAULTS: tuple[str, ...] = (
     r"^(?:wpctl|playerctl|hyprctl|xdg-open)\b",
 )
 
+_HYPR_DANGEROUS_COMMANDS: frozenset[str] = frozenset({
+    "rm", "dd", "sh", "bash", "zsh", "fish", "dash", "ash", "busybox",
+    "curl", "wget", "python", "python3", "perl", "ruby", "lua", "node",
+    "sudo", "doas", "pkexec", "su",
+    "nc", "ncat", "netcat", "socat",
+    "eval", "exec", "kill", "pkill", "killall",
+    "chmod", "chown",
+})
+
 
 def _compile(patterns: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
     """Precompiles regular expression strings into Pattern objects."""
@@ -347,10 +356,37 @@ class PermissionGate:
 
     def classify(self, action: Action, target: str, cwd: str = "/") -> PermissionClassification:
         """Pure, side-effect-free action classification. Precedence: Prohibited > Required > Safe."""
-        if action is Action.SHELL_COMMAND and (
-            _is_prohibited_rm_command(target, cwd=cwd) or _is_prohibited_dd_command(target, cwd=cwd)
-        ):
-            return PermissionClassification.PROHIBITED
+        if action is Action.SHELL_COMMAND:
+            if (
+                _is_prohibited_rm_command(target, cwd=cwd) or _is_prohibited_dd_command(target, cwd=cwd)
+            ):
+                return PermissionClassification.PROHIBITED
+
+            hypr_match = re.search(r"\bhyprctl\s+dispatch\s+exec\b\s*(.*)", target)
+            if hypr_match:
+                payload = hypr_match.group(1).strip()
+                if not payload:
+                    return PermissionClassification.REQUIRED
+
+                if _is_prohibited_rm_command(payload, cwd=cwd) or _is_prohibited_dd_command(payload, cwd=cwd):
+                    return PermissionClassification.PROHIBITED
+
+                for pattern in self._prohibited:
+                    if pattern.search(payload):
+                        return PermissionClassification.PROHIBITED
+
+                has_metachars = any(ch in payload for ch in (";", "&", "|", "$", "`", "\n", "<", ">", "(", ")"))
+
+                try:
+                    tokens = shlex.split(payload)
+                except ValueError:
+                    tokens = payload.split()
+
+                token_cmds = {os.path.basename(t.strip("\"'")) for t in tokens}
+                has_dangerous_cmd = bool(token_cmds & _HYPR_DANGEROUS_COMMANDS)
+
+                if has_metachars or has_dangerous_cmd:
+                    return PermissionClassification.REQUIRED
 
         if action is Action.FILE_WRITE and _is_core_os_path(target, cwd=cwd):
             return PermissionClassification.PROHIBITED

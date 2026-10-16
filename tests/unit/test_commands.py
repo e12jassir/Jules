@@ -66,3 +66,18 @@ class TestAsyncCommandHandlers(unittest.IsolatedAsyncioTestCase):
         result = await handle_auth(())
         assert "openai" in result
         assert "claude" in result
+
+
+def test_set_api_key_enforces_0o600_permissions(tmp_path, monkeypatch) -> None:
+    import stat
+    from pathlib import Path
+    from jules.cli.commands import _set_api_key
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    res = _set_api_key("openai", "sk-proj-testkey12345678901234567890")
+    assert "✓" in res
+
+    env_file = tmp_path / ".jules" / ".env"
+    assert env_file.exists()
+    mode = stat.S_IMODE(env_file.stat().st_mode)
+    assert mode == 0o600

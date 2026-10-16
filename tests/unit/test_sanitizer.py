@@ -24,12 +24,26 @@ def test_check_returns_safe_contract_for_benign_text() -> None:
         ("db_password=supersecret", "assignment_secret"),  # regression R2-1: _ prefix must match
         ("Authorization: Bearer abcDEF123._-+/==", "bearer_token"),
         ("sk-abcdefghijklmnopqrstuvwxyzABCDE", "openai_key"),
+        ("sk-proj-abc123DEF456ghi789jkl012_XYZ-foo", "openai_key"),
+        ("sk-ant-api03-abcdefghijklmnopqrstuvwxyz", "openai_key"),
+        ("sk-admin-abcdefghijklmnopqrstuvwxyz123", "openai_key"),
         ("AIza" + "A" * 35, "google_key"),
         ("ghp_" + "A" * 36, "github_token"),
         ("xoxb-1234567890-abcde", "slack_token"),
+        ("AKIAIOSFODNN7EXAMPLE", "aws_key"),
+        ("ASIAIOSFODNN7EXAMPLE", "aws_key"),
+        ("ABIA1234567890ABCDEF", "aws_key"),
+        ("ACCA1234567890ABCDEF", "aws_key"),
+        (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+            "jwt_token",
+        ),
         ("export SECRET_TOKEN=my-secret", "export_secret"),
         ("https://user:pass@example.com/path", "credentialed_url"),
         ("-----BEGIN PRIVATE KEY-----", "private_key"),
+        ("-----BEGIN RSA PRIVATE KEY-----", "private_key"),
+        ("-----BEGIN OPENSSH PRIVATE KEY-----", "private_key"),
+        ("-----BEGIN EC PRIVATE KEY-----", "private_key"),
         ("bearer abcDEF123._-+/==", "bearer_token"),
     ],
 )
@@ -169,3 +183,60 @@ def test_check_processes_near_miss_slack_prefix_under_threshold() -> None:
 
     assert result.is_safe is True  # no second dash-separated segment: pattern requires xox?-{10,}-{1,}
     assert min(timings) < threshold_seconds
+
+
+def test_check_detects_modern_openai_and_anthropic_tokens() -> None:
+    tokens = [
+        "sk-proj-abcDEF1234567890_-xyzABCDEF123456",
+        "sk-ant-api03-abcdefgHIJKLMN1234567890_-xyz",
+        "sk-admin-AbCdEfGhIjKlMnOpQrStUvWxYz123456",
+    ]
+    for token in tokens:
+        res = Sanitizer.check(f"Here is my key: {token}")
+        assert res.is_safe is False
+        assert res.reason == "openai_key"
+
+
+def test_check_detects_various_private_key_headers() -> None:
+    headers = [
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+    ]
+    for h in headers:
+        text = f"{h}\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,...\n"
+        res = Sanitizer.check(text)
+        assert res.is_safe is False
+        assert res.reason == "private_key"
+
+
+def test_check_detects_aws_key_prefixes() -> None:
+    keys = [
+        "AKIAIOSFODNN7EXAMPLE",
+        "ABIA1234567890ABCDEF",
+        "ACCA1234567890ABCDEF",
+        "ASIAIOSFODNN7EXAMPLE",
+    ]
+    for k in keys:
+        res = Sanitizer.check(f"AWS credentials: access_key={k}")
+        assert res.is_safe is False
+        # If in access_key= it can match assignment_secret or aws_key depending on prefix.
+        # But standalone or in text without assignment keyword:
+        res_standalone = Sanitizer.check(f"connect with {k} to S3")
+        assert res_standalone.is_safe is False
+        assert res_standalone.reason == "aws_key"
+
+
+def test_check_detects_jwt_tokens() -> None:
+    jwts = [
+        # Full standard 3-part JWT
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+        # Unsigned 2-part with trailing dot
+        "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIn0.",
+    ]
+    for token in jwts:
+        res = Sanitizer.check(f"user session: {token}")
+        assert res.is_safe is False
+        assert res.reason == "jwt_token"

@@ -26,8 +26,8 @@ class _PatternRule:
 #   1. export_secret  — shell export statements (most explicit, check first)
 #   2. assignment_secret — generic key=value assignments
 #   3. bearer_token   — HTTP Authorization headers
-#   4-9. provider-specific prefixes (OpenAI, Google, GitHub, Slack)
-#   10. credentialed_url, private_key — structural formats
+#   4-9. provider-specific prefixes (OpenAI, Google, GitHub, Slack, AWS)
+#   10. structural formats (JWT, credentialed_url, private_key)
 SENSITIVE_PATTERNS: tuple[_PatternRule, ...] = (
     _PatternRule(
         category="export_secret",
@@ -45,7 +45,7 @@ SENSITIVE_PATTERNS: tuple[_PatternRule, ...] = (
     ),
     _PatternRule(
         category="openai_key",
-        pattern=re.compile(r"sk-[A-Za-z0-9]{20,}"),
+        pattern=re.compile(r"sk-(?:proj-|ant-|admin-)?[A-Za-z0-9_\-]{20,}"),
     ),
     _PatternRule(
         category="google_key",
@@ -60,12 +60,20 @@ SENSITIVE_PATTERNS: tuple[_PatternRule, ...] = (
         pattern=re.compile(r"xox[baprs]-[A-Za-z0-9]{10,}-[A-Za-z0-9\-]+"),
     ),
     _PatternRule(
+        category="aws_key",
+        pattern=re.compile(r"\b(AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b"),
+    ),
+    _PatternRule(
+        category="jwt_token",
+        pattern=re.compile(r"\beyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*\b"),
+    ),
+    _PatternRule(
         category="credentialed_url",
         pattern=re.compile(r"https?://[^@\s]+:[^@\s]+@"),
     ),
     _PatternRule(
         category="private_key",
-        pattern=re.compile(r"-----BEGIN\s+(RSA\s+)?PRIVATE KEY-----"),
+        pattern=re.compile(r"-----BEGIN\s+([A-Z0-9_-]+\s+)?PRIVATE KEY-----"),
     ),
 )
 

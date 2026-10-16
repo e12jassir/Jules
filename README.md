@@ -9,7 +9,7 @@
 ![Phase](https://img.shields.io/badge/Phase_1-Complete-22c55e?style=flat-square&labelColor=1e1e2e)
 ![Jarvis Layer](https://img.shields.io/badge/Jarvis_OS-Active-3b82f6?style=flat-square&labelColor=1e1e2e)
 ![Voice & Daemon](https://img.shields.io/badge/Resident_Daemon-Online-10b981?style=flat-square&labelColor=1e1e2e)
-![Tests](https://img.shields.io/badge/Tests-412_passing-22c55e?style=flat-square&labelColor=1e1e2e)
+![Tests](https://img.shields.io/badge/Tests-434_passing-22c55e?style=flat-square&labelColor=1e1e2e)
 ![Platform](https://img.shields.io/badge/Platform-Linux_(any_distro)-f97316?style=flat-square&labelColor=1e1e2e)
 ![Python](https://img.shields.io/badge/Python-3.11+-eab308?style=flat-square&labelColor=1e1e2e)
 ![License](https://img.shields.io/badge/License-MIT-64748b?style=flat-square&labelColor=1e1e2e)
@@ -239,7 +239,7 @@ Phase 2 — Living OS & Jarvis Architecture
   [x] Global Hotkey — Standalone socket trigger script bound to SUPER + J
 ```
 
-**412 tests passing** across all modules (`pytest tests/unit/`). Every module is tested before the next one starts. No red test goes to commit.
+**434 tests passing** across all modules (`pytest tests/unit/`). Every module is tested before the next one starts. No red test goes to commit.
 
 ---
 

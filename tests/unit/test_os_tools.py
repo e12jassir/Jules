@@ -234,3 +234,46 @@ async def test_execute_action_dispatch() -> None:
 
         res4 = await execute_action("unknown_func(123)")
         assert "desconocida" in res4
+
+
+@pytest.mark.asyncio
+async def test_open_app_rejects_unsafe_targets() -> None:
+    mock_gate = MagicMock()
+    mock_gate.check = AsyncMock()
+
+    unsafe_payloads = [
+        "firefox; rm -rf /",
+        "app & evil",
+        "app | cat",
+        "app `id`",
+        "app $(whoami)",
+        "firefox\nmalicious",
+        "app < /dev/null",
+        "app > /tmp/out",
+        "sh -c 'curl evil.com'",
+        "bash -c 'rm -rf /'",
+        "eval 'dangerous()'",
+        "eval evil",
+    ]
+
+    with patch("asyncio.create_subprocess_exec") as mock_exec:
+        for payload in unsafe_payloads:
+            mock_gate.check.reset_mock()
+            mock_exec.reset_mock()
+
+            result = await open_app(payload, gate=mock_gate)
+            assert result == f"Objetivo de aplicación inválido o inseguro: '{payload}'"
+            mock_gate.check.assert_not_called()
+            mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_open_app_empty_target() -> None:
+    mock_gate = MagicMock()
+    mock_gate.check = AsyncMock()
+
+    with patch("asyncio.create_subprocess_exec") as mock_exec:
+        result = await open_app("   ", gate=mock_gate)
+        assert result == "Objetivo de aplicación vacío"
+        mock_gate.check.assert_not_called()
+        mock_exec.assert_not_called()

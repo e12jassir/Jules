@@ -252,11 +252,31 @@ async def media_control(action: str, gate: PermissionGate | None = None) -> str:
         return f"Error ejecutando playerctl: {exc}"
 
 
+_DANGEROUS_TARGET_CHARS: frozenset[str] = frozenset({";", "&", "|", "`", "$", "\n", "<", ">"})
+_SHELL_INTERPRETER_PATTERN: re.Pattern[str] = re.compile(
+    r"\b(?:sh|bash)\s+-c\b|\beval\b", re.IGNORECASE
+)
+
+
+def _is_unsafe_target(target: str) -> bool:
+    """Detect shell injection characters, control characters, or shell interpreter calls."""
+    if any(c in _DANGEROUS_TARGET_CHARS for c in target):
+        return True
+    if any(ord(c) < 32 for c in target):
+        return True
+    if _SHELL_INTERPRETER_PATTERN.search(target):
+        return True
+    return False
+
+
 async def open_app(target: str, gate: PermissionGate | None = None) -> str:
     """Launch an application or URL via hyprctl dispatch exec or xdg-open."""
     app = target.strip()
     if not app:
         return "Objetivo de aplicación vacío"
+
+    if _is_unsafe_target(target):
+        return f"Objetivo de aplicación inválido o inseguro: '{target}'"
 
     if shutil.which("hyprctl"):
         cmd = ["hyprctl", "dispatch", "exec", app]
