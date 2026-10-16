@@ -379,11 +379,14 @@ async def test_antigravity_ask_passes_prompt_directly_without_separator(
     (source_config / "auth.json").write_text('{"token":"kept"}\n', encoding="utf-8")
     captured_env: dict[str, str] = {}
     captured_args: tuple[str, ...] = ()
+    captured_stdin: bytes | None = None
 
     class FakeProcess:
         returncode = 0
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            nonlocal captured_stdin
+            captured_stdin = input
             return b"ok", b""
 
     async def fake_create_subprocess_exec(*args: str, **kwargs: object) -> FakeProcess:
@@ -404,8 +407,9 @@ async def test_antigravity_ask_passes_prompt_directly_without_separator(
 
     expected_profile = provider._profile_path("ag/low")
     assert response == "ok"
-    # '--' separator prevents argument injection — prompt is always safe.
-    assert captured_args == ("agy", "--print", "--", "hello world")
+    # '--' separator prevents argument injection — prompt is passed safely via stdin.
+    assert captured_args == ("agy", "--print", "--")
+    assert captured_stdin == b"hello world"
     assert captured_env["XDG_CONFIG_HOME"] == str(expected_profile)
     assert (expected_profile / "antigravity" / "config.toml").read_text(encoding="utf-8") == (
         'model = "ag/low"\ntimeout = 60\nenabled = true\n'
@@ -421,11 +425,14 @@ async def test_antigravity_ask_passes_dash_prompt_safely_with_separator(
     source_config.mkdir()
     (source_config / "config.toml").write_text('model = "old"\n', encoding="utf-8")
     captured_args: tuple[str, ...] = ()
+    captured_stdin: bytes | None = None
 
     class FakeProcess:
         returncode = 0
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            nonlocal captured_stdin
+            captured_stdin = input
             return b"ok", b""
 
     async def fake_create_subprocess_exec(*args: str, **kwargs: object) -> FakeProcess:
@@ -442,7 +449,8 @@ async def test_antigravity_ask_passes_dash_prompt_safely_with_separator(
     response = await provider.ask("--not-a-flag", context=[], model="ag/low")
 
     assert response == "ok"
-    assert captured_args == ("agy", "--print", "--", "--not-a-flag")
+    assert captured_args == ("agy", "--print", "--")
+    assert captured_stdin == b"--not-a-flag"
 
 
 async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -451,7 +459,8 @@ async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.
     class FakeProcess:
         returncode = 0
 
-        async def communicate(self) -> tuple[bytes, bytes]:
+        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+            del input
             return b"ok", b""
 
     async def fake_create_subprocess_exec(*args: str, **kwargs: object) -> FakeProcess:
@@ -465,7 +474,7 @@ async def test_antigravity_run_cli_does_not_create_profiles(monkeypatch: pytest.
     provider = AntigravityProvider()
     provider.profile_root = tmp_path / "profiles"
 
-    response = await provider._run_cli(["agy", "--print", "--", "hello"], timeout=1.0, model="ag-low")
+    response = await provider._run_cli(["agy", "--print", "--"], prompt="hello", timeout=1.0, model="ag-low")
 
     assert response == "ok"
     assert captured_env["XDG_CONFIG_HOME"] == str(provider._profile_path("ag-low"))
@@ -521,7 +530,7 @@ async def test_available_models_includes_configured(config_path: Path) -> None:
     models = await router.available_models()
 
     assert isinstance(models, tuple)
-    configured = router._configured_models()
+    configured = await router._configured_models()
     for entry in configured:
         assert entry in models
 
@@ -535,3 +544,78 @@ async def test_current_model_returns_tuple(config_path: Path) -> None:
     assert len(result) == 2
     assert isinstance(result[0], str)
     assert isinstance(result[1], str)
+
+
+@pytest.mark.asyncio
+async def test_vision_task_routes_to_google_gemini(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config_vision.toml"
+    cfg_path.write_text("""
+[routing]
+default_tier = "low_cost"
+
+[routing.tiers.free]
+provider = "ollama"
+models = ["local-test-model"]
+
+[routing.tiers.low_cost]
+google = ["gemini-2.5-flash"]
+openrouter = []
+antigravity = []
+opencode = []
+codex = []
+openai_oauth = []
+
+[routing.tiers.high_cost]
+google = ["gemini-2.5-flash", "gemini-2.5-pro"]
+openrouter = []
+antigravity = []
+opencode = []
+codex = []
+openai_oauth = []
+
+[routing.fallback]
+chain = ["primary", "ollama"]
+
+[providers.google]
+timeout_seconds = 60
+""")
+    google_provider = FakeProvider("google", response="visual description")
+    router = make_router(cfg_path, google=google_provider)
+    provider, model = await router.route(TaskType.VISION)
+
+    assert provider.name == "google"
+    assert model == "gemini-2.5-flash"
+
+
+@pytest.mark.asyncio
+async def test_vision_task_routes_to_openrouter_when_google_not_configured(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "config_vision_openrouter.toml"
+    cfg_path.write_text("""
+[routing]
+default_tier = "low_cost"
+
+[routing.tiers.free]
+provider = "ollama"
+models = ["local-test-model"]
+
+[routing.tiers.low_cost]
+google = []
+openrouter = ["openrouter/google/gemini-2.5-flash"]
+antigravity = []
+opencode = []
+codex = []
+openai_oauth = []
+
+[routing.fallback]
+chain = ["primary", "ollama"]
+
+[providers.openrouter]
+timeout_seconds = 60
+""")
+    openrouter_provider = FakeProvider("openrouter", response="visual description via openrouter")
+    router = make_router(cfg_path, openrouter=openrouter_provider)
+    provider, model = await router.route(TaskType.VISION)
+
+    assert provider.name == "openrouter"
+    assert model == "openrouter/google/gemini-2.5-flash"
+

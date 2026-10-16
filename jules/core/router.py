@@ -23,6 +23,7 @@ class TaskType(str, Enum):
     CODING_HEAVY = "coding_heavy"
     ANALYSIS = "analysis"
     OFFLINE = "offline"
+    VISION = "vision"
 
 
 LOCAL_ONLY_TASKS = {TaskType.IDENTITY, TaskType.MEMORY_SCORING, TaskType.OFFLINE}
@@ -33,6 +34,7 @@ TASK_PROVIDER_CANDIDATES: dict[TaskType, tuple[str, ...]] = {
     TaskType.ANALYSIS: ("google", "antigravity", "openai_oauth", "openrouter", "codex", "opencode"),
     TaskType.CODING: ("opencode", "openai_oauth", "codex"),
     TaskType.CODING_HEAVY: ("opencode", "openai_oauth", "codex"),
+    TaskType.VISION: ("google", "openrouter", "ollama"),
 }
 
 _router_instance: CognitiveRouter | None = None

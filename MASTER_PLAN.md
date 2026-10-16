@@ -206,7 +206,7 @@ jules/
 
 **Objetivo:** Darle "ojos" y percepción del entorno físico de tu PC a Jules cuando se lo pidas, respetando la privacidad por diseño.
 
-#### Tarea 5.1: Visión Bajo Demanda y Portapapeles (`jules/perception/vision.py` y `clipboard.py`)
+#### Tarea 5.1: [x] Visión Bajo Demanda y Portapapeles (`jules/perception/vision.py` y `clipboard.py`)
 - **QUÉ hacer:** Permitir que Jules vea tu pantalla/ventana activa o lea tu portapapeles únicamente cuando tu consulta tenga intención visual o de portapapeles (ej. *"mira esto"*, *"¿qué significa este error en mi pantalla?"*, *"analiza lo que acabo de copiar"*).
 - **CÓMO hacerlo:**
   1. En `clipboard.py`, detectar en runtime si corre Wayland (`wl-paste`) o X11 (`xclip -o -selection clipboard`). Pasar el texto extraído por `Sanitizer.check()` obligatoriamente antes de inyectarlo al contexto. Si contiene una API key o contraseña copiada en el portapapeles, el Sanitizer lo bloquea y protege al usuario.
