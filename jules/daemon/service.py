@@ -29,6 +29,9 @@ from jules.platform.initiative import InitiativeEngine
 from jules.platform.watcher import PlatformWatcher
 from jules.providers.base import ContentEvent, StreamEvent, ThoughtEvent
 from jules.sanitizer import Sanitizer
+from jules.voice.listener import AudioListener, VADDetector
+from jules.voice.speaker import SentenceStreamChunker, VoiceSpeaker
+from jules.voice.transcriber import LocalTranscriber
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +108,10 @@ class JulesDaemon:
         current_directory: str | None = None,
         sanitizer: type[Sanitizer] = Sanitizer,
         initiative_engine: InitiativeEngine | None = None,
+        listener: AudioListener | None = None,
+        transcriber: LocalTranscriber | None = None,
+        speaker: VoiceSpeaker | None = None,
+        voice_chunker: SentenceStreamChunker | None = None,
     ) -> None:
         self.socket_path = resolve_socket_path(socket_path)
         self.state_path = resolve_state_path(state_path)
@@ -166,10 +173,28 @@ class JulesDaemon:
             memory_engine=self.memory_engine,
         )
 
+        # 7. Voice Pipeline (resident, warm in RAM)
+        self.listener = listener or AudioListener(
+            vad=VADDetector(speech_threshold=0.045, silence_timeout_ms=300.0)
+        )
+        self.transcriber = transcriber or LocalTranscriber(
+            model_size="base", compute_type="int8", language="es"
+        )
+        self.speaker = speaker or VoiceSpeaker(
+            sample_rate=24000,
+            state_publisher=self.state_publisher,
+        )
+        self.speaker.connect_listener(self.listener)
+        self.voice_chunker = voice_chunker or SentenceStreamChunker(
+            min_first_chars=12, min_chars=30
+        )
+        self.voice_chat_history: list[tuple[str, str]] = []
+
         # Wire IPC Server handlers
         self.ipc_server.set_query_handler(self._handle_query)
         self.ipc_server.set_ptt_handler(self._handle_ptt)
         self.ipc_server.set_barge_in_handler(self._handle_barge_in)
+        self.ipc_server.set_voice_listen_once_handler(self._handle_voice_listen_once)
         self.ipc_server.set_shell_handler(self._handle_shell_event)
         self.ipc_server.set_status_handler(self._handle_status)
 
@@ -331,6 +356,9 @@ class JulesDaemon:
 
     async def _handle_ptt(self) -> dict[str, Any]:
         """Toggle Push-to-Talk voice listening state."""
+        if hasattr(self.listener, "toggle_ptt"):
+            self.listener.toggle_ptt()
+
         current = self.state_publisher.get_current_state().state
         if current == DaemonState.LISTENING:
             self.state_publisher.update(
@@ -352,6 +380,115 @@ class JulesDaemon:
             last_event="voice_barge_in",
         )
         return {"status": "ok", "barge_in": True, "state": DaemonState.IDLE.value}
+
+    async def _handle_voice_listen_once(self) -> dict[str, Any]:
+        """Record a single phrase, transcribe, stream through ChatEngine and TTS."""
+        # 1. Desktop notification
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "notify-send",
+                "-t",
+                "1000",
+                "-a",
+                "Jules",
+                "Jules",
+                "Escuchando...",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except (FileNotFoundError, OSError):
+            pass
+
+        self.state_publisher.update(
+            state=DaemonState.LISTENING,
+            last_event="voice_listening",
+        )
+
+        try:
+            # 2. Record audio with resident warm listener
+            audio_bytes = await self.listener.record_phrase()
+
+            # 3. Require valid audio: at least 0.4s (16000 samples/sec * 2 bytes/sample * 0.4 = 12800 bytes)
+            if not audio_bytes or len(audio_bytes) < 12800:
+                return {
+                    "status": "empty_audio",
+                    "error": "Audio capture too short or empty",
+                }
+
+            self.state_publisher.update(
+                state=DaemonState.THINKING,
+                last_event="voice_transcribing",
+            )
+
+            # 4. Transcribe audio
+            transcription = await self.transcriber.transcribe(audio_bytes)
+            user_text = getattr(transcription, "text", str(transcription)).strip()
+
+            if not user_text or len(user_text) < 2 or user_text.lower().startswith("in all that"):
+                return {
+                    "status": "empty_transcription",
+                    "error": "No speech detected",
+                }
+
+            # Check transcription safety
+            is_safe = getattr(transcription, "is_safe", True)
+            reason = getattr(transcription, "reason", None)
+            san_result = self.sanitizer.check(user_text)
+            if not is_safe or not san_result.is_safe:
+                blocked_reason = reason or san_result.reason
+                return {
+                    "status": "blocked",
+                    "reason": blocked_reason,
+                    "blocked": True,
+                }
+
+            # 5. Route turn to ChatEngine
+            session_ctx = SessionContext(
+                cwd=self.session_context.cwd,
+                last_exit_code=self.session_context.last_exit_code,
+                recent_commands=list(self.session_context.recent_commands),
+            )
+
+            assistant_parts: list[str] = []
+
+            async def _token_generator() -> AsyncIterator[str]:
+                async for event in self.chat_engine.stream_turn(
+                    user_input=user_text,
+                    session_id="voice_session",
+                    session_ctx=session_ctx,
+                    chat_history=self.voice_chat_history[-10:],
+                ):
+                    if isinstance(event, ContentEvent):
+                        assistant_parts.append(event.content)
+                        yield event.content
+
+            self.voice_chunker.reset()
+            sentence_stream = self.voice_chunker.stream(_token_generator())
+            await self.speaker.speak_stream(sentence_stream)
+
+            full_response = "".join(assistant_parts).strip()
+
+            # 6. Append to voice chat history
+            if full_response:
+                self.voice_chat_history.append(("user", user_text))
+                self.voice_chat_history.append(("assistant", full_response))
+                if len(self.voice_chat_history) > 50:
+                    self.voice_chat_history = self.voice_chat_history[-50:]
+
+            return {
+                "status": "ok",
+                "user": user_text,
+                "response": full_response,
+            }
+        except Exception as exc:
+            logger.exception("Error during voice_listen_once: %s", exc)
+            return {"status": "error", "error": str(exc)}
+        finally:
+            self.state_publisher.update(
+                state=DaemonState.IDLE,
+                last_event="voice_turn_completed",
+            )
 
     async def _handle_shell_event(self, data: dict[str, Any]) -> dict[str, Any]:
         """Handle shell hook execution events, updating session context and directory."""

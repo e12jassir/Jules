@@ -19,6 +19,7 @@ from jules.daemon.service import JulesDaemon, install_systemd_user_service
 from jules.daemon.state import DaemonState, StatePublisher
 from jules.providers.base import ContentEvent, StreamEvent, ThoughtEvent
 from jules.sanitizer import Sanitizer
+from jules.voice.speaker import SentenceStreamChunker
 import jules.cli.main as cli_main
 
 
@@ -74,6 +75,26 @@ def make_mock_daemon(tmp_path: Path, chat_engine: MockChatEngine | None = None) 
     mock_watcher._running = False
     mock_watcher.stop = MagicMock()
 
+    mock_listener = MagicMock()
+    mock_listener.record_phrase = AsyncMock(return_value=b"\x00\x00" * 8000)
+    mock_transcriber = MagicMock()
+    mock_transcriber.transcribe = AsyncMock(
+        return_value=MagicMock(text="Hola Jules", is_safe=True, reason=None)
+    )
+    mock_speaker = MagicMock()
+
+    async def _mock_speak_stream(stream: Any) -> None:
+        if hasattr(stream, "__aiter__"):
+            async for _ in stream:
+                pass
+        elif hasattr(stream, "__iter__"):
+            for _ in stream:
+                pass
+
+    mock_speaker.speak_stream = AsyncMock(side_effect=_mock_speak_stream)
+    mock_speaker.connect_listener = MagicMock()
+    mock_chunker = SentenceStreamChunker(min_first_chars=12, min_chars=30)
+
     engine = chat_engine or MockChatEngine()
 
     return JulesDaemon(
@@ -87,6 +108,10 @@ def make_mock_daemon(tmp_path: Path, chat_engine: MockChatEngine | None = None) 
         socket_path=sock_path,
         state_path=state_path,
         current_directory=str(tmp_path),
+        listener=mock_listener,
+        transcriber=mock_transcriber,
+        speaker=mock_speaker,
+        voice_chunker=mock_chunker,
     )
 
 
@@ -96,7 +121,7 @@ def make_mock_daemon(tmp_path: Path, chat_engine: MockChatEngine | None = None) 
 
 
 def test_daemon_components_initialization(tmp_path: Path) -> None:
-    """Test JulesDaemon component initialization (Router, Memory, ChatEngine, Publisher, IPC)."""
+    """Test JulesDaemon component initialization (Router, Memory, ChatEngine, Publisher, IPC, Voice)."""
     sock_path = tmp_path / "jules.sock"
     state_path = tmp_path / "jules.state"
 
@@ -107,6 +132,10 @@ def test_daemon_components_initialization(tmp_path: Path) -> None:
     mock_bus = MagicMock()
     mock_watcher = MagicMock()
     mock_chat = MockChatEngine()
+    mock_listener = MagicMock()
+    mock_transcriber = MagicMock()
+    mock_speaker = MagicMock()
+    mock_chunker = SentenceStreamChunker(min_first_chars=12, min_chars=30)
 
     daemon = JulesDaemon(
         router=mock_router,
@@ -118,6 +147,10 @@ def test_daemon_components_initialization(tmp_path: Path) -> None:
         chat_engine=mock_chat,
         socket_path=sock_path,
         state_path=state_path,
+        listener=mock_listener,
+        transcriber=mock_transcriber,
+        speaker=mock_speaker,
+        voice_chunker=mock_chunker,
     )
 
     # Verify all components are present and wired
@@ -128,6 +161,11 @@ def test_daemon_components_initialization(tmp_path: Path) -> None:
     assert daemon.event_bus is mock_bus
     assert daemon.platform_watcher is mock_watcher
     assert daemon.chat_engine is mock_chat
+    assert daemon.listener is mock_listener
+    assert daemon.transcriber is mock_transcriber
+    assert daemon.speaker is mock_speaker
+    assert daemon.voice_chunker is mock_chunker
+    assert daemon.voice_chat_history == []
     assert isinstance(daemon.state_publisher, StatePublisher)
     assert isinstance(daemon.ipc_server, IPCServer)
     assert daemon.ipc_server.socket_path == sock_path.resolve()
@@ -245,6 +283,93 @@ async def test_daemon_ipc_voice_barge_in(tmp_path: Path) -> None:
         resp = await client.barge_in()
         assert resp.get("status") == "ok"
         assert resp.get("barge_in") is True
+        assert daemon.state_publisher.get_current_state().state == DaemonState.IDLE
+    finally:
+        await daemon.stop()
+
+
+async def test_daemon_ipc_voice_listen_once_success(tmp_path: Path) -> None:
+    """Test IPC voice_listen_once records audio, transcribes, queries engine, and speaks."""
+    daemon = make_mock_daemon(tmp_path)
+    await daemon.start()
+    try:
+        client = IPCClient(socket_path=daemon.socket_path)
+        assert daemon.state_publisher.get_current_state().state == DaemonState.IDLE
+
+        resp = await client.voice_listen_once()
+        assert resp.get("status") == "ok"
+        assert resp.get("user") == "Hola Jules"
+        assert resp.get("response") == "Hello from Jules daemon!"
+
+        # Chat history updated
+        assert len(daemon.voice_chat_history) == 2
+        assert daemon.voice_chat_history[0] == ("user", "Hola Jules")
+        assert daemon.voice_chat_history[1] == ("assistant", "Hello from Jules daemon!")
+
+        # Components called
+        daemon.listener.record_phrase.assert_awaited_once()
+        daemon.transcriber.transcribe.assert_awaited_once()
+        daemon.speaker.speak_stream.assert_awaited_once()
+
+        # State returned to IDLE
+        assert daemon.state_publisher.get_current_state().state == DaemonState.IDLE
+    finally:
+        await daemon.stop()
+
+
+async def test_daemon_ipc_voice_listen_once_empty_audio(tmp_path: Path) -> None:
+    """Test IPC voice_listen_once gracefully aborts when audio is too short."""
+    daemon = make_mock_daemon(tmp_path)
+    daemon.listener.record_phrase = AsyncMock(return_value=b"\x00" * 100)
+    await daemon.start()
+    try:
+        client = IPCClient(socket_path=daemon.socket_path)
+        resp = await client.voice_listen_once()
+        assert resp.get("status") == "empty_audio"
+        assert "Audio capture too short" in resp.get("error", "")
+
+        # Transcriber not invoked
+        daemon.transcriber.transcribe.assert_not_called()
+        assert daemon.state_publisher.get_current_state().state == DaemonState.IDLE
+    finally:
+        await daemon.stop()
+
+
+async def test_daemon_ipc_voice_listen_once_empty_transcription(tmp_path: Path) -> None:
+    """Test IPC voice_listen_once gracefully aborts when transcription is empty."""
+    daemon = make_mock_daemon(tmp_path)
+    daemon.transcriber.transcribe = AsyncMock(
+        return_value=MagicMock(text="", is_safe=True, reason=None)
+    )
+    await daemon.start()
+    try:
+        client = IPCClient(socket_path=daemon.socket_path)
+        resp = await client.voice_listen_once()
+        assert resp.get("status") == "empty_transcription"
+        assert "No speech detected" in resp.get("error", "")
+
+        # Speaker not invoked
+        daemon.speaker.speak_stream.assert_not_called()
+        assert daemon.state_publisher.get_current_state().state == DaemonState.IDLE
+    finally:
+        await daemon.stop()
+
+
+async def test_daemon_ipc_voice_listen_once_sanitizer_blocked(tmp_path: Path) -> None:
+    """Test IPC voice_listen_once aborts when transcription fails security check."""
+    daemon = make_mock_daemon(tmp_path)
+    daemon.transcriber.transcribe = AsyncMock(
+        return_value=MagicMock(text="rm -rf /", is_safe=False, reason="Destructive command")
+    )
+    await daemon.start()
+    try:
+        client = IPCClient(socket_path=daemon.socket_path)
+        resp = await client.voice_listen_once()
+        assert resp.get("status") == "blocked"
+        assert resp.get("blocked") is True
+
+        # Speaker not invoked
+        daemon.speaker.speak_stream.assert_not_called()
         assert daemon.state_publisher.get_current_state().state == DaemonState.IDLE
     finally:
         await daemon.stop()

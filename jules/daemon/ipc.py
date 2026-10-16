@@ -84,6 +84,7 @@ class IPCServer:
         query_handler: QueryHandler | None = None,
         ptt_handler: CallbackHandler | None = None,
         barge_in_handler: CallbackHandler | None = None,
+        voice_listen_once_handler: CallbackHandler | None = None,
         shell_handler: CallbackHandler | None = None,
         status_handler: CallbackHandler | None = None,
         sanitizer: type[Sanitizer] = Sanitizer,
@@ -92,6 +93,7 @@ class IPCServer:
         self.query_handler = query_handler
         self.ptt_handler = ptt_handler
         self.barge_in_handler = barge_in_handler
+        self.voice_listen_once_handler = voice_listen_once_handler
         self.shell_handler = shell_handler
         self.status_handler = status_handler
         self.sanitizer = sanitizer
@@ -115,6 +117,10 @@ class IPCServer:
     def set_barge_in_handler(self, handler: CallbackHandler) -> None:
         """Register the voice barge-in handler."""
         self.barge_in_handler = handler
+
+    def set_voice_listen_once_handler(self, handler: CallbackHandler) -> None:
+        """Register the single-shot voice trigger handler."""
+        self.voice_listen_once_handler = handler
 
     def set_shell_handler(self, handler: CallbackHandler) -> None:
         """Register the shell hook event handler."""
@@ -243,6 +249,8 @@ class IPCServer:
             await self._handle_ptt(writer)
         elif op == "voice_barge_in":
             await self._handle_barge_in(writer)
+        elif op == "voice_listen_once":
+            await self._handle_voice_listen_once(writer)
         elif op == "shell_event":
             await self._handle_shell_event(data, writer)
         elif op == "status":
@@ -298,10 +306,15 @@ class IPCServer:
                 await self._send_json(writer, msg)
 
             await self._send_json(writer, {"type": "done", "status": "ok"})
+        except (ConnectionResetError, BrokenPipeError):
+            logger.debug("Client disconnected during query streaming")
         except Exception as exc:
             logger.exception("Error during query streaming: %s", exc)
-            await self._send_json(writer, {"type": "error", "error": str(exc)})
-            await self._send_json(writer, {"type": "done", "status": "error"})
+            try:
+                await self._send_json(writer, {"type": "error", "error": str(exc)})
+                await self._send_json(writer, {"type": "done", "status": "error"})
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                pass
 
     async def _handle_ptt(self, writer: asyncio.StreamWriter) -> None:
         """Handle Push-to-Talk toggle."""
@@ -332,6 +345,22 @@ class IPCServer:
                     resp.setdefault("status", "ok")
             except Exception as exc:
                 logger.exception("Error in barge_in_handler: %s", exc)
+                resp = {"status": "error", "error": str(exc)}
+        await self._send_json(writer, resp)
+
+    async def _handle_voice_listen_once(self, writer: asyncio.StreamWriter) -> None:
+        """Handle single-shot resident voice turn (record, transcribe, chat, TTS)."""
+        resp: dict[str, Any] = {"status": "ok"}
+        if self.voice_listen_once_handler is not None:
+            try:
+                res = self.voice_listen_once_handler()
+                if isawaitable(res):
+                    res = await res
+                if isinstance(res, dict):
+                    resp = {**res}
+                    resp.setdefault("status", "ok")
+            except Exception as exc:
+                logger.exception("Error in voice_listen_once_handler: %s", exc)
                 resp = {"status": "error", "error": str(exc)}
         await self._send_json(writer, resp)
 
@@ -465,6 +494,10 @@ class IPCClient:
     async def barge_in(self) -> dict[str, Any]:
         """Interrupt active TTS speech immediately."""
         return await self.send_raw({"op": "voice_barge_in"})
+
+    async def voice_listen_once(self) -> dict[str, Any]:
+        """Trigger single-shot resident voice turn (record, transcribe, chat, TTS)."""
+        return await self.send_raw({"op": "voice_listen_once"})
 
     async def send_shell_event(
         self,

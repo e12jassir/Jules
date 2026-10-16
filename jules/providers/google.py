@@ -81,7 +81,7 @@ class GoogleAIProvider:
         client = genai.Client(api_key=api_key)
 
         config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_budget=1024),
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
 
         try:
