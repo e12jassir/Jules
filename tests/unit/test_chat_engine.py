@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
-from jules.core.chat_engine import ChatEngine, compose_prompt
+from jules.core.chat_engine import ChatEngine, classify_task_type, compose_prompt
+from jules.core.router import TaskType
 from jules.core.session import SessionContext as CoreSessionContext
 from jules.memory.models import Episode, SessionContext as MemorySessionContext
 from jules.personality.loader import MasterPersonalityMissingError
@@ -701,4 +702,161 @@ async def test_stream_turn_compatibility_wrapper_generates_uuid_when_session_id_
     # Validate it is a valid UUID
     uuid_obj = uuid.UUID(sid)
     assert str(uuid_obj) == sid
+
+
+def test_classify_task_type_comprehensive() -> None:
+    # VISION
+    assert classify_task_type("¿Qué hay en mi pantalla?") == TaskType.VISION
+    assert classify_task_type("Toma un screenshot de esta ventana") == TaskType.VISION
+    assert classify_task_type("Haz una captura de pantalla") == TaskType.VISION
+    assert classify_task_type("Analiza esta imagen adjunta") == TaskType.VISION
+
+    # CODING_HEAVY
+    assert classify_task_type("Necesito un refactor del módulo auth") == TaskType.CODING_HEAVY
+    assert classify_task_type("Reescribe este módulo usando asyncio") == TaskType.CODING_HEAVY
+    assert classify_task_type("Implementa la arquitectura limpia") == TaskType.CODING_HEAVY
+    assert classify_task_type("Vamos a hacer una migración completa de base de datos") == TaskType.CODING_HEAVY
+
+    # CODING
+    assert classify_task_type("Revisa este código por favor") == TaskType.CODING
+    assert classify_task_type("Escribe una función auxiliar") == TaskType.CODING
+    assert classify_task_type("Crea una clase abstracta") == TaskType.CODING
+    assert classify_task_type("def calculate_total():") == TaskType.CODING
+    assert classify_task_type("class OrderProcessor:") == TaskType.CODING
+    assert classify_task_type("Tengo un bug en producción") == TaskType.CODING
+    assert classify_task_type("Mira este traceback") == TaskType.CODING
+    assert classify_task_type("error: connection refused") == TaskType.CODING
+    assert classify_task_type("Lanza una exception no controlada") == TaskType.CODING
+    assert classify_task_type("Corre el test unitario") == TaskType.CODING
+    assert classify_task_type("Aplica este fix rápido") == TaskType.CODING
+    assert classify_task_type("Genera un script en bash") == TaskType.CODING
+    assert classify_task_type("Escribe una regex para correos") == TaskType.CODING
+    assert classify_task_type("ayuda con esto", intent="debugging") == TaskType.CODING
+
+    # ANALYSIS
+    assert classify_task_type("Analiza el rendimiento del sistema") == TaskType.ANALYSIS
+    assert classify_task_type("Compara Postgres con SQLite") == TaskType.ANALYSIS
+    assert classify_task_type("Discutamos la arquitectura general") == TaskType.ANALYSIS
+    assert classify_task_type("Cuál es el tradeoff entre latencia y throughput") == TaskType.ANALYSIS
+
+    # REASONING
+    assert classify_task_type("Por qué el kernel usa páginas virtuales") == TaskType.REASONING
+    assert classify_task_type("Explica cómo funciona epoll") == TaskType.REASONING
+    assert classify_task_type("Cuál es el razonamiento detrás de esta decisión") == TaskType.REASONING
+    assert classify_task_type("Cómo funciona el garbage collector") == TaskType.REASONING
+
+    # QUICK (default)
+    assert classify_task_type("Hola Jules, ¿cómo estás?") == TaskType.QUICK
+    assert classify_task_type("Gracias por la ayuda") == TaskType.QUICK
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_uses_dynamic_task_classification() -> None:
+    provider = MagicMock()
+    provider.name = "opencode"
+
+    router = MagicMock()
+    router.route = AsyncMock(return_value=(provider, "opencode/deepseek-v4-flash-free"))
+
+    routed_tasks: list[TaskType] = []
+
+    async def fake_stream_with_fallback(prompt, context, task, user_override=None):
+        routed_tasks.append(task)
+        yield ContentEvent(content="Captura procesada"), "model", "provider"
+
+    router.stream_with_fallback = fake_stream_with_fallback
+
+    memory_engine = MagicMock()
+    memory_engine.retrieve_async = AsyncMock(return_value=[])
+    personality_loader = MagicMock()
+    personality_loader.load.return_value = "Jules prompt"
+
+    mock_sanitizer = MagicMock()
+    mock_sanitizer.check.return_value = SanitizeResult(is_safe=True, reason=None)
+
+    engine = ChatEngine(
+        router=router,
+        memory_engine=memory_engine,
+        personality_loader=personality_loader,
+        sanitizer=mock_sanitizer,
+    )
+
+    session_ctx = CoreSessionContext(cwd="/workspace")
+    events = [
+        e
+        async for e in engine.stream_turn(
+            user_input="¿Puedes ver mi pantalla?",
+            session_id="test_vision_classification",
+            session_ctx=session_ctx,
+            chat_history=[],
+        )
+    ]
+
+    assert len(events) == 1
+    # Verify router.route received TaskType.VISION
+    router.route.assert_awaited_once_with(TaskType.VISION, user_override=None)
+    # Verify stream_with_fallback received TaskType.VISION
+    assert routed_tasks == [TaskType.VISION]
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_executes_perception_action_tags() -> None:
+    provider = MagicMock()
+    provider.name = "opencode"
+
+    router = MagicMock()
+    router.route = AsyncMock(return_value=(provider, "opencode/deepseek-v4-flash-free"))
+
+    async def fake_stream_with_fallback(prompt, context, task, user_override=None):
+        yield ContentEvent(content="Revisando pantalla [ACTION: capture_screen()] y portapapeles [ACTION: read_clipboard()]."), "model", "opencode"
+
+    router.stream_with_fallback = fake_stream_with_fallback
+
+    memory_engine = MagicMock()
+    memory_engine.retrieve_async = AsyncMock(return_value=[])
+    personality_loader = MagicMock()
+    personality_loader.load.return_value = "Jules prompt"
+
+    mock_sanitizer = MagicMock()
+    mock_sanitizer.check.return_value = SanitizeResult(is_safe=True, reason=None)
+
+    mock_gate = MagicMock()
+
+    engine = ChatEngine(
+        router=router,
+        memory_engine=memory_engine,
+        personality_loader=personality_loader,
+        sanitizer=mock_sanitizer,
+        permission_gate=mock_gate,
+    )
+
+    with patch("jules.platform.os_tools.capture_screen_tool", new_callable=AsyncMock) as mock_cap, \
+         patch("jules.platform.os_tools.read_clipboard_tool", new_callable=AsyncMock) as mock_clip:
+
+        mock_cap.return_value = "Captura ok"
+        mock_clip.return_value = "Clip ok"
+
+        session_ctx = CoreSessionContext(cwd="/workspace")
+        chat_history: list[tuple[str, str]] = []
+
+        events = [
+            e
+            async for e in engine.stream_turn(
+                user_input="Mira la pantalla y el portapapeles",
+                session_id="test_actions",
+                session_ctx=session_ctx,
+                chat_history=chat_history,
+            )
+        ]
+
+        # Verify action tags were executed with gate
+        mock_cap.assert_awaited_once_with(gate=mock_gate)
+        mock_clip.assert_awaited_once_with(gate=mock_gate)
+
+        # Verify stripped from output
+        full_text = "".join(e.content for e in events if isinstance(e, ContentEvent))
+        assert "[ACTION:" not in full_text
+        assert "Revisando pantalla" in full_text
+        assert "portapapeles" in full_text
+
 

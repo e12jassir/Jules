@@ -305,6 +305,20 @@ async def open_app(target: str, gate: PermissionGate | None = None) -> str:
         return f"Error ejecutando {cmd[0]}: {exc}"
 
 
+async def capture_screen_tool(gate: PermissionGate | None = None) -> str:
+    from jules.perception.vision import capture_screen
+    if gate is not None:
+        await gate.check(Action.SHELL_COMMAND, "grim -")
+    result = await capture_screen()
+    return f"Captura de pantalla realizada en memoria ({result.size_bytes} bytes, {result.width}x{result.height})"
+
+
+async def read_clipboard_tool(gate: PermissionGate | None = None) -> str:
+    from jules.perception.clipboard import get_clipboard_text
+    text = await get_clipboard_text(gate=gate)
+    return f"Contenido del portapapeles: {text}"
+
+
 async def execute_action(action_str: str, gate: PermissionGate | None = None) -> str:
     """Parse and execute a string action like `set_volume(30)` or `media_control('pause')`."""
     pattern = re.compile(r"^([a-zA-Z_0-9]+)\s*\((.*?)\)$")
@@ -324,5 +338,9 @@ async def execute_action(action_str: str, gate: PermissionGate | None = None) ->
     elif func_name == "get_system_status":
         status = await get_system_status(gate=gate)
         return json.dumps(status, ensure_ascii=False)
+    elif func_name == "capture_screen":
+        return await capture_screen_tool(gate=gate)
+    elif func_name == "read_clipboard":
+        return await read_clipboard_tool(gate=gate)
     else:
         return f"Acción desconocida: '{func_name}'"

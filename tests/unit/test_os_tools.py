@@ -7,10 +7,12 @@ import pytest
 
 from jules.core.permissions import Action
 from jules.platform.os_tools import (
+    capture_screen_tool,
     execute_action,
     get_system_status,
     media_control,
     open_app,
+    read_clipboard_tool,
     set_volume,
 )
 
@@ -214,11 +216,15 @@ async def test_open_app_xdg_open_fallback() -> None:
 async def test_execute_action_dispatch() -> None:
     with patch("jules.platform.os_tools.set_volume", new_callable=AsyncMock) as mock_vol, \
          patch("jules.platform.os_tools.media_control", new_callable=AsyncMock) as mock_media, \
-         patch("jules.platform.os_tools.open_app", new_callable=AsyncMock) as mock_open:
+         patch("jules.platform.os_tools.open_app", new_callable=AsyncMock) as mock_open, \
+         patch("jules.platform.os_tools.capture_screen_tool", new_callable=AsyncMock) as mock_cap, \
+         patch("jules.platform.os_tools.read_clipboard_tool", new_callable=AsyncMock) as mock_clip:
 
         mock_vol.return_value = "Volumen ok"
         mock_media.return_value = "Media ok"
         mock_open.return_value = "App ok"
+        mock_cap.return_value = "Capture ok"
+        mock_clip.return_value = "Clipboard ok"
 
         res1 = await execute_action("set_volume(30)")
         mock_vol.assert_awaited_once_with("30", gate=None)
@@ -231,6 +237,14 @@ async def test_execute_action_dispatch() -> None:
         res3 = await execute_action('open_app("spotify")')
         mock_open.assert_awaited_once_with("spotify", gate=None)
         assert res3 == "App ok"
+
+        res_cap = await execute_action("capture_screen()")
+        mock_cap.assert_awaited_once_with(gate=None)
+        assert res_cap == "Capture ok"
+
+        res_clip = await execute_action("read_clipboard()")
+        mock_clip.assert_awaited_once_with(gate=None)
+        assert res_clip == "Clipboard ok"
 
         res4 = await execute_action("unknown_func(123)")
         assert "desconocida" in res4
@@ -277,3 +291,73 @@ async def test_open_app_empty_target() -> None:
         assert result == "Objetivo de aplicación vacío"
         mock_gate.check.assert_not_called()
         mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_capture_screen_tool_with_gate() -> None:
+    from jules.perception.vision import VisionCaptureResult
+
+    mock_gate = MagicMock()
+    mock_gate.check = AsyncMock()
+
+    mock_result = VisionCaptureResult(
+        data=b"\x89PNG\r\n\x1a\nfakeimagebytes",
+        format="png",
+        width=1920,
+        height=1080,
+    )
+
+    with patch("jules.perception.vision.capture_screen", new_callable=AsyncMock) as mock_capture:
+        mock_capture.return_value = mock_result
+        output = await capture_screen_tool(gate=mock_gate)
+
+    mock_gate.check.assert_awaited_once_with(Action.SHELL_COMMAND, "grim -")
+    assert "Captura de pantalla realizada en memoria" in output
+    assert f"{mock_result.size_bytes} bytes" in output
+    assert "1920x1080" in output
+
+
+@pytest.mark.asyncio
+async def test_capture_screen_tool_without_gate() -> None:
+    from jules.perception.vision import VisionCaptureResult
+
+    mock_result = VisionCaptureResult(
+        data=b"rawbytes",
+        format="png",
+        width=800,
+        height=600,
+    )
+
+    with patch("jules.perception.vision.capture_screen", new_callable=AsyncMock) as mock_capture:
+        mock_capture.return_value = mock_result
+        output = await capture_screen_tool(gate=None)
+
+    assert output == "Captura de pantalla realizada en memoria (8 bytes, 800x600)"
+
+
+@pytest.mark.asyncio
+async def test_read_clipboard_tool_with_and_without_gate() -> None:
+    from jules.perception.clipboard import ClipboardResult
+
+    mock_gate = MagicMock()
+    mock_gate.check = AsyncMock()
+
+    mock_result = ClipboardResult(
+        text="git status --short",
+        is_safe=True,
+    )
+
+    with patch("jules.perception.clipboard.get_clipboard_text", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_result
+        output = await read_clipboard_tool(gate=mock_gate)
+        mock_get.assert_awaited_once_with(gate=mock_gate)
+
+    assert output == "Contenido del portapapeles: git status --short"
+
+    with patch("jules.perception.clipboard.get_clipboard_text", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_result
+        output_nogate = await read_clipboard_tool(gate=None)
+        mock_get.assert_awaited_once_with(gate=None)
+
+    assert output_nogate == "Contenido del portapapeles: git status --short"
+

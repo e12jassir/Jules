@@ -59,6 +59,24 @@ def compose_prompt(
     return "\n\n".join(parts)
 
 
+def classify_task_type(user_input: str, intent: str | None = None) -> TaskType:
+    """Classify task type dynamically based on user input content and context intent."""
+    lower = user_input.lower()
+    if any(k in lower for k in ("pantalla", "screenshot", "captura de pantalla", "imagen")):
+        return TaskType.VISION
+    if any(k in lower for k in ("refactor", "reescribe este módulo", "implementa la arquitectura", "migración completa")):
+        return TaskType.CODING_HEAVY
+    if any(k in lower for k in ("código", "función", "clase", "def ", "class ", "bug", "traceback", "error:", "exception", "test", "fix", "script", "regex")):
+        return TaskType.CODING
+    if intent == "debugging":
+        return TaskType.CODING
+    if any(k in lower for k in ("analiza", "compara", "arquitectura", "tradeoff")):
+        return TaskType.ANALYSIS
+    if any(k in lower for k in ("por qué", "explica", "razonamiento", "cómo funciona")):
+        return TaskType.REASONING
+    return TaskType.QUICK
+
+
 @dataclass
 class ChatEngineState:
     """Per-session state carried between turns for headless protocols."""
@@ -138,7 +156,8 @@ class ChatEngine:
             )
 
             # Step 4: Resolve provider and model, then assemble prompt
-            provider, model = await self.router.route(TaskType.QUICK, user_override=user_override)
+            task_type = classify_task_type(user_input, built_context.intent)
+            provider, model = await self.router.route(task_type, user_override=user_override)
             self.last_provider = provider.name
             self.last_model = model
 
@@ -259,7 +278,7 @@ class ChatEngine:
             async for item in self.router.stream_with_fallback(
                 prompt,
                 memory_context,  # type: ignore[arg-type]
-                TaskType.QUICK,
+                task_type,
                 user_override=user_override,
             ):
                 if isinstance(item, tuple) and len(item) == 3:
@@ -337,9 +356,11 @@ class ChatEngine:
         """Parse and execute an action tag via jules.platform.os_tools."""
         try:
             from jules.platform.os_tools import (
+                capture_screen_tool,
                 get_system_status,
                 media_control,
                 open_app,
+                read_clipboard_tool,
                 set_volume,
             )
 
@@ -353,6 +374,10 @@ class ChatEngine:
                 await open_app(clean_arg, gate=self.permission_gate)
             elif name == "get_system_status":
                 await get_system_status(gate=self.permission_gate)
+            elif name == "capture_screen":
+                await capture_screen_tool(gate=self.permission_gate)
+            elif name == "read_clipboard":
+                await read_clipboard_tool(gate=self.permission_gate)
             else:
                 logger.warning("Unknown OS action requested: %s(%s)", name, args_str)
         except Exception as exc:  # noqa: BLE001
@@ -492,6 +517,7 @@ __all__ = [
     "ChatEngine",
     "ChatEngineState",
     "TurnEvent",
+    "classify_task_type",
     "compose_prompt",
     "stream_turn",
 ]

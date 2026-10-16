@@ -18,6 +18,12 @@ dependencies = [
   "aiosqlite",
   "textual>=0.70.0",
   "httpx",
+  "numpy",
+  "sounddevice",
+  "faster-whisper",
+  "edge-tts",
+  "websockets",
+  "pyarrow",
 ]
 
 [project.optional-dependencies]

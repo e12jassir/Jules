@@ -284,8 +284,24 @@ async def test_daemon_ipc_voice_barge_in(tmp_path: Path) -> None:
         assert resp.get("status") == "ok"
         assert resp.get("barge_in") is True
         assert daemon.state_publisher.get_current_state().state == DaemonState.IDLE
+        daemon.speaker.stop.assert_called_once()
     finally:
         await daemon.stop()
+
+
+async def test_daemon_handle_barge_in_stops_speaker(tmp_path: Path) -> None:
+    """Test that _handle_barge_in stops the speaker immediately when speaker is present."""
+    daemon = make_mock_daemon(tmp_path)
+    resp = await daemon._handle_barge_in()
+    assert resp.get("status") == "ok"
+    assert resp.get("barge_in") is True
+    daemon.speaker.stop.assert_called_once()
+
+    # Also verify graceful handling when speaker is None
+    daemon.speaker = None
+    resp2 = await daemon._handle_barge_in()
+    assert resp2.get("status") == "ok"
+    assert resp2.get("barge_in") is True
 
 
 async def test_daemon_ipc_voice_listen_once_success(tmp_path: Path) -> None:

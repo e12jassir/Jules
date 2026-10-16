@@ -6,7 +6,12 @@ import logging
 import os
 import shutil
 
+from typing import TYPE_CHECKING
+
 from jules.sanitizer import Sanitizer
+
+if TYPE_CHECKING:
+    from jules.core.permissions import PermissionGate
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,9 @@ class ClipboardResult:
     raw_text: str | None = None
     redacted_text: str | None = None
     error: str | None = None
+
+    def __str__(self) -> str:
+        return self.text
 
 
 def is_wayland_session() -> bool:
@@ -63,6 +71,7 @@ def resolve_clipboard_command() -> list[str] | None:
 async def get_clipboard_text(
     timeout: float = 3.0,
     command_override: list[str] | None = None,
+    gate: PermissionGate | None = None,
 ) -> ClipboardResult:
     """Asynchronously retrieve clipboard text, sanitizing content for sensitive data.
 
@@ -77,6 +86,10 @@ async def get_clipboard_text(
             is_safe=False,
             error="No supported clipboard utility found (wl-paste, xclip, xsel)",
         )
+
+    if gate is not None:
+        from jules.core.permissions import Action
+        await gate.check(Action.SHELL_COMMAND, " ".join(cmd))
 
     try:
         proc = await asyncio.create_subprocess_exec(

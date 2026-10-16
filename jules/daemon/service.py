@@ -375,6 +375,8 @@ class JulesDaemon:
 
     async def _handle_barge_in(self) -> dict[str, Any]:
         """Interrupt active TTS speech immediately."""
+        if hasattr(self, "speaker") and self.speaker is not None:
+            self.speaker.stop()
         self.state_publisher.update(
             state=DaemonState.IDLE,
             last_event="voice_barge_in",
@@ -383,22 +385,25 @@ class JulesDaemon:
 
     async def _handle_voice_listen_once(self) -> dict[str, Any]:
         """Record a single phrase, transcribe, stream through ChatEngine and TTS."""
-        # 1. Desktop notification
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "notify-send",
-                "-t",
-                "1000",
-                "-a",
-                "Jules",
-                "Jules",
-                "Escuchando...",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
-        except (FileNotFoundError, OSError):
-            pass
+        # 1. Desktop notification (background, non-blocking)
+        async def _notify() -> None:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "notify-send",
+                    "-t",
+                    "1000",
+                    "-a",
+                    "Jules",
+                    "Jules",
+                    "Escuchando...",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+            except (FileNotFoundError, OSError):
+                pass
+
+        asyncio.create_task(_notify())
 
         self.state_publisher.update(
             state=DaemonState.LISTENING,
