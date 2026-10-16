@@ -88,7 +88,7 @@ Para la implementación línea por línea, contratos de clase, pruebas obligator
 - [x] **Tarea 3.2 Tests:** [`tests/unit/test_initiative.py`](file:///home/e12jassir/Proyectos/Jules/tests/unit/test_initiative.py) en verde.
 
 ### Fase 4: Voz Local Full-Duplex (< 1.5s) y Barge-In
-- [ ] **Tarea 4.1:** Captura de micrófono, VAD y Push-to-Talk en [`jules/voice/listener.py`](file:///home/e12jassir/Proyectos/Jules/jules/voice/listener.py).
+- [x] **Tarea 4.1:** Captura de micrófono, VAD y Push-to-Talk en [`jules/voice/listener.py`](file:///home/e12jassir/Proyectos/Jules/jules/voice/listener.py).
 - [ ] **Tarea 4.2:** Transcripción ultrarrápida local con `faster-whisper` en [`jules/voice/transcriber.py`](file:///home/e12jassir/Proyectos/Jules/jules/voice/transcriber.py).
 - [ ] **Tarea 4.3:** Síntesis por oraciones en streaming e interrupción en [`jules/voice/speaker.py`](file:///home/e12jassir/Proyectos/Jules/jules/voice/speaker.py).
 - [ ] **Tarea 4.3 Tests:** [`tests/unit/test_voice_pipeline.py`](file:///home/e12jassir/Proyectos/Jules/tests/unit/test_voice_pipeline.py) en verde.

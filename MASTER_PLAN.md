@@ -173,7 +173,7 @@ jules/
 
 **Objetivo:** Implementar el pipeline de voz 100% offline descrito en `PLAN_JARVIS.md` pero optimizado con streaming por oraciones para que responda casi al instante.
 
-#### Tarea 4.1: Captura Auditiva y VAD (`jules/voice/listener.py`)
+#### Tarea 4.1: [x] Captura Auditiva y VAD (`jules/voice/listener.py`)
 - **QUÉ hacer:** Crear `AudioListener` con soporte para Push-to-Talk (vía IPC), detección de actividad de voz (`silero-vad` o `webrtcvad`) y Wake Word opcional (`openWakeWord`: "Hey Jules").
 - **CÓMO hacerlo:**
   1. Capturar audio a 16kHz mono en bloques de 30ms usando `sounddevice` en un hilo dedicado acoplado a `asyncio.Queue`.
