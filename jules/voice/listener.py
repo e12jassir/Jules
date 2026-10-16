@@ -59,10 +59,11 @@ class VADDetector:
         self,
         sample_rate: int = 16000,
         frame_duration_ms: int = 30,
-        speech_threshold: float = 0.015,
+        speech_threshold: float = 0.04,
         silence_timeout_ms: float = 600.0,
         min_zcr: float = 0.005,
         max_zcr: float = 0.8,
+        min_speech_frames: int = 1,
     ) -> None:
         self.sample_rate = sample_rate
         self.frame_duration_ms = frame_duration_ms
@@ -71,6 +72,7 @@ class VADDetector:
         self.silence_timeout_ms = silence_timeout_ms
         self.min_zcr = min_zcr
         self.max_zcr = max_zcr
+        self.min_speech_frames = min_speech_frames
 
         self.has_speech_started: bool = False
         self.silence_accumulated_ms: float = 0.0
@@ -137,8 +139,11 @@ class VADDetector:
         if self.has_speech_started and not self.is_utterance_complete:
             self.silence_accumulated_ms += self.frame_duration_ms
             if self.silence_accumulated_ms >= self.silence_timeout_ms:
-                self.is_utterance_complete = True
-                return False, True
+                if self.total_speech_frames >= self.min_speech_frames:
+                    self.is_utterance_complete = True
+                    return False, True
+                self.reset()
+                return False, False
 
         return False, self.is_utterance_complete
 

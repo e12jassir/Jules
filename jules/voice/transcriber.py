@@ -83,7 +83,7 @@ class LocalTranscriber:
         compute_type: str = "int8",
         beam_size: int = 1,
         vad_filter: bool = True,
-        language: str | None = None,
+        language: str | None = "es",
         lazy_load: bool = False,
         model_factory: Callable[..., Any] | None = None,
     ) -> None:
@@ -253,6 +253,9 @@ class LocalTranscriber:
                 beam_size=self.beam_size,
                 vad_filter=self.vad_filter,
                 language=self.language,
+                condition_on_previous_text=False,
+                no_speech_threshold=0.6,
+                temperature=0.0,
             )
 
             # Eagerly iterate and consume all segments inside the worker thread

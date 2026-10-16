@@ -252,7 +252,22 @@ class VoiceSpeaker:
         self._loop = loop
 
         if backend is None:
-            self.backend: BaseTTSBackend = MockTTSBackend(sample_rate=sample_rate)
+            kokoro_model = Path.home() / ".jules" / "models" / "kokoro" / "kokoro-v0_19.onnx"
+            kokoro_voices = Path.home() / ".jules" / "models" / "kokoro" / "voices.bin"
+            if kokoro_model.exists() and kokoro_voices.exists():
+                try:
+                    self.backend = KokoroTTSBackend(
+                        model_path=kokoro_model,
+                        voices_path=kokoro_voices,
+                        voice="af_bella",
+                        lang="es",
+                        sample_rate=24000,
+                    )
+                except Exception as err:
+                    logger.warning("Failed to initialize KokoroTTSBackend, using mock: %s", err)
+                    self.backend = MockTTSBackend(sample_rate=sample_rate)
+            else:
+                self.backend = MockTTSBackend(sample_rate=sample_rate)
         elif isinstance(backend, BaseTTSBackend):
             self.backend = backend
         elif callable(backend):

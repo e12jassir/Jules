@@ -322,25 +322,28 @@ def voice(once: bool, socket_path: str | None) -> None:
     client = IPCClient(socket_path=socket_path)
 
     async def _run_voice():
-        listener = AudioListener()
-        transcriber = LocalTranscriber(model_size="base", compute_type="int8")
+        from jules.voice.listener import VADDetector
+        listener = AudioListener(vad=VADDetector(speech_threshold=0.045, silence_timeout_ms=650.0))
+        transcriber = LocalTranscriber(model_size="base", compute_type="int8", language="es")
         speaker = VoiceSpeaker()
         speaker.connect_listener(listener)
         chunker = SentenceStreamChunker()
 
-        click.echo("🎙️  Modo Voz Activado (VAD + Whisper INT8 + Streaming TTS).")
+        click.echo("🎙️  Modo Voz Activado (VAD + Whisper INT8 + Kokoro Neural TTS).")
         click.echo("Habla cuando quieras (detecta silencio automático). Presiona Ctrl+C para salir.\n")
 
         while True:
             click.echo("👂 Escuchando...")
             audio_bytes = await listener.record_phrase()
-            if not audio_bytes or len(audio_bytes) < 8000:
+            # Require at least 0.5s of audio (16000 samples * 2 bytes)
+            if not audio_bytes or len(audio_bytes) < 16000:
                 continue
 
             click.echo("🧠 Transcribiendo...")
             res = await transcriber.transcribe(audio_bytes)
             user_text = res.text.strip()
-            if not user_text:
+            # Ignore empty, single-character, or Whisper repetition artifacts
+            if not user_text or len(user_text) < 3 or user_text.lower().startswith("in all that"):
                 continue
 
             click.echo(f"👤 Tú: {user_text}")

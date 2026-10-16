@@ -39,7 +39,7 @@ class OpenCodeProvider:
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )
         return await self._run_cli(
-            [self.executable, "run", "-m", model, "--format", "default"],
+            [self.executable, "run", "-m", model, "--agent", "jules", "--format", "default"],
             prompt=prompt,
             timeout=self.timeout_seconds,
         )
@@ -58,7 +58,7 @@ class OpenCodeProvider:
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )
 
-        args = [self.executable, "run", "-m", model, "--format", "default"]
+        args = [self.executable, "run", "-m", model, "--agent", "jules", "--format", "default"]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
