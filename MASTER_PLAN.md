@@ -187,14 +187,18 @@ jules/
   2. Ejecutar la inferencia en `asyncio.to_thread` con `beam_size=1` y `vad_filter=True` para lograr transcripciones de clips de 3 segundos en < 350ms.
   3. Pasar el texto transcrito inmediatamente por `Sanitizer.check()` antes de enviarlo a `ChatEngine`.
 
-#### Tarea 4.3: [x] Síntesis en Streaming por Oraciones e Interrupción (`jules/voice/speaker.py`)
-- **QUÉ hacer:** Implementar `VoiceSpeaker` con `kokoro-onnx` o `piper-tts` y un acumulador de frases (`SentenceStreamChunker`).
+#### Tarea 4.3: [x] Síntesis en Streaming por Oraciones, Pila Dual (Edge TTS + Kokoro) e Interrupción (`jules/voice/speaker.py`)
+- **QUÉ hacer:** Implementar `VoiceSpeaker` con acumulador de frases (`SentenceStreamChunker`) y pila dual de síntesis: `EdgeTTSBackend` (Azure Neural gratuito) como primario y `KokoroTTSBackend` (ONNX local) como fallback offline resiliente via `FallbackTTSBackend`.
 - **CÓMO hacerlo:**
   1. **El secreto de la latencia < 1.5s:** No esperar a que el LLM genere todo el párrafo. `SentenceStreamChunker` consume los `ContentEvent` que salen de `ChatEngine.stream_turn()`.
   2. Cada vez que acumula al menos 40 caracteres y encuentra un signo de puntuación fuerte (`.`, `?`, `!`, `:`, `\n`), envía esa oración a una cola `tts_queue` mientras el LLM sigue pensando la segunda oración.
-  3. Un worker sintetiza la oración a PCM con Piper/Kokoro y la envía al stream de salida (`sounddevice` sobre PipeWire/ALSA).
-  4. Implementar `speaker.stop()` que vacía `tts_queue` y ejecuta `sd.stop()` instantáneamente cuando ocurre un Barge-In.
-- **TEST OBLIGATORIO:** Crear `tests/unit/test_voice_pipeline.py` probando el `SentenceStreamChunker` con streams simulados y verificando que `stop()` cancela el audio en curso en menos de 50ms.
+  3. **Pila Dual Resiliente (Edge TTS + Kokoro ONNX):**
+     - **Primario (Edge TTS):** Utiliza `EdgeTTSBackend` (voz por defecto `es-CO-SalomeNeural`, rate `+0%`, 24000Hz, decodificado a PCM float32 con `ffmpeg`) sin límites de cuota ni costo de API keys.
+     - **Fallback Offline (Kokoro ONNX):** `FallbackTTSBackend` envuelve primario y secundario; ante caídas de red, timeout o errores de modelo, conmuta automáticamente y sin interrupciones a `KokoroTTSBackend` (modelos locales en `~/.jules/models/kokoro/`).
+     - **Jerarquía de selección:** (1) Edge TTS + Kokoro/Mock fallback, (2) Kokoro local puro si Edge TTS no está disponible, (3) MockTTSBackend. Soporta configuración explícita de `ElevenLabsTTSBackend` (`JULES_TTS_BACKEND=elevenlabs`) o backend personalizado inyectado.
+  4. Un worker sintetiza la oración a PCM y la envía al stream de salida (`sounddevice` sobre PipeWire/ALSA).
+  5. Implementar `speaker.stop()` que vacía `tts_queue` y ejecuta `sd.stop()` instantáneamente (< 50ms) cuando ocurre un Barge-In.
+- **TEST OBLIGATORIO:** `tests/unit/test_voice_pipeline.py` y `tests/unit/test_voice_speaker.py` probando `SentenceStreamChunker`, `EdgeTTSBackend`, `FallbackTTSBackend`, prioridad de selección y latencia de interrupción < 50ms.
 
 ---
 

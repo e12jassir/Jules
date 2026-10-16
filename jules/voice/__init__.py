@@ -12,7 +12,9 @@ from jules.voice.listener import (
 )
 from jules.voice.speaker import (
     BaseTTSBackend,
+    EdgeTTSBackend,
     ElevenLabsTTSBackend,
+    FallbackTTSBackend,
     KokoroTTSBackend,
     MockTTSBackend,
     PiperTTSBackend,
@@ -38,7 +40,9 @@ __all__ = [
     "BargeInDetected",
     "BargeInEvent",
     "BaseTTSBackend",
+    "EdgeTTSBackend",
     "ElevenLabsTTSBackend",
+    "FallbackTTSBackend",
     "KokoroTTSBackend",
     "LocalTranscriber",
     "MockTTSBackend",

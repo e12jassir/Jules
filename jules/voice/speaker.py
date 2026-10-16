@@ -182,7 +182,186 @@ class PiperTTSBackend(BaseTTSBackend):
         return samples, self.sample_rate
 
 
+class EdgeTTSBackend(BaseTTSBackend):
+    """Free, unlimited TTS via Microsoft Edge TTS (Azure Neural voices).
+
+    Requires `edge-tts` package (already installed) and `ffmpeg` for MP3 decoding.
+    No API key needed — uses the same Azure Speech backend as the Edge browser.
+    Default voice: es-CO-SalomeNeural (Colombian Spanish, natural and clear).
+    """
+
+    def __init__(
+        self,
+        voice: str = "es-CO-SalomeNeural",
+        rate: str = "+0%",
+        sample_rate: int = 24000,
+    ) -> None:
+        super().__init__(sample_rate=sample_rate)
+        self.voice = voice
+        self.rate = rate
+
+    @staticmethod
+    def is_available() -> bool:
+        """Return True if edge-tts and ffmpeg are both available."""
+        try:
+            import edge_tts  # noqa: F401
+        except ImportError:
+            return False
+        import shutil
+        return shutil.which("ffmpeg") is not None
+
+    def synthesize(self, text: str) -> tuple[np.ndarray, int]:
+        """Synthesize via edge-tts and decode MP3→PCM with ffmpeg."""
+        import asyncio
+        import subprocess
+
+        clean_text = clean_markdown_for_speech(text)
+        if not clean_text:
+            return np.zeros(0, dtype=np.float32), self.sample_rate
+
+        try:
+            import edge_tts
+        except ImportError as exc:
+            raise TTSModelError("edge-tts package is not installed") from exc
+
+        async def _fetch_mp3() -> bytes:
+            comm = edge_tts.Communicate(clean_text, self.voice, rate=self.rate)
+            chunks: list[bytes] = []
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    chunks.append(chunk["data"])
+            return b"".join(chunks)
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    mp3_bytes = ex.submit(asyncio.run, _fetch_mp3()).result()
+            else:
+                mp3_bytes = asyncio.run(_fetch_mp3())
+        except Exception as exc:
+            if isinstance(exc, TTSModelError):
+                raise
+            raise TTSModelError(f"EdgeTTS synthesis failed: {exc}") from exc
+
+        if not mp3_bytes:
+            return np.zeros(0, dtype=np.float32), self.sample_rate
+
+        try:
+            proc = subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error",
+                    "-i", "pipe:0",
+                    "-f", "s16le", "-ar", str(self.sample_rate), "-ac", "1",
+                    "pipe:1",
+                ],
+                input=mp3_bytes,
+                capture_output=True,
+                timeout=15,
+            )
+            if proc.returncode != 0:
+                raise TTSModelError(f"ffmpeg decode error: {proc.stderr.decode()[:200]}")
+            samples = np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+            return samples, self.sample_rate
+        except FileNotFoundError as exc:
+            raise TTSModelError("ffmpeg not found. Install it: sudo pacman -S ffmpeg") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise TTSModelError("ffmpeg decode timed out") from exc
+        except Exception as exc:
+            if isinstance(exc, TTSModelError):
+                raise
+            raise TTSModelError(f"Audio decoding failed: {exc}") from exc
+
+
+class FallbackTTSBackend(BaseTTSBackend):
+    """Composite TTS backend with resilient fallback.
+
+    Attempts synthesis using the primary backend (e.g. EdgeTTSBackend). If the primary
+    backend fails (network disconnection, rate limits, timeout, or model errors),
+    it automatically falls back to a secondary backend (e.g. KokoroTTSBackend or MockTTSBackend)
+    with a warning log.
+    """
+
+    def __init__(
+        self,
+        primary: BaseTTSBackend,
+        fallback: BaseTTSBackend,
+        sample_rate: int | None = None,
+    ) -> None:
+        sr = sample_rate or getattr(primary, "sample_rate", getattr(fallback, "sample_rate", 24000))
+        super().__init__(sample_rate=sr)
+        self.primary = primary
+        self.fallback = fallback
+
+    def synthesize(self, text: str) -> tuple[np.ndarray, int]:
+        """Synthesize text using primary backend with automatic fallback on failure."""
+        try:
+            return self.primary.synthesize(text)
+        except Exception as exc:
+            logger.warning(
+                "Primary TTS backend %s failed: %s. Falling back to %s.",
+                type(self.primary).__name__,
+                exc,
+                type(self.fallback).__name__,
+            )
+            try:
+                return self.fallback.synthesize(text)
+            except Exception as fallback_exc:
+                logger.error(
+                    "Fallback TTS backend %s also failed: %s.",
+                    type(self.fallback).__name__,
+                    fallback_exc,
+                )
+                raise TTSModelError(
+                    f"Both primary ({type(self.primary).__name__}) and fallback "
+                    f"({type(self.fallback).__name__}) TTS backends failed. "
+                    f"Primary error: {exc}; Fallback error: {fallback_exc}"
+                ) from fallback_exc
+
+
+def load_configured_tts_backend() -> str | None:
+    """Check if a specific TTS backend is explicitly requested in env or ~/.jules/.env."""
+    backend_choice = os.environ.get("JULES_TTS_BACKEND")
+    if backend_choice:
+        return backend_choice.strip().lower()
+    env_file = Path.home() / ".jules" / ".env"
+    if env_file.exists():
+        try:
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("JULES_TTS_BACKEND="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if val:
+                        return val.lower()
+        except OSError:
+            pass
+    return None
+
+
+def _find_kokoro_model_files() -> tuple[Path, Path] | None:
+    """Locate Kokoro model and voice files if they exist on disk."""
+    kokoro_dir = Path.home() / ".jules" / "models" / "kokoro"
+    if not kokoro_dir.is_dir():
+        return None
+    voices_path = kokoro_dir / "voices.bin"
+    if not voices_path.exists():
+        return None
+    default_model = kokoro_dir / "kokoro-v0_19.onnx"
+    if default_model.exists():
+        return default_model, voices_path
+    onnx_files = sorted(kokoro_dir.glob("*.onnx"))
+    if onnx_files:
+        return onnx_files[0], voices_path
+    return None
+
+
 class ElevenLabsTTSBackend(BaseTTSBackend):
+
     """Pluggable ElevenLabs neural speech synthesis backend using direct raw PCM streaming."""
 
     def __init__(
@@ -360,30 +539,68 @@ class VoiceSpeaker:
         self._loop = loop
 
         if backend is None:
-            eleven_key = ElevenLabsTTSBackend.load_api_key()
-            if eleven_key:
-                try:
-                    self.backend = ElevenLabsTTSBackend(
-                        api_key=eleven_key,
-                        sample_rate=sample_rate,
-                    )
-                except Exception as err:
-                    logger.warning("Failed to initialize ElevenLabsTTSBackend: %s", err)
-                    self.backend = MockTTSBackend(sample_rate=sample_rate)
-            else:
-                kokoro_model = Path.home() / ".jules" / "models" / "kokoro" / "kokoro-v0_19.onnx"
-                kokoro_voices = Path.home() / ".jules" / "models" / "kokoro" / "voices.bin"
-                if kokoro_model.exists() and kokoro_voices.exists():
+            configured = load_configured_tts_backend()
+            if configured in ("elevenlabs", "eleven_labs"):
+                eleven_key = ElevenLabsTTSBackend.load_api_key()
+                if eleven_key:
                     try:
-                        self.backend = KokoroTTSBackend(
-                            model_path=kokoro_model,
-                            voices_path=kokoro_voices,
-                            voice="af_bella",
-                            lang="es",
-                            sample_rate=24000,
+                        self.backend = ElevenLabsTTSBackend(
+                            api_key=eleven_key,
+                            sample_rate=sample_rate,
                         )
                     except Exception as err:
-                        logger.warning("Failed to initialize KokoroTTSBackend, using mock: %s", err)
+                        logger.warning("Failed to initialize ElevenLabsTTSBackend: %s", err)
+                        self.backend = MockTTSBackend(sample_rate=sample_rate)
+                else:
+                    logger.warning(
+                        "ElevenLabs requested via configuration, but ELEVENLABS_API_KEY was not found."
+                    )
+                    self.backend = MockTTSBackend(sample_rate=sample_rate)
+            elif EdgeTTSBackend.is_available():
+                primary_edge = EdgeTTSBackend(sample_rate=sample_rate)
+                kokoro_files = _find_kokoro_model_files()
+                fallback_backend: BaseTTSBackend
+                if kokoro_files is not None:
+                    model_path, voices_path = kokoro_files
+                    try:
+                        fallback_backend = KokoroTTSBackend(
+                            model_path=model_path,
+                            voices_path=voices_path,
+                            voice="af_bella",
+                            lang="es",
+                            sample_rate=sample_rate,
+                        )
+                    except Exception as err:
+                        logger.warning(
+                            "Failed to initialize KokoroTTSBackend for fallback, using Mock: %s",
+                            err,
+                        )
+                        fallback_backend = MockTTSBackend(sample_rate=sample_rate)
+                else:
+                    fallback_backend = MockTTSBackend(sample_rate=sample_rate)
+
+                self.backend = FallbackTTSBackend(
+                    primary=primary_edge,
+                    fallback=fallback_backend,
+                    sample_rate=sample_rate,
+                )
+            else:
+                kokoro_files = _find_kokoro_model_files()
+                if kokoro_files is not None:
+                    model_path, voices_path = kokoro_files
+                    try:
+                        self.backend = KokoroTTSBackend(
+                            model_path=model_path,
+                            voices_path=voices_path,
+                            voice="af_bella",
+                            lang="es",
+                            sample_rate=sample_rate,
+                        )
+                    except Exception as err:
+                        logger.warning(
+                            "Failed to initialize KokoroTTSBackend, using mock: %s",
+                            err,
+                        )
                         self.backend = MockTTSBackend(sample_rate=sample_rate)
                 else:
                     self.backend = MockTTSBackend(sample_rate=sample_rate)

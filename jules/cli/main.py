@@ -317,7 +317,9 @@ def voice(once: bool, socket_path: str | None) -> None:
     from jules.providers.base import ContentEvent
     from jules.voice.listener import AudioListener
     from jules.voice.speaker import (
+        EdgeTTSBackend,
         ElevenLabsTTSBackend,
+        FallbackTTSBackend,
         KokoroTTSBackend,
         SentenceStreamChunker,
         VoiceSpeaker,
@@ -334,13 +336,26 @@ def voice(once: bool, socket_path: str | None) -> None:
         speaker.connect_listener(listener)
         chunker = SentenceStreamChunker()
 
+        active_backend = (
+            speaker.backend.primary
+            if isinstance(speaker.backend, FallbackTTSBackend)
+            else speaker.backend
+        )
         backend_label = (
             "ElevenLabs Neural TTS"
-            if isinstance(speaker.backend, ElevenLabsTTSBackend)
+            if isinstance(active_backend, ElevenLabsTTSBackend)
             else (
-                "Kokoro Neural TTS"
-                if isinstance(speaker.backend, KokoroTTSBackend)
-                else "TTS"
+                "Edge TTS (Azure Neural + Kokoro Fallback)"
+                if isinstance(speaker.backend, FallbackTTSBackend)
+                else (
+                    "Edge TTS (Azure Neural)"
+                    if isinstance(active_backend, EdgeTTSBackend)
+                    else (
+                        "Kokoro Neural TTS"
+                        if isinstance(active_backend, KokoroTTSBackend)
+                        else "TTS"
+                    )
+                )
             )
         )
         click.echo(f"🎙️  Modo Voz Activado (VAD + Whisper INT8 + {backend_label}).")
