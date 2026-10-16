@@ -7,7 +7,7 @@ models = ["llama3.2:1b"]
 
 [routing.tiers.low_cost]
 antigravity = []
-opencode = ["opencode/deepseek-v4-flash-free", "opencode/laguna-s-2.1-free", "opencode/mimo-v2.5-free", "opencode/nemotron-3-ultra-free", "opencode/north-mini-code-free", "openrouter/openrouter/free", "openrouter/nvidia/nemotron-3-nano-30b-a3b:free", "openrouter/openai/gpt-oss-20b:free"]
+opencode = ["opencode/deepseek-v4.1-flash-free", "opencode/deepseek-v4-flash-free", "opencode/nemotron-3-ultra-free", "opencode/nemotron-3.5-lightning-free", "opencode/mimo-v2.6-flash-free", "openrouter/openrouter/free"]
 codex = []
 google = []
 openrouter = []

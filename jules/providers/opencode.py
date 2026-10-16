@@ -15,8 +15,8 @@ from jules.providers.base import (
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 # Lines emitted by opencode before the actual response — skip them.
-# Format: "> build · <model-name>"  or  "> build ▷ <model-name>"
-_HEADER_RE = re.compile(r"^>\s*build\s")
+# Format: "> build · <model-name>" or "> mentor · <model-name>"
+_HEADER_RE = re.compile(r"^>\s*[^·\n\r]+·|^>\s*build\s")
 
 
 def _strip_ansi(text: str) -> str:
@@ -39,7 +39,7 @@ class OpenCodeProvider:
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )
         return await self._run_cli(
-            [self.executable, "--pure", "--variant", "minimal", "run", "-m", model],
+            [self.executable, "run", "-m", model, "--format", "default"],
             prompt=prompt,
             timeout=self.timeout_seconds,
         )
@@ -58,7 +58,7 @@ class OpenCodeProvider:
                 f"Invalid model identifier: '{model}'. Expected format: 'provider/model-name'."
             )
 
-        args = [self.executable, "--pure", "--variant", "minimal", "run", "-m", model]
+        args = [self.executable, "run", "-m", model, "--format", "default"]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
